@@ -1,0 +1,43 @@
+save_dir: "./checkpoints" 
+num_epoch: 300
+dataset: "FaMoS" 
+dataset_path: "./processed_data"
+weight_decay: 0.01
+batch_size: 1 
+gradient_accumulation_steps: 512
+lr: 0.0003 
+device: 0
+num_workers: 8 
+diffusion_steps: 1000 
+overwrite: True 
+no_normalization: False
+train_dataset_repeat_times: 256
+# resume_checkpoint: "checkpoints/Transformer_128d_nomask_1l/model_140.pt"
+
+# log
+wandb_log: True
+save_interval: 10 
+log_interval: 1 
+
+#model architecture
+latent_dim: 128
+motion_nfeat: 121
+arch: "diffusion_Transformer_682d" 
+sparse_dim: 136 
+dropout: 0.1
+use_mask: True
+
+# unusable for gru
+ff_size: 256
+num_enc_layers: 1
+num_heads: 4
+
+# unusable for transformer encoder 
+num_dec_layers: 1 
+
+# unusable for warmup cosine scheduler
+lr_anneal_steps: 225000 
+
+# for flame
+flame_model_path: "flame_2020/generic_model.pkl"
+flame_lmk_embedding_path: "flame_2020/dense_lmk_embedding.npy"

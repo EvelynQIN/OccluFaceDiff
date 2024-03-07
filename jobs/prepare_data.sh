@@ -1,0 +1,1 @@
+python3 prepare_FaMoS.py --root_dir ./dataset --save_dir ./processed_data

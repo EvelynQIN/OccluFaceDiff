@@ -1,0 +1,2 @@
+python3 test.py --model_path checkpoints/DiffMLP_PE_176lmk_2b_45l_64dP_256dE_50res/model_200.pt --fps 60 --output_dir vis_result --vis >&test.log & # --overlapping_test --sld_wind_size 70
+python3 test.py --model_path checkpoints/DiffMLP_PE_176lmk_2b_45l_64dP_256dE_50res/model_200.pt --fps 60 --output_dir vis_result --vis --overlapping_test --sld_wind_size 6

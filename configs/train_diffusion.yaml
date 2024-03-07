@@ -1,0 +1,48 @@
+save_dir: "./checkpoints/e2e" 
+num_epoch: 100
+dataset: "FaMoS" 
+dataset_path: "./processed_data"
+weight_decay: 0.0005
+batch_size: 32
+gradient_accumulation_steps: 8
+lr: 0.0003
+device: 0 
+num_workers: 8 
+train_dataset_repeat_times: 128
+diffusion_steps: 1000 
+lr_anneal_steps: 235700 
+overwrite: True 
+no_normalization: False
+# resume_checkpoint: "checkpoints/DiffMLP_PE_176lmk_2b_45l_64dP_256dE_50res/model_150.pt"
+
+# diffusion
+cond_mask_prob: 0
+
+# log
+wandb_log: True
+save_interval: 10
+log_interval: 2
+
+#architecture
+input_motion_length: 120
+
+target_nfeat: 433
+lmk3d_dim: 204  # 68x3
+lmk2d_dim: 136  # 68x2
+cond_latent_dim: 256
+
+shape_num_layers: 4
+shape_latent_dim: 512
+
+motion_latent_dim: 256
+motion_num_layers: 4
+
+trans_latent_dim: 256
+trans_num_layers: 4
+dropout: 0.1
+
+arch: "diffusion_DiffMLP_3b" 
+
+# for flame
+flame_model_path: "flame_2020/generic_model.pkl"
+flame_lmk_embedding_path: "flame_2020/dense_lmk_embedding.npy"

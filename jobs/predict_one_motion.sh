@@ -1,0 +1,1 @@
+python3 predict.py --model_path checkpoints/diffusion_DiffMLP/model_9.pt --motion_path processed_data/FaMoS/test/subject_008_cheeks_in.pt
