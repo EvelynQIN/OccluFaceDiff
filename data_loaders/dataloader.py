@@ -224,16 +224,16 @@ def load_data(args, dataset, dataset_path, split, subject_id = None, selected_mo
     else:
         skip_frame = 1
         
-    motion_paths_fname = os.path.join(dataset_path, dataset, 'valid_motion_paths', split, 'valid_motion_path.npy')
+    motion_paths_fname = os.path.join(dataset_path, dataset, 'valid_motion_paths', f'{split}.npy')
     
     if os.path.exists(motion_paths_fname):
-        motion_path_list = np.load(motion_paths_fname, allow_pickle=True)
+        motion_paths = np.load(motion_paths_fname, allow_pickle=True)
     else:
         discard_shorter_seq = True if (args.input_motion_length is not None) and (split != "test") else False
         motion_paths = get_path(dataset_path, dataset, split, subject_id, selected_motion_ids)
         if discard_shorter_seq:
             motion_paths = get_valid_motion_path_list(motion_paths, skip_frame, args.input_motion_length) 
-        np.save(motion_paths_fname, motion_path_list, allow_pickle=True)
+        np.save(motion_paths_fname, motion_paths, allow_pickle=True)
 
     # # compute the mean and std for the training data
     # if os.path.exists(os.path.join(dataset_path, norm_dict_path)):
@@ -255,7 +255,7 @@ def load_data(args, dataset, dataset_path, split, subject_id = None, selected_mo
     #     with open(os.path.join(dataset_path, norm_dict_path), "wb") as f:
     #         torch.save(norm_dict, f)
 
-    return  motion_path_list, norm_dict
+    return  motion_paths, norm_dict
 
 
 def get_dataloader(
