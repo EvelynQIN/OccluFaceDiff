@@ -59,18 +59,21 @@ class TrainDataset(Dataset):
         else:
             start_id = torch.randint(0, int(seqlen - input_motion_length), (1,))[0]     # random crop a motion seq
         
-        lmk_2d = motion_dict['lmk_2d'][start_id : start_id + input_motion_length].reshape(input_motion_length, -1)  # (n, 68x2)
-        lmk_3d_normed = motion_dict['lmk_3d_normed'][start_id : start_id + input_motion_length].reshape(input_motion_length, -1) # (n, 68x3)
-        lmk_3d_cam = motion_dict['lmk_3d_cam'][start_id : start_id + input_motion_length].reshape(input_motion_length, -1) # (n, 68x3)
-        target = motion_dict['target'][start_id : start_id + input_motion_length] # (n, rot30 + shape300 + exp100)
         
-        img_arr = motion_dict['arcface_input'][start_id : start_id + input_motion_length] # (n, 3, 112, 112)
-        img_mask = motion_dict['img_mask'][start_id : start_id + input_motion_length] # (n,)
-        img_arr = img_arr[img_mask] # (n1, 3, 112, 112)
+        seq_slice = torch.range(start_id, start_id + input_motion_length)
+        lmk_2d = motion_dict['lmk_2d'][seq_slice].reshape(input_motion_length, -1)  # (n, 68x2)
+        lmk_3d_normed = motion_dict['lmk_3d_normed'][seq_slice].reshape(input_motion_length, -1) # (n, 68x3)
+        lmk_3d_cam = motion_dict['lmk_3d_cam'][seq_slice].reshape(input_motion_length, -1) # (n, 68x3)
+        target = motion_dict['target'][seq_slice] # (n, rot30 + shape300 + exp100)
+        
+        
+        n_imgs = torch.sum(motion_dict['img_mask'][seq_slice])
+        img_start_fid = torch.sum(motion_dict['img_mask'][:start_id])
+        img_arr = motion_dict['arcface_input'][img_start_fid:img_start_fid+n_imgs] # (n_imgs, 3, 112, 112)
 
         # make sure there are always 4 images within the clipped image
-        n_imgs = torch.sum(img_mask)
-        needed_imgs = 4 - torch.sum(img_mask)
+        
+        needed_imgs = 4 - n_imgs
         if needed_imgs <= 0:
             # randomly select 4 images
             img_ids = torch.randint(0, n_imgs, size=(4,))
@@ -79,6 +82,7 @@ class TrainDataset(Dataset):
             # inject needed images from other frames
             img_arr_added = motion_dict['arcface_input'][motion_dict['img_mask']][:needed_imgs]
             img_arr = torch.cat([img_arr, img_arr_added], dim=0)
+        assert (not img_arr.isnan().any()) and img_arr.shape[0] == 4
             
         # Normalization 
         if not self.no_normalization:    

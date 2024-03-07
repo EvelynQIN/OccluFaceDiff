@@ -42,13 +42,13 @@ def batch_normalize_lmk_3d(lmk_3d):
     return lmk_3d_normed
 
 def get_images_input_for_arcface(img_dir, subject_id, motion_id, cam_name, frame_ids, lmk2d):
-    img_size = 112
+
     motion_dir = os.path.join(img_dir, subject_id, motion_id)
     img_frame_ids = sorted(np.asarray(os.listdir(motion_dir), dtype=int)) # to be 0 indexed
     img_frame_ids = torch.LongTensor(img_frame_ids)
     idxs = torch.nonzero(frame_ids[..., None] == img_frame_ids)[:,0]
     n_frames = lmk2d.shape[0]
-    img_arr = torch.zeros((n_frames, 3, img_size, img_size))
+    img_arr = []
     mask = torch.zeros(n_frames)
     lmk_5 = lmk2d[:, [37, 44, 30, 60, 64], :]  # left eye, right eye, nose, left mouth, right mouth
     lmk_5[:, 0, :] = lmk2d[:, [38, 41], :].mean(1)  # center of left eye
@@ -65,8 +65,10 @@ def get_images_input_for_arcface(img_dir, subject_id, motion_id, cam_name, frame
             continue
         mask[idx] = 1
         arcface_input = get_arcface_input(lmk_5[idx].numpy(), img)
-        img_arr[idx] = torch.from_numpy(arcface_input).float()
-    return mask.bool(), img_arr
+        img_arr.append(arcface_input)
+    img_arr = np.stack(img_arr)
+    
+    return mask.bool(), torch.from_numpy(img_arr).float()
 
 def get_training_data(motion, flame, calib_fname):
     # zero the global translation and pose (rigid transformation)
@@ -107,7 +109,6 @@ def get_training_data(motion, flame, calib_fname):
         "frame_id": frame_id,
         # "flame_verts_cam": flame_verts_cam,
     }
-
     return output, lmk_2d
 
 def main(args):
@@ -195,6 +196,8 @@ def main(args):
                 n_sequences += 1
                 output['img_mask'] = mask
                 output['arcface_input'] = img_arr
+                for k in output:
+                    assert output[k] is not None
                 torch.save(output, output_path)
         print(f"num of motion sequences in {phase} = {n_sequences}")
     
