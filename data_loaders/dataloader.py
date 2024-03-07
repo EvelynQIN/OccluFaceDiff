@@ -185,16 +185,14 @@ def get_face_motion(motion_paths, skip_frame, split, args):
         
     return motion_list
 
-def get_valid_motion_path_list(motion_paths, skip_frame, split, args):
+def get_valid_motion_path_list(motion_paths, skip_frame, input_motion_length):
     motion_path_list = []
     # discard the motion sequence shorter than the specified length for train / val
-    input_motion_length = args.input_motion_length
-    discard_shorter_seq = True if (input_motion_length is not None) and (split != "test") else False
 
     for motion_path in tqdm(motion_paths):
         motion = torch.load(motion_path)
         nframes = motion['target'].shape[0]
-        if discard_shorter_seq and nframes < input_motion_length*skip_frame:
+        if nframes < input_motion_length*skip_frame:
             continue
         motion_path_list.append(motion_path)
 
@@ -225,13 +223,16 @@ def load_data(args, dataset, dataset_path, split, subject_id = None, selected_mo
         skip_frame = 1
     else:
         skip_frame = 1
+        
+    motion_paths_fname = os.path.join(dataset_path, dataset, 'valid_motion_paths', split, 'valid_motion_path.npy')
     
-    motion_paths_fname = os.path.join(dataset_path, dataset, split, 'valid_motion_path.npy')
     if os.path.exists(motion_paths_fname):
         motion_path_list = np.load(motion_paths_fname, allow_pickle=True)
     else:
+        discard_shorter_seq = True if (args.input_motion_length is not None) and (split != "test") else False
         motion_paths = get_path(dataset_path, dataset, split, subject_id, selected_motion_ids)
-        motion_path_list = get_valid_motion_path_list(motion_paths, skip_frame, split, args) 
+        if discard_shorter_seq:
+            motion_paths = get_valid_motion_path_list(motion_paths, skip_frame, args.input_motion_length) 
         np.save(motion_paths_fname, motion_path_list, allow_pickle=True)
 
     # # compute the mean and std for the training data
