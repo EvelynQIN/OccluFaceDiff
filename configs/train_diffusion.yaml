@@ -29,12 +29,12 @@ input_motion_length: 120
 target_nfeat: 433
 lmk3d_dim: 204  # 68x3
 lmk2d_dim: 136  # 68x2
-cond_latent_dim: 256
+cond_latent_dim: 512
 
 shape_num_layers: 4
 shape_latent_dim: 512
 
-motion_latent_dim: 256
+motion_latent_dim: 512
 motion_num_layers: 4
 
 trans_latent_dim: 256

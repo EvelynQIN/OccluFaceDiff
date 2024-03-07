@@ -88,6 +88,10 @@ class TrainDataset(Dataset):
         if not self.no_normalization:    
             lmk_3d_normed = ((lmk_3d_normed.reshape(-1, 3) - self.mean['lmk_3d_normed']) / (self.std['lmk_3d_normed'] + 1e-8)).reshape(input_motion_length, -1)
             target = (target - self.mean['target']) / (self.std['target'] + 1e-8)
+        assert (not target.isnan().any()) 
+        assert (not lmk_2d.isnan().any()) 
+        assert (not lmk_3d_normed.isnan().any()) 
+        assert (not lmk_3d_cam.isnan().any())
         
         return target.float(), lmk_2d.float(), lmk_3d_normed.float(), img_arr.float(), lmk_3d_cam.float()
     

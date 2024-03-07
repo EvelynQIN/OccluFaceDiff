@@ -310,4 +310,5 @@ class MultiBranchMLP(nn.Module):
             [output_shape.unsqueeze(1).expand(-1,output_trans.shape[1],-1), output_motion, output_trans], 
             axis = -1
         )
+        assert not output.isnan().any()
         return output
