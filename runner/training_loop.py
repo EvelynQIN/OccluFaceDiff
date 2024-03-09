@@ -105,7 +105,7 @@ class TrainLoop:
             self.std[k] = std[k].to(self.device)
 
         self.loss_keys = ["loss", "shape_loss", "expr_loss", "pose_loss", "trans_loss",
-                          "lmk2d_norm_loss", "lmk3d_loss",
+                          "lmk2d_norm_loss", "verts3d_loss",
                           "expt_jitter", "pose_jitter"]
 
     def _load_and_sync_parameters(self):
@@ -158,7 +158,7 @@ class TrainLoop:
                 }
                 grad_update = True if self.step % self.gradient_accumulation_steps == 0 else False 
                 self.run_step(target, grad_update, **model_kwargs)
-            if epoch % self.save_interval == 0:
+            if epoch == self.num_epochs or epoch % self.save_interval == 0:
                 self.save()
             if epoch % self.log_interval == 0:
                 self.validation()

@@ -19,7 +19,7 @@ no_normalization: False
 cond_mask_prob: 0
 
 # log
-wandb_log: False
+wandb_log: True
 save_interval: 2
 log_interval: 1
 
@@ -41,7 +41,7 @@ trans_latent_dim: 256
 trans_num_layers: 4
 dropout: 0.1
 
-arch: "diffusion_DiffMLP_3b" 
+arch: "diffusion_DiffMLP_512d" 
 
 # for flame
 flame_model_path: "flame_2020/generic_model.pkl"

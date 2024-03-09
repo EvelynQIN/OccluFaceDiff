@@ -266,7 +266,7 @@ class MultiBranchMLP(nn.Module):
     #     for p in params:
     #         p.requires_grad = True
 
-    def forward(self, x, timesteps, lmk_3d, lmk_2d, img_arr, force_mask=False, **kwargs):
+    def forward(self, x, timesteps, lmk_3d, lmk_2d, img_arr, force_mask=False, return_mica=False, **kwargs):
         """
         Args:
             x: [batch_size, nfeats, nframes], denoted x_t in the paper
@@ -315,5 +315,7 @@ class MultiBranchMLP(nn.Module):
         assert not output_motion.isnan().any()
         assert not output_trans.isnan().any()
 
-    
+        if return_mica:
+            return output, shape_mica
+        
         return output

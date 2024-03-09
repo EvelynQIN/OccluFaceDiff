@@ -49,7 +49,7 @@ class DiffusionModel(GaussianDiffusion):
         )
     
     # TODO: loss computation between target and prediction
-    def masked_l2(self, target, model_output, **model_kwargs):
+    def masked_l2(self, target, model_output, shape_mica, **model_kwargs):
 
         bs, n, c = target.shape    
 
@@ -115,13 +115,27 @@ class DiffusionModel(GaussianDiffusion):
             points=lmk3d_pred,
             trans=trans_pred.reshape(-1, 3)
         ).reshape(-1, 2)
+        
+        # gt lmk2d error
+        lmk2d_pred_gt = batch_cam_to_img_project(
+            points=model_kwargs["lmk_3d_cam"].reshape(bs*n, -1, 3),
+            trans=trans_gt.reshape(-1, 3)
+        ).reshape(-1, 2)
 
         # normalize lmk2d
         IMAGE_SIZE = 224
         lmk2d_pred_normed = lmk2d_pred / IMAGE_SIZE * 2 - 1
+        lmk2d_pred_gt_normed = lmk2d_pred_gt / IMAGE_SIZE * 2 -1
         
         lmk2d_loss = torch.mean(
             torch.norm(model_kwargs["lmk_2d"].reshape(-1, 2) - lmk2d_pred_normed, 2, -1))
+        
+        lmk2d_loss_gt = torch.mean(
+            torch.norm(model_kwargs["lmk_2d"].reshape(-1, 2) - lmk2d_pred_gt_normed, 2, -1))
+        
+        # mica_shape_error 
+        shape_mica_loss = torch.mean(
+            torch.norm(flame_params_gt[:, :300].reshape(bs, n, -1)[:, 0,:] - shape_mica, 2, -1))
             
         loss = 3.0 * shape_loss + 30.0 * pose_loss + 10.0 * expr_loss + 10 * trans_loss \
                 + 0.01 * verts3d_loss + 0.01 * lmk2d_loss \
@@ -137,6 +151,8 @@ class DiffusionModel(GaussianDiffusion):
             "verts3d_loss": verts3d_loss,
             "expt_jitter": exp_jitter,
             "pose_jitter": pose_jitter,
+            "lmk2d_gt_loss": lmk2d_loss_gt,
+            "shape_mica_loss": shape_mica_loss
         }
 
         return loss_dict
@@ -165,7 +181,7 @@ class DiffusionModel(GaussianDiffusion):
             if self.loss_type == LossType.RESCALED_KL:  
                 terms["loss"] *= self.num_timesteps
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
-            model_output = model(x_t, self._scale_timesteps(t), **model_kwargs)
+            model_output, shape_mica = model(x_t, self._scale_timesteps(t), return_mica=True, **model_kwargs)
 
             if self.model_var_type in [
                 ModelVarType.LEARNED,
@@ -203,6 +219,7 @@ class DiffusionModel(GaussianDiffusion):
             terms.update(self.masked_l2(
                 target,
                 model_output,
+                shape_mica,
                 **model_kwargs
             ))
 

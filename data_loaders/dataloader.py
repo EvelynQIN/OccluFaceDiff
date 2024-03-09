@@ -219,11 +219,6 @@ def load_data(args, dataset, dataset_path, split, subject_id = None, selected_mo
             input_motion_length : the input motion length
     """
 
-    
-    
-    norm_dict_path = get_mean_std_path(dataset)
-    norm_dict = torch.load(os.path.join(dataset_path, norm_dict_path))
-
     # TODO: train all datasets at fps=60
     if dataset == "FaMoS":
         # downsample FaMoS to half
@@ -242,25 +237,32 @@ def load_data(args, dataset, dataset_path, split, subject_id = None, selected_mo
             motion_paths = get_valid_motion_path_list(motion_paths, skip_frame, args.input_motion_length) 
         np.save(motion_paths_fname, motion_paths, allow_pickle=True)
 
-    # # compute the mean and std for the training data
-    # if os.path.exists(os.path.join(dataset_path, norm_dict_path)):
-    #     norm_dict = torch.load(os.path.join(dataset_path, norm_dict_path))
-    # else:
-    #     norm_dict = {}
-    #     verts_3d_list = torch.cat(motion_list['lmk_3d_normed'], dim=0).reshape(-1, 3)
-    #     target_list = torch.cat(motion_list['target'], dim=0)
-    #     norm_dict['mean'] = {
-    #         "lmk_3d_normed": verts_3d_list.mean(dim=0).float(),
-    #         "target": target_list.mean(dim=0).float(),
-    #         "trans": torch.FloatTensor([0.004, 0.222, 1.200])
-    #     }
-    #     norm_dict['std'] = {
-    #         "lmk_3d_normed": verts_3d_list.std(dim=0).float(),
-    #         "target": target_list.std(dim=0).float(),
-    #     }
+    # compute the mean and std for the training data
+    norm_dict_path = get_mean_std_path(dataset)
+    if os.path.exists(os.path.join(dataset_path, norm_dict_path)):
+        norm_dict = torch.load(os.path.join(dataset_path, norm_dict_path))
+    else:
+        norm_dict = {}
+        lmk_3d_normed = []
+        target = []
+        for path in motion_paths:
+            motion = torch.load(path)
+            lmk_3d_normed.append(motion['lmk_3d_normed'])
+            target.append(motion['target'])
+        verts_3d_list = torch.cat(lmk_3d_normed, dim=0).reshape(-1, 3)
+        target_list = torch.cat(target, dim=0)
+        norm_dict['mean'] = {
+            "lmk_3d_normed": verts_3d_list.mean(dim=0).float(),
+            "target": target_list.mean(dim=0).float(),
+            "trans": torch.FloatTensor([0.004, 0.222, 1.200])
+        }
+        norm_dict['std'] = {
+            "lmk_3d_normed": verts_3d_list.std(dim=0).float(),
+            "target": target_list.std(dim=0).float(),
+        }
         
-    #     with open(os.path.join(dataset_path, norm_dict_path), "wb") as f:
-    #         torch.save(norm_dict, f)
+        with open(os.path.join(dataset_path, norm_dict_path), "wb") as f:
+            torch.save(norm_dict, f)
 
     return  motion_paths, norm_dict
 
