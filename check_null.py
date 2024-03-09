@@ -36,6 +36,6 @@ def main():
     split = 'val'
     motion_paths = glob.glob(os.path.join(data_dir, split, f"*.pt"))
     val_paths = check(motion_paths, skip_frame, input_motion_length)
-    np.save(os.path.join(data_dir, 'valid_motion_paths', f'{split}.npy'), val_paths)
+    # np.save(os.path.join(data_dir, 'valid_motion_paths', f'{split}.npy'), val_paths)
 
 main()

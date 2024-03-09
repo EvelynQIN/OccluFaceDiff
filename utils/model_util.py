@@ -50,31 +50,36 @@ def create_model_and_diffusion(args, pretrained_args):
     diffusion = create_gaussian_diffusion(args)
     return cam_model, denoise_model, diffusion
 
-def create_model_and_diffusionTransformer(args):
+def create_model_and_diffTransformer(args, pretrained_args):
     arch = args.arch  
+    cam_model = Cam_Calibration(**get_cam_args(pretrained_args.cam))
     if "Enc" in arch:
-        model = denoising_model.TransformerEncoder(**get_transformer_args(args))
+        denoise_model = denoising_model.TransformerEncoder(**get_transformer_args(args, pretrained_args.mica))
     elif "Trans" in arch:
-        model = denoising_model.FaceTransformer(**get_transformer_args(args))
+        denoise_model = denoising_model.FaceTransformer(**get_transformer_args(args, pretrained_args.mica))
     elif "GRU" in arch:
-        model = denoising_model.GRUDecoder(**get_transformer_args(args))
+        denoise_model = denoising_model.GRUDecoder(**get_transformer_args(args, pretrained_args.mica))
+    else:
+        raise  ValueError("Invalid architecture name!")
     diffusion = create_gaussian_diffusion(args)
-    return model, diffusion
+    return cam_model, denoise_model, diffusion
 
-def get_transformer_args(args):
+def get_transformer_args(args, mica_args):
     return {
+        "mica_args": mica_args,
         "arch": args.arch,
-        "nfeats": args.motion_nfeat,
+        "nfeats": args.target_nfeat,
+        "lmk3d_dim": args.lmk3d_dim,
+        "lmk2d_dim": args.lmk2d_dim,
         "latent_dim": args.latent_dim,
-        "sparse_dim": args.sparse_dim,
-        "dropout": args.dropout,
-        "cond_mask_prob": args.cond_mask_prob,
-        "dataset": args.dataset,
         "ff_size": args.ff_size,
-        "num_enc_layers": args.num_enc_layers,
+        "num_enc_layers": args. num_enc_layers,
         "num_dec_layers": args.num_dec_layers,
-        "num_heads": args.num_heads, 
+        "num_heads": args.num_heads,
+        "dropout": args.dropout,
+        "dataset": args.dataset,
         "use_mask": args.use_mask,
+        "cond_mask_prob": args.cond_mask_prob
     }
 
 def get_cam_args(args):

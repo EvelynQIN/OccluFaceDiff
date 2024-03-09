@@ -8,7 +8,7 @@ from utils.image_process import batch_crop_lmks
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from collections import defaultdict
-import pickle
+import random
 
 class TrainDataset(Dataset):
     def __init__(
@@ -69,17 +69,17 @@ class TrainDataset(Dataset):
         img_start_fid = torch.sum(motion_dict['img_mask'][:start_id])
         img_arr = motion_dict['arcface_input'][img_start_fid:img_start_fid+n_imgs] # (n_imgs, 3, 112, 112)
 
-        # make sure there are always 4 images within the clipped image
-        
+        # make sure there are always 4 images within the clipped sequence
         needed_imgs = 4 - n_imgs
-        if needed_imgs <= 0:
-            # randomly select 4 images
-            img_ids = torch.randint(0, n_imgs, size=(4,))
+        if needed_imgs < 0:
+            # randomly select 4 images wo replacement
+            img_ids = torch.LongTensor(random.sample(range(n_imgs), 4))
             img_arr = img_arr[img_ids]
-        else:
-            # inject needed images from other frames
-            img_arr_added = motion_dict['arcface_input'][:needed_imgs]
-            img_arr = torch.cat([img_arr, img_arr_added], dim=0)
+        elif needed_imgs > 0:
+            # repeat needed images
+            img_arr_added_ids = torch.randint(0, n_imgs, size=(needed_imgs,))
+            img_arr_repeated = motion_dict['arcface_input'][img_arr_added_ids]
+            img_arr = torch.cat([img_arr, img_arr_repeated], dim=0)
         assert (not img_arr.isnan().any()) and img_arr.shape[0] == 4
             
         # Normalization 
@@ -218,23 +218,25 @@ def load_data(args, dataset, dataset_path, split, subject_id = None, selected_mo
             split : train or test
             input_motion_length : the input motion length
     """
-
     # TODO: train all datasets at fps=60
     if dataset == "FaMoS":
         # downsample FaMoS to half
         skip_frame = 1
     else:
         skip_frame = 1
-        
+    
+    input_motion_length = args.input_motion_length if "input_motion_length" in args.keys() else None
     motion_paths_fname = os.path.join(dataset_path, dataset, 'valid_motion_paths', f'{split}.npy')
     
     if os.path.exists(motion_paths_fname):
         motion_paths = np.load(motion_paths_fname, allow_pickle=True)
     else:
-        discard_shorter_seq = True if (args.input_motion_length is not None) and (split != "test") else False
+        if not os.path.exists(os.path.join(dataset_path, dataset, 'valid_motion_paths')):
+            os.makedirs(os.path.join(dataset_path, dataset, 'valid_motion_paths'))
+        discard_shorter_seq = True if (input_motion_length is not None) and (split != "test") else False
         motion_paths = get_path(dataset_path, dataset, split, subject_id, selected_motion_ids)
         if discard_shorter_seq:
-            motion_paths = get_valid_motion_path_list(motion_paths, skip_frame, args.input_motion_length) 
+            motion_paths = get_valid_motion_path_list(motion_paths, skip_frame, input_motion_length) 
         np.save(motion_paths_fname, motion_paths, allow_pickle=True)
 
     # compute the mean and std for the training data

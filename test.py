@@ -7,7 +7,7 @@ import numpy as np
 import trimesh
 import torch
 
-from data_loaders.dataloader import load_data, TestDataset, load_data_zero_posed
+from data_loaders.dataloader import load_data, TestDataset
 
 from model.FLAME import FLAME
 

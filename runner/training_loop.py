@@ -75,7 +75,8 @@ class TrainLoop:
         self.opt = AdamW(
             self.mp_trainer.master_params, lr=self.lr, weight_decay=self.weight_decay
         )
-        # self.scheduler = WarmupCosineSchedule(self.opt, warmup_steps=50, t_total=self.num_steps)
+        if self.args.cosine_scheduler:
+            self.scheduler = WarmupCosineSchedule(self.opt, warmup_steps=50, t_total=self.num_steps)
         
         if self.resume_epoch and self.load_optimizer:
             self._load_optimizer_state()
@@ -171,9 +172,11 @@ class TrainLoop:
         if grad_update:
             self.forward_backward(batch, log_loss=True, **model_kwargs)
             self.mp_trainer.optimize(self.opt)
-            # self.scheduler.step()
-            # self.lr = self.scheduler.get_lr()[0]
-            self._step_lr()
+            if self.args.cosine_scheduler:
+                self.scheduler.step()
+                self.lr = self.scheduler.get_last_lr()[0]
+            else:
+                self._step_lr()
             self.mp_trainer.zero_grad()
             torch.cuda.empty_cache()
         else:

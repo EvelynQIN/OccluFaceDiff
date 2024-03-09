@@ -9,8 +9,8 @@ RADIANS_TO_DEGREES = 360.0 / (2 * math.pi)  # 57.2958 grads
 METERS_TO_MILLIMETERS = 1000.0
 
 def pred_jitter(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
     fps, flame_v_mask
 ):
     pred_jitter = (
@@ -30,8 +30,8 @@ def pred_jitter(
 
 
 def gt_jitter(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
     fps, flame_v_mask
 ):
     gt_jitter = (
@@ -51,8 +51,8 @@ def gt_jitter(
 
 
 def pose_error(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
     fps, flame_v_mask
 ):
     diff = pose_aa_gt - pose_aa_pred
@@ -61,24 +61,24 @@ def pose_error(
     rot_error = torch.mean(torch.absolute(diff))
     return rot_error * RADIANS_TO_DEGREES
 
-def trans_error(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
-    fps, flame_v_mask  
+def shape_error(
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
+    fps, flame_v_mask   
 ):
-    mean_translation_error = torch.mean(
+    mean_shape_error = torch.mean(
         torch.norm(
-            trans_gt.reshape(-1, 3) - trans_pred.reshape(-1, 3),
+            shape_gt.reshape(-1, 300) - shape_pred.reshape(-1, 300),
             2,
             1
         )
     )
-    return mean_translation_error * METERS_TO_MILLIMETERS
+    return mean_shape_error
 
 def expre_error(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
-    fps, flame_v_mask    
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
+    fps, flame_v_mask   
 ):
     mean_expression_error = torch.mean(
         torch.norm(
@@ -90,8 +90,8 @@ def expre_error(
     return mean_expression_error
 
 def lmk_3d_mvpe(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
     fps, flame_v_mask    
 ):
     lmk_3d_mean_vertex_position_error = torch.mean(
@@ -104,9 +104,9 @@ def lmk_3d_mvpe(
     return lmk_3d_mean_vertex_position_error * METERS_TO_MILLIMETERS
 
 def mvpe(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
-    fps, flame_v_mask
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
+    fps, flame_v_mask   
 ):
     mean_vertex_pos_error = torch.mean(
         torch.norm(
@@ -118,8 +118,8 @@ def mvpe(
     return mean_vertex_pos_error * METERS_TO_MILLIMETERS
 
 def mvpe_face(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
     fps, flame_v_mask    
 ):
     verts_gt_face = torch.index_select(verts_gt, 1, flame_v_mask['face'])
@@ -134,9 +134,9 @@ def mvpe_face(
     return mean_vertex_pos_error * METERS_TO_MILLIMETERS
 
 def mvpe_lips(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
-    fps, flame_v_mask    
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
+    fps, flame_v_mask   
 ):
     verts_gt_lips = torch.index_select(verts_gt, 1, flame_v_mask['lips'])
     verts_pred_lips = torch.index_select(verts_pred, 1, flame_v_mask['lips'])
@@ -150,9 +150,9 @@ def mvpe_lips(
     return mean_vertex_pos_error * METERS_TO_MILLIMETERS
 
 def mvpe_eye_region(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
-    fps, flame_v_mask    
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
+    fps, flame_v_mask   
 ):
     verts_gt_eyes = torch.index_select(verts_gt, 1, flame_v_mask['eye_region'])
     verts_pred_eyes = torch.index_select(verts_pred, 1, flame_v_mask['eye_region'])
@@ -166,9 +166,9 @@ def mvpe_eye_region(
     return mean_vertex_pos_error * METERS_TO_MILLIMETERS
 
 def mvpe_forehead(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
-    fps, flame_v_mask    
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
+    fps, flame_v_mask   
 ):
     verts_gt_forehead = torch.index_select(verts_gt, 1, flame_v_mask['forehead'])
     verts_pred_forehead = torch.index_select(verts_pred, 1, flame_v_mask['forehead'])
@@ -182,8 +182,8 @@ def mvpe_forehead(
     return mean_vertex_pos_error * METERS_TO_MILLIMETERS
 
 def mvpe_neck(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
     fps, flame_v_mask    
 ):
     verts_gt_neck = torch.index_select(verts_gt, 1, flame_v_mask['neck'])
@@ -198,9 +198,9 @@ def mvpe_neck(
     return mean_vertex_pos_error * METERS_TO_MILLIMETERS
 
 def mvpe_nose(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
-    fps, flame_v_mask    
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
+    fps, flame_v_mask   
 ):
     verts_gt_nose = torch.index_select(verts_gt, 1, flame_v_mask['nose'])
     verts_pred_nose = torch.index_select(verts_pred, 1, flame_v_mask['nose'])
@@ -214,9 +214,9 @@ def mvpe_nose(
     return mean_vertex_pos_error * METERS_TO_MILLIMETERS
 
 def mvve(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
-    fps, flame_v_mask
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
+    fps, flame_v_mask   
 ):
     gt_velocity = (verts_gt[1:, ...] - verts_gt[:-1, ...]) * fps
     pred_velocity = (verts_pred[1:, ...] - verts_pred[:-1, ...]) * fps
@@ -226,9 +226,9 @@ def mvve(
     return vel_error * METERS_TO_MILLIMETERS
 
 def mean_full_vertex_error(
-    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred,
-    expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt,
-    fps, flame_v_mask
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
+    fps, flame_v_mask   
 ):
     full_vertex_pos_error = torch.mean(
         torch.norm(
@@ -240,6 +240,19 @@ def mean_full_vertex_error(
     )
     return full_vertex_pos_error * METERS_TO_MILLIMETERS
 
+def lmk_2d_error(
+    shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+    shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
+    fps, flame_v_mask   
+):
+    lmk_2d_error = torch.mean(
+        torch.norm(
+            lmk_2d_gt.reshape(-1, 2) - lmk_2d_pred.reshape(-1, 2),
+            2,
+            -1
+        ),
+    )
+    return lmk_2d_error
     
 metric_funcs_dict = {
     "pred_jitter": pred_jitter,
@@ -247,7 +260,7 @@ metric_funcs_dict = {
     "mvpe": mvpe,
     "mvve": mvve,
     "pose_error": pose_error,
-    "trans_error": trans_error,
+    "shape_error": shape_error,
     "expre_error": expre_error,
     "lmk_3d_mvpe": lmk_3d_mvpe,
     "mean_full_vertex_error": mean_full_vertex_error,
@@ -257,6 +270,7 @@ metric_funcs_dict = {
     "mvpe_lips": mvpe_lips,
     "mvpe_neck": mvpe_neck,
     "mvpe_nose": mvpe_nose,
+    "lmk_2d_mpe": lmk_2d_error
 }
 
 

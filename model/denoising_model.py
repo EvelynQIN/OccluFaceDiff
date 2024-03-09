@@ -3,8 +3,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  
 from utils import dist_util
+from model.mica import MICA 
+import math
 
-def neighborhood_mask(target_size, weight_decay, bias_step, symm=False):        
+def neighborhood_mask(target_size, num_heads, bias_step, symm=False):        
     """compute the target mask, decay the weight for longer steps on the left (casual mask)
 
     Args:
@@ -15,6 +17,19 @@ def neighborhood_mask(target_size, weight_decay, bias_step, symm=False):
     Returns:
         mask: shape (target_size, target_size)
     """
+    def get_slopes(n):
+        def get_slopes_power_of_2(n):
+            start = (2**(-2**-(math.log2(n)-3)))
+            ratio = start
+            return [start*ratio**i for i in range(n)]
+        
+        if math.log2(n).is_integer():
+            return get_slopes_power_of_2(n)                   
+        else:                                                 
+            closest_power_of_2 = 2**math.floor(math.log2(n)) 
+            return get_slopes_power_of_2(closest_power_of_2) + get_slopes(2*closest_power_of_2)[0::2][:n-closest_power_of_2]
+        
+    weight_decay = torch.Tensor(get_slopes(num_heads))
     bias = torch.arange(start=0, end=target_size, step=bias_step).unsqueeze(1).repeat(1,bias_step).view(-1) // (bias_step)
     bias_right = - bias
     bias_left = - torch.flip(bias,dims=[0])
@@ -23,15 +38,14 @@ def neighborhood_mask(target_size, weight_decay, bias_step, symm=False):
         for i in range(target_size):
             alibi[i, :i+1] = bias_left[-(i+1):]
             alibi[i, i+1:] = bias_right[:target_size-i-1]
-            alibi = weight_decay * alibi
     else:
         for i in range(target_size):
             alibi[i, :i+1] = bias_left[-(i+1):]
-        alibi = weight_decay * alibi
-        mask = (torch.triu(torch.ones(target_size, target_size)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        alibi = mask + alibi
-    return alibi
+    alibi = weight_decay.unsqueeze(1).unsqueeze(1) * alibi.unsqueeze(0)
+    mask = (torch.triu(torch.ones(target_size, target_size)) == 1).transpose(0, 1)
+    mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+    alibi = mask + alibi
+    return alibi    # (num_heads, target_size, target_size)
 
 class SingleBranchDecoder(nn.Module):
     def __init__(
@@ -209,6 +223,7 @@ class MultiBranchTransformer(nn.Module):
 class FaceTransformer(nn.Module):
     def __init__(
         self,
+        mica_args,
         arch,
         nfeats,
         lmk3d_dim=68*3,
@@ -221,15 +236,19 @@ class FaceTransformer(nn.Module):
         dropout=0.1,
         activation="gelu", 
         dataset='FaMoS',
-        nhead_pose=1,    # number of heafdss for pose reconstruction
         use_mask=True,
         **kargs):
         super().__init__()
 
+        self.tag = 'FaceTransformer'
+        self.mica_args = mica_args
         self.input_feats = nfeats
-        self.lmk_dim = sparse_dim
+        self.lmk3d_dim = lmk3d_dim
+        self.lmk2d_dim = lmk2d_dim 
         self.dataset = dataset
         self.use_mask = use_mask
+        if self.use_mask:
+            print(f"[{self.tag}] Using alibi mask for decoder.")
         self.latent_dim = latent_dim
 
         self.ff_size = ff_size
@@ -241,14 +260,30 @@ class FaceTransformer(nn.Module):
 
         self.cond_mask_prob = kargs.get('cond_mask_prob', 0.)
         self.arch = arch
-        self.lmk_process = Lmk3dProcess(self.lmk_dim, self.latent_dim)
+        
+        self.nshape = 300
+        self.nexp = 100 
+        self.npose = 5 * 6 
+        self.ntrans = 3
+        
+        ### layers
+        
+        # process the condition 
+        self.lmk3d_process = InputProcess(self.lmk3d_dim, self.latent_dim)
+        self.lmk2d_process = InputProcess(self.lmk2d_dim, self.latent_dim)
+        self.mica_process = nn.Linear(self.nshape, self.latent_dim)
+        
         self.input_process = InputProcess(self.input_feats, self.latent_dim)
+        
         self.sequence_pos_encoder = PositionalEncoding(self.latent_dim, self.dropout)
         self.embed_timestep = TimestepEmbedder(self.latent_dim, self.sequence_pos_encoder)
-        target_mask = neighborhood_mask(target_size=2000, weight_decay=0.2, bias_step=20)
+        target_mask = neighborhood_mask(target_size=2000, num_heads = self.num_heads, bias_step=20)
         self.register_buffer('tgt_mask', target_mask)
         
-        print("Using transformer as backbone ...")
+        # load pretrained mica model
+        self.mica = MICA(self.mica_args)
+        
+        print(f"[{self.tag}] Using transformer as backbone.")
         self.transformer = nn.Transformer(
             d_model=self.latent_dim,
             nhead=self.num_heads,
@@ -260,53 +295,71 @@ class FaceTransformer(nn.Module):
             norm_first=False
         )
         
-        # separately output pose & expr
-        # self.pose_latent_dim = (self.latent_dim // self.num_heads) * nhead_pose
-        # self.expr_latent_dim = self.latent_dim - self.pose_latent_dim 
-        self.outputprocess = OutputProcess(input_feats=self.input_feats, latent_dim=self.latent_dim)
-        # self.outputprocess_expr = OutputProcess(input_feats=100, latent_dim=self.expr_latent_dim)
+        self.outputprocess_shape = ShapeOutput(output_feats=self.nshape, latent_dim=self.nshape)
+        self.outputprocess_motion = MotionOutput(output_feats=self.input_feats, latent_dim=self.latent_dim)
 
     def mask_cond_lmk(self, cond, force_mask=False):
-        bs, n, c = cond.shape
+        bs = cond.shape[0]
+        ndim = len(cond.shape)
         if force_mask:
             return torch.zeros_like(cond)
         elif self.training and self.cond_mask_prob > 0.0:
             mask = torch.bernoulli(
                 torch.ones(bs, device=cond.device) * self.cond_mask_prob
-            ).view(
-                bs, 1, 1
-            )  # 1-> use null_cond, 0-> use real cond
+            )
+            if ndim == 3:
+                mask = mask.view(bs, 1, 1)
+            elif ndim == 2:
+                mask = mask.view(bs, 1)
+            else: 
+                raise ValueError( f"Invalid dimension for conditioning mask {cond.shape}")
+              # 1-> use null_cond, 0-> use real cond
             return cond * (1.0 - mask)
         else:
             return cond
 
 
-    def forward(self, x, timesteps, sparse_emb, force_mask=False, **kwargs):
+    def forward(self, x, timesteps, lmk_3d, lmk_2d, img_arr, force_mask=False, return_mica=False, **kwargs):
         """
         x: [batch_size, nframes, nfeats] 
         timesteps: [batch_size] (int)
         sparse_emb: [batch_size, nframes, sparse_dim]
         """
         ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
-        lmk_emb = self.lmk_process(
-            self.mask_cond_lmk(sparse_emb, force_mask=force_mask)
+        lmk3d_emb = self.lmk3d_process(
+            self.mask_cond_lmk(lmk_3d, force_mask=force_mask)
         ) # [seqlen, bs, d]
-        lmkseq = self.sequence_pos_encoder(lmk_emb)  # [seqlen, bs, d]
+        
+        lmk2d_emb = self.lmk2d_process(
+            self.mask_cond_lmk(lmk_2d, force_mask=force_mask)
+        ) # [seqlen, bs, d]
+        
+        shape_mica = self.mica(img_arr) # [bs, 300]
+        shape_mica_emb = self.mica_process(
+            self.mask_cond_lmk(shape_mica, force_mask=force_mask)
+        )
+        
+        cond_emb = lmk3d_emb + lmk2d_emb + shape_mica_emb[None,:, :]
+        
+        condseq = self.sequence_pos_encoder(cond_emb)  # [seqlen, bs, d]
         
         tgt_mask=None
         if self.use_mask:
             T = x.shape[1]
-            tgt_mask = self.tgt_mask[:T, :T].clone().detach().to(device=x.device)
+            tgt_mask = self.tgt_mask[:, :T, :T].clone().detach().to(device=x.device)    # (num_heads, seqlen, seqlen)
 
         # cross attention of the sparse cond & motion_output
         x = self.input_process(x)
         x = x + ts_emb   # broadcast add, [seqlen, bs, d]
         xseq = self.sequence_pos_encoder(x)
         
-        decoder_output = self.transformer(lmkseq, xseq, tgt_mask=tgt_mask) # [seqlen, bs, d]
-        output = self.outputprocess(decoder_output)  # [bs, seqlen, 24]
-        # expr_output = self.outputprocess_expr(decoder_output[:, :, self.pose_latent_dim:])  # [bs, seqlen, 100]
-        # output = torch.cat([pose_output, expr_output], dim=-1)  # [bs, nframes, nfeats]
+        decoder_output = self.transformer(condseq, xseq, tgt_mask=tgt_mask) # [seqlen, bs, d]
+        output = self.outputprocess_motion(decoder_output)  # [bs, seqlen, input_nfeats]
+        shape_seq = output[:, :, :self.nshape]
+        shape_agg = self.outputprocess_shape(shape_seq).unsqueeze(1).repeat(1, output.shape[1], 1)
+        output = torch.cat([shape_agg, output[:, :, self.nshape:]],dim=-1)
+        if return_mica:
+            return output, shape_mica
         return output
 
 class TransformerEncoder(nn.Module):
@@ -739,34 +792,50 @@ class InputProcess(nn.Module):
         # category_emb = self.category_aware_embedding(self.category_mask)
         # x = x + category_emb
         # x = self.norm(x)
-        return x 
+        return x
 
-class Lmk3dProcess(nn.Module):
-    def __init__(self, lmk_feats, latent_dim):
+class MotionOutput(nn.Module):
+    def __init__(self, output_feats, latent_dim):
         super().__init__()
-        self.lmk_feats = lmk_feats
+        self.output_feats = output_feats
         self.latent_dim = latent_dim
-        self.lmkEmbedding = nn.Linear(self.lmk_feats, self.latent_dim)
-
-    def forward(self, x):
-        # bs, nframes, motion_nfeats = x.shape
-        x = x.permute(1, 0, 2)  # (nframes, bs, motion_nfeats)
-        x = self.lmkEmbedding(x)
-        return x 
-
-class OutputProcess(nn.Module):
-    def __init__(self, input_feats, latent_dim):
-        super().__init__()
-        self.input_feats = input_feats
-        self.latent_dim = latent_dim
-        self.poseOutput = nn.Sequential(
+        self.fc = nn.Sequential(
             nn.Linear(self.latent_dim, 512),
             nn.ReLU(),
-            nn.Linear(512, self.input_feats)
+            nn.Linear(512, self.output_feats)
         )
         
 
     def forward(self, output):
-        output = self.poseOutput(output)  # [nframes, bs, nfeats]
+        output = self.fc(output)  # [nframes, bs, nfeats]
         output = output.permute(1, 0, 2)  # [bs, nframes, nfeats]
+        return output
+
+class ShapeOutput(nn.Module):
+    def __init__(self, output_feats, latent_dim):
+        super().__init__()
+        self.output_feats = output_feats
+        self.latent_dim = latent_dim
+        
+        self.avg_pool = nn.AdaptiveAvgPool1d(1) # agg over the the frames
+        
+        self.fc = nn.Sequential(
+            nn.Linear(self.latent_dim, 512),
+            nn.ReLU(),
+            nn.Linear(512, self.output_feats)
+        )
+        
+
+    def forward(self, output):
+        """
+
+        Args:
+            output: (bs, n, nshape)
+
+        Returns:
+            _type_: _description_
+        """
+        output = output.transpose(1, 2) # [bs, nshape, n]
+        output = self.avg_pool(output).squeeze(2)    # [bs, nshape]
+        output = self.fc(output)  # [bs, output_feats]
         return output

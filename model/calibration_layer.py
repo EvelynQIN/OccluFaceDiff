@@ -43,7 +43,7 @@ class Cam_Calibration(nn.Module):
         for layer in layers:
             for block in layer.parameters():
                 block.requires_grad = False
-
+        print(f'[{self.tag}] All params are frozen.')
     def forward(self, lmk2d):
         """
         Args:

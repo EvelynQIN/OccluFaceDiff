@@ -54,13 +54,13 @@ class MICA(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool1d(1)
         
         # freeze all the params in mica
-        print(f'[{self.tag}] All the parameters of MICA are frozen.')
         self.freezer([self.arcface, self.flameModel])
 
     def freezer(self, layers):
         for layer in layers:
             for block in layer.parameters():
                 block.requires_grad = False
+        print(f'[{self.tag}] All the parameters of MICA are frozen.')
     
     def load_model(self, device):
         if os.path.exists(self.cfg.pretrained_model_path) and self.cfg.use_pretrained:

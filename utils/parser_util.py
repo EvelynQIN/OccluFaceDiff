@@ -110,10 +110,15 @@ def add_transformer_options(parser):
         help="Architecture types as reported in the paper.",
     )
     group.add_argument(
-        "--motion_nfeat", default=133, type=int, help="motion feature dimension"
+        "--target_nfeat", default=433, type=int, help="motion feature dimension"
     )
+
     group.add_argument(
-        "--sparse_dim", default=68*3, type=int, help="sparse signal feature dimension"
+        "--lmk3d_dim", default=68*3, type=int, help="3d lmks signal feature dimension"
+    )
+    
+    group.add_argument(
+        "--lmk2d_dim", default=68*2, type=int, help="2d lmks signal feature dimension"
     )
     group.add_argument(
         "--num_enc_layers", default=1, type=int, help="Number of encoder layers."
@@ -301,6 +306,11 @@ def add_training_options(parser):
         default=0,
         type=int,
         help="Number of learning rate anneal steps.",
+    )
+    group.add_argument(
+        "--cosine_scheduler",
+        action="store_true",
+        help="If True, use the cosine scheduler with warm up steps.",
     )
     group.add_argument(
         "--train_dataset_repeat_times",
