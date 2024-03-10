@@ -392,17 +392,12 @@ def add_predict_options(parser):
 def add_sampling_options(parser):
     group = parser.add_argument_group("sampling")
     group.add_argument(
-        "--overlapping_test",
-        action="store_true",
-        help="enabling overlapping test",
+        "--split",
+        default="test",
+        type=str,
+        help="data split from which to sample",
     )
 
-    group.add_argument(
-        "--sld_wind_size",
-        default=70,
-        type=int,
-        help="the sliding window size",
-    )
     group.add_argument(
         "--vis",
         action="store_true",
@@ -420,13 +415,12 @@ def add_sampling_options(parser):
     )
     group.add_argument(
         "--fps",
-        default=30,
+        default=60,
         type=int,
         help="FPS",
     )
     group.add_argument(
         "--model_path",
-        # required=True,
         type=str,
         help="Path to model####.pt file to be sampled.",
     )

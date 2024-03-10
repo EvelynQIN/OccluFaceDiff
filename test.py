@@ -18,16 +18,22 @@ from utils import utils_transform, utils_visualize
 from utils.metrics import get_metric_function
 from utils.model_util import create_model_and_diffusion, load_model_wo_clip
 from utils.parser_util import sample_args
+from utils.famos_camera import batch_cam_to_img_project
+from configs.config import get_cfg_defaults
 
 device = torch.device("cuda")
+
+IMAGE_SIZE = 224
 
 pred_metrics = [
     "pred_jitter",
     "mvpe",
     "mvve",
+    "shape_error",
     "expre_error",
     "pose_error",
     "lmk_3d_mvpe",
+    "lmk_2d_mpe",
     "mvpe_face",
     "mvpe_eye_region",
     "mvpe_forehead",
@@ -45,6 +51,16 @@ full_vertex_metrics = [
 
 all_metrics = pred_metrics + gt_metrics + full_vertex_metrics
 
+def parse_model_target(target):
+    nshape = 300
+    nexp = 100 
+    npose = 5*6 
+    ntrans = 3 
+    shape = target[:, :, :nshape]
+    exp = target[:, :, nshape:nshape+nexp]
+    pose = target[:, :, nshape+nexp:-ntrans]
+    trans = target[:, :, -ntrans:]
+    return shape, exp, pose, trans
 
 def non_overlapping_test(
     args,
@@ -121,7 +137,6 @@ def non_overlapping_test(
         output_sample = sample.cpu().float()
 
     return output_sample, motion_target, shape_gt, motion_id
-
 
 def overlapping_test(
     args,
@@ -252,39 +267,35 @@ def evaluate_prediction(
     sample,
     flame,
     motion_target, 
-    shape_gt,
+    lmk_2d_gt,
     fps,
     motion_id,
-    face_mask,
     flame_v_mask,
-    split,
-    test_type
+    split
 ):
     num_frames = motion_target.shape[0]
-    pose_6d_pred = sample[:, :24]
-    pose_aa_pred = utils_transform.sixd2aa(pose_6d_pred.reshape(-1, 6)).reshape(num_frames, -1)
-    expr_pred = sample[:, 24:]
+    shape_gt, expr_gt, pose_gt, trans_gt = parse_model_target(motion_target)
+    shape_pred, expr_pred, pose_pred, trans_pred = parse_model_target(sample)
     
-    # rigid transformation (zero)
-    trans = torch.zeros((num_frames, 3))
-    pose_root_aa = torch.zeros((num_frames, 3))
+    # pose 6d to aa
+    pose_aa_gt = utils_transform.sixd2aa(pose_gt.reshape(-1, 6)).reshape(num_frames, -1)
+    pose_aa_pred = utils_transform.sixd2aa(pose_pred.reshape(-1, 6)).reshape(num_frames, -1)
     
-    pose_aa_pred_all = torch.cat([pose_root_aa, pose_aa_pred], dim=1)
-    verts_pred, lmk_3d_pred = flame(shape_gt, expr_pred, pose_aa_pred_all, trans)
-
-    pose_6d_gt = motion_target[:, :24]
-    pose_aa_gt = utils_transform.sixd2aa(pose_6d_gt.reshape(-1, 6)).reshape(num_frames, -1)
-    pose_aa_gt_all = torch.cat([pose_root_aa, pose_aa_gt], dim=1)
-    expr_gt = motion_target[:, 24:]
-    verts_gt, lmk_3d_gt = flame(shape_gt, expr_gt, pose_aa_gt_all, trans)                
+    
+    # flame regress
+    verts_gt, lmk_3d_gt = flame(shape_gt, expr_gt, pose_aa_gt)   
+    verts_pred, lmk_3d_pred = flame(shape_pred, expr_pred, pose_aa_pred)         
+    
+    # 2d reprojection
+    lmk_2d_pred = batch_cam_to_img_project(lmk_3d_pred, trans_pred) 
 
     eval_log = {}
     for metric in metrics:
         eval_log[metric] = (
             get_metric_function(metric)(
-                shape_gt, expr_pred, pose_aa_pred, trans, verts_pred, lmk_3d_pred,
-                expr_gt, pose_aa_gt, trans, verts_gt, lmk_3d_gt,
-                fps, flame_v_mask
+                shape_gt[:,0,:], expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+                shape_pred[:,0,:], expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
+                fps, flame_v_mask 
             )
             .numpy()
         )
@@ -293,8 +304,8 @@ def evaluate_prediction(
     if args.vis:
         subject_id = motion_id[:11] 
         motion_name = motion_id[12:]
-        if split == "train" or (split == "val" and subject_id == "subject_001") or (split == "test" and subject_id == "subject_071"):
-            video_dir = os.path.join(args.output_dir, args.arch, subject_id, test_type)
+        if (split == "val" and subject_id == "subject_001") or (split == "test" and subject_id == "subject_071"):
+            video_dir = os.path.join(args.output_dir, args.arch, subject_id)
             if not os.path.exists(video_dir):
                 os.makedirs(video_dir)
             faces = flame.faces_tensor.numpy()
@@ -306,43 +317,29 @@ def evaluate_prediction(
             vertex_error_per_frame = torch.norm(verts_gt-verts_pred, p=2, dim=2) * 1000.0
             error_heatmaps = utils_visualize.compose_heatmap_to_video_frames(verts_gt, faces, vertex_error_per_frame)
             utils_visualize.concat_videos_to_gif([gt_animation, pred_animation, error_heatmaps], video_path, fps)
-            
-    torch.cuda.empty_cache()
+        
     return eval_log
 
 
-def load_diffusion_model(args):
+def load_diffusion_model_from_ckpt(args, pretrained_args):
     print("Creating model and diffusion...")
     args.arch = args.arch[len("diffusion_") :]
-    model, diffusion = create_model_and_diffusion(args)
+    cam_model, denoise_model, diffusion = create_model_and_diffusion(args, pretrained_args)
 
     print(f"Loading checkpoints from [{args.model_path}]...")
     state_dict = torch.load(args.model_path, map_location="cpu")
-    load_model_wo_clip(model, state_dict)
+    load_model_wo_clip(denoise_model, state_dict)
 
-    model.to("cuda:0")  # dist_util.dev())
-    model.eval()  # disable random masking
-    return model, diffusion
-
-
-def load_mlp_model(args):
-    model = PureMLP(
-        args.latent_dim,
-        args.input_motion_length,
-        args.layers,
-        args.sparse_dim,
-        args.motion_nfeat,
-    )
-    state_dict = torch.load(args.model_path, map_location="cpu")
-    model.load_state_dict(state_dict)
-    model.to("cuda:0")
-    model.eval()
-    return model, None
+    cam_model.to(args.device)
+    cam_model.eval()
+    denoise_model.to(args.device)  # dist_util.dev())
+    denoise_model.eval()  # disable random masking
+    return cam_model, denoise_model, diffusion
 
 
 def main():
     args = sample_args()
-
+    pretrained_args = get_cfg_defaults()
     # to guanrantee reproducibility
     torch.backends.cudnn.benchmark = False
     random.seed(args.seed)
@@ -351,25 +348,24 @@ def main():
 
     fps = args.fps 
 
-    flame = FLAME(args)
+    flame = FLAME(args.flame_model_path, args.flame_lmk_embedding_path)
     print("Loading dataset...")
 
-    split = "val"
-    test_type = "overlap" if args.overlapping_test else "nonoverlap"
-
-    # val data loader
-    test_dict, mean, std = load_data_zero_posed(
+    split = args.split
+    device = 'cuda:0'
+    # load data from given split
+    print("creating val data loader...")
+    motion_paths, norm_dict = load_data(
+        args,
         args.dataset,
         args.dataset_path,
-        split,
-        input_motion_length=args.input_motion_length,
+        "val",
     )
     
     dataset = TestDataset(
         args.dataset,
-        mean,
-        std,
-        test_dict,
+        norm_dict,
+        motion_paths,
         args.no_normalization,
     )
 
@@ -383,59 +379,70 @@ def main():
     flame_vmask_path = "flame_2020/FLAME_masks.pkl"
     with open(flame_vmask_path, 'rb') as f:
         flame_v_mask = pickle.load(f, encoding="latin1")
-    vertex_mask = flame_v_mask["face"]
-    mask = np.array([False] * 5023)
-    mask[vertex_mask] = True
-    face_mask = mask[flame.faces_tensor.numpy()].all(axis=1)
 
     for k, v in flame_v_mask.items():
         flame_v_mask[k] = torch.from_numpy(v)
     
-    model_type = "diffusion"
-    model, diffusion = load_diffusion_model(args)
+    cam_model, denoise_model, diffusion = load_diffusion_model_from_ckpt(args, pretrained_args)
     sample_fn = diffusion.p_sample_loop
-    # elif model_type == "mlp":
-    #     model, _ = load_mlp_model(args)
-    #     sample_fn = None
-    # else:
-    #     raise ValueError(f"Unknown model type {model_type}")
-
-    if not args.overlapping_test:
-        test_func = non_overlapping_test
-    else:
-        print("Overlapping testing...")
-        test_func = overlapping_test
             
     for sample_index in tqdm(range(len(dataset))):
         with torch.no_grad():
-            # motion_id = dataset[sample_index][-1]
-            # if motion_id[:11] != "subject_071":
-            #     continue
-            output_sample, motion_target, shape_gt, motion_id = test_func(
-                args,
-                dataset[sample_index],
-                sample_fn,
-                dataset,
-                model,
-                model_type=model_type
+            flame_params, lmk_2d, lmk_3d_normed, img_arr, motion_id = dataset[sample_index]
+            motion_length = flame_params.shape[0]
+            flame_params = flame_params.unsqueeze(0).to(device)
+            lmk_2d = lmk_2d.unsqueeze(0).to(device)
+            trans_cam = cam_model(lmk_2d)
+            target = torch.cat([flame_params, trans_cam], dim=-1)
+            model_kwargs = {
+                "lmk_2d": lmk_2d,
+                "lmk_3d": lmk_3d_normed.unsqueeze(0).to(device),
+                "img_arr": img_arr.unsqueeze(0).to(device),
+            }
+            if args.fix_noise:
+                # fix noise seed for every frame
+                noise = torch.randn(1, 1, 1).cuda()
+                noise = noise.repeat(1, motion_length, args.target_nfeat)
+            else:
+                noise = None
+                
+            output_sample = sample_fn(
+                denoise_model,
+                (1, motion_length, args.target_nfeat),
+                clip_denoised=False,
+                model_kwargs=model_kwargs,
+                skip_timesteps=0,
+                init_image=None,
+                progress=False,
+                dump_steps=None,
+                noise=noise,
+                const_noise=False,
             )
+            
+            if not args.no_normalization:
+                output_sample = dataset.inv_transform(output_sample.cpu().float())
+                target = dataset.inv_transform(target.cpu().float())
+            else:
+                output_sample = output_sample.cpu().float()
+            
+            lmk_2d_gt = (lmk_2d + 1) * IMAGE_SIZE / 2
 
             instance_log = evaluate_prediction(
                 args,
                 all_metrics,
-                output_sample,
+                output_sample.squeeze(0),
                 flame,
-                motion_target, 
-                shape_gt,
+                target.squeeze(0), 
+                lmk_2d_gt.reshape(motion_length, -1, 2).to('cpu'),
                 fps,
                 motion_id,
-                face_mask,
                 flame_v_mask,
-                split,
-                test_type
+                split
             )
             for key in instance_log:
                 log[key] += instance_log[key]
+            
+            torch.cuda.empty_cache()
 
     # Print the value for all the metrics
     print("Metrics for the predictions")
@@ -451,9 +458,8 @@ def main():
     template_mesh = trimesh.load_mesh(mesh_path)
     for metric in full_vertex_metrics:
         mean_error = log[metric] / len(dataset)
-        img_path = os.path.join(args.output_dir, args.arch, f"{metric}_{test_type}_{split}.png")
+        img_path = os.path.join(args.output_dir, args.arch, f"{metric}_{split}.png")
         utils_visualize.error_heatmap(template_mesh, mean_error, False, img_path)
-
 
 if __name__ == "__main__":
     main()

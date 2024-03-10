@@ -14,7 +14,7 @@ from runner.training_loop import TrainLoop
 
 from utils import dist_util
 
-from utils.model_util import create_model_and_diffTransformer
+from utils.model_util import create_model_and_diffusion
 from utils.parser_util import train_trans_args
 from utils.config import Config
 import wandb
@@ -27,7 +27,7 @@ def train_diffusion_model(args, pretrained_args, train_dataloader, val_dataloade
     num_gpus = torch.cuda.device_count()
     args.num_workers = args.num_workers * num_gpus
 
-    cam_model, denoise_model, diffusion = create_model_and_diffTransformer(args, pretrained_args) # the denoising MLP & spaced diffusion
+    cam_model, denoise_model, diffusion = create_model_and_diffusion(args, pretrained_args) # the denoising MLP & spaced diffusion
 
     if num_gpus > 1:
         print("Let's use", torch.cuda.device_count(), "GPUs!")

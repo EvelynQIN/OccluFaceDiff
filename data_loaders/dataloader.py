@@ -77,9 +77,11 @@ class TrainDataset(Dataset):
             img_arr = img_arr[img_ids]
         elif needed_imgs > 0:
             # repeat needed images
-            img_arr_added_ids = torch.randint(0, n_imgs, size=(needed_imgs,))
+            n_img_available = torch.sum(motion_dict['img_mask'])
+            assert n_img_available > 0
+            img_arr_added_ids = torch.randint(0, n_img_available, size=(needed_imgs,))
             img_arr_repeated = motion_dict['arcface_input'][img_arr_added_ids]
-            img_arr = torch.cat([img_arr, img_arr_repeated], dim=0)
+            img_arr = torch.cat([img_arr, img_arr_repeated], dim=0) if needed_imgs < 4 else img_arr_repeated
         assert (not img_arr.isnan().any()) and img_arr.shape[0] == 4
             
         # Normalization 
@@ -94,23 +96,22 @@ class TrainDataset(Dataset):
         
         return target.float(), lmk_2d.float(), lmk_3d_normed.float(), img_arr.float(), lmk_3d_cam.float()
     
-# TODO: change
 class TestDataset(Dataset):
     def __init__(
         self,
         dataset,
         norm_dict,
-        motion_list,
+        motion_path_list,
         no_normalization=True,
     ):
         self.dataset = dataset
         self.mean = norm_dict['mean']
         self.std = norm_dict['std']
-        self.motion_list = motion_list
+        self.motion_path_list = motion_path_list
         self.no_normalization = no_normalization
 
     def __len__(self):
-        return len(self.data['target'])
+        return len(self.motion_path_list)
 
     def inv_transform(self, target):
         
@@ -120,23 +121,44 @@ class TestDataset(Dataset):
 
     def __getitem__(self, idx):
         
-        num_frames = self.data['target'][idx].shape[0]
-        lmk_2d = self.data['lmk_2d'][idx]
-        lmk_3d = self.data['lmk_3d'][idx]
-        target = self.data['target'][idx]
-        shape = self.data['shape'][idx]
-        motion_id = self.data['motion_ids'][idx]
+        id = idx % len(self.motion_path_list)
 
+        motion_dict = torch.load(self.motion_path_list[id])
+        
+        seqlen = motion_dict['target'].shape[0]
+        
+        lmk_2d = motion_dict['lmk_2d'].reshape(seqlen, -1)  # (n, 68x2)
+        lmk_3d_normed = motion_dict['lmk_3d_normed'].reshape(seqlen, -1) # (n, 68x3)
+        target = motion_dict['target'] # (n, shape300 + exp100 + rot30 + trans3)
+        motion_id = os.path.split(self.motion_path_list[id])[-1].split(os.sep)[0]
+        
+        
+        n_imgs = torch.sum(motion_dict['img_mask'])
+        img_arr = motion_dict['arcface_input'] # (n_imgs, 3, 112, 112)
+
+        # make sure there are always 4 images 
+        needed_imgs = 4 - n_imgs
+        if needed_imgs < 0:
+            # sample 4 images with equal intervals
+            img_ids = torch.arange(0, n_imgs, n_imgs // 4)[:4]
+            img_arr = img_arr[img_ids]
+        elif needed_imgs > 0:
+            # repeat needed images
+            img_arr_added_ids = torch.randint(0, n_imgs, size=(needed_imgs,))
+            img_arr_repeated = motion_dict['arcface_input'][img_arr_added_ids]
+            img_arr = torch.cat([img_arr, img_arr_repeated], dim=0)
+        assert (not img_arr.isnan().any()) and img_arr.shape[0] == 4
+            
         # Normalization 
         if not self.no_normalization:    
-            lmk_2d = ((lmk_2d.reshape(-1, 2) - self.mean['lmk_2d']) / (self.std['lmk_2d'] + 1e-8))
-            lmk_3d = ((lmk_3d.reshape(-1, 3) - self.mean['lmk_3d']) / (self.std['lmk_3d'] + 1e-8))
-            shape = (shape - self.mean['shape']) / (self.std['shape'] + 1e-8)
+            lmk_3d_normed = ((lmk_3d_normed.reshape(-1, 3) - self.mean['lmk_3d_normed']) / (self.std['lmk_3d_normed'] + 1e-8)).reshape(seqlen, -1)
             target = (target - self.mean['target']) / (self.std['target'] + 1e-8)
         
-        lmk_cond = torch.cat([lmk_2d.reshape(num_frames, -1), lmk_3d.reshape(num_frames, -1)], dim=-1) # (nframes, 68x(2+3))
-            
-        return target.float(), lmk_cond.float(), shape.float(), motion_id
+        assert (not target.isnan().any()) 
+        assert (not lmk_2d.isnan().any()) 
+        assert (not lmk_3d_normed.isnan().any()) 
+        
+        return target.float(), lmk_2d.float(), lmk_3d_normed.float(), img_arr.float(), motion_id
 
 
 def get_path(dataset_path, dataset, split, subject_id=None, motion_list=None):

@@ -45,12 +45,6 @@ def load_model_wo_clip(model, state_dict):
     assert all([k.startswith("clip_model.") for k in missing_keys])
 
 def create_model_and_diffusion(args, pretrained_args):
-    cam_model = Cam_Calibration(**get_cam_args(pretrained_args.cam))
-    denoise_model = MultiBranchMLP(**get_mlp_args(args, pretrained_args.mica))
-    diffusion = create_gaussian_diffusion(args)
-    return cam_model, denoise_model, diffusion
-
-def create_model_and_diffTransformer(args, pretrained_args):
     arch = args.arch  
     cam_model = Cam_Calibration(**get_cam_args(pretrained_args.cam))
     if "Enc" in arch:
@@ -59,6 +53,8 @@ def create_model_and_diffTransformer(args, pretrained_args):
         denoise_model = denoising_model.FaceTransformer(**get_transformer_args(args, pretrained_args.mica))
     elif "GRU" in arch:
         denoise_model = denoising_model.GRUDecoder(**get_transformer_args(args, pretrained_args.mica))
+    elif "MLP" in arch:
+        denoise_model = MultiBranchMLP(**get_mlp_args(args, pretrained_args.mica))
     else:
         raise  ValueError("Invalid architecture name!")
     diffusion = create_gaussian_diffusion(args)
