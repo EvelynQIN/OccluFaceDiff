@@ -1,0 +1,9 @@
+# torch
+chumpy
+numpy==1.23.1
+wandb
+tqdm
+scikit-image
+opencv-python
+trimesh
+yacs

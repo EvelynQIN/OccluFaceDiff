@@ -17,26 +17,26 @@ train_dataset_repeat_times: 256
 
 # log
 wandb_log: True
-save_interval: 2 
+save_interval: 1 
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_68_1024d_8h" 
+arch: "diffusion_Transformer_68_512d_48l_4h" 
 target_nfeat: 433
 lmk3d_dim: 204  # 68x3
 lmk2d_dim: 136  # 68x2
 
-latent_dim: 1024
+latent_dim: 512
 dropout: 0.1
 use_mask: True  # use alibi mask
 
 # unusable for gru
-ff_size: 2048
-num_enc_layers: 2
-num_heads: 8
+ff_size: 1024
+num_enc_layers: 4
+num_heads: 4
 
 # unusable for transformer encoder 
-num_dec_layers: 4 
+num_dec_layers: 8 
 
 # unusable for warmup cosine scheduler
 # lr_anneal_steps: 225000 

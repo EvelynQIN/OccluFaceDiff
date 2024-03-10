@@ -157,14 +157,14 @@ class MultiBranchMLP(nn.Module):
         self.dropout = dropout  
         self.cond_latent_dim = cond_latent_dim
 
-        self.shape_num_layers = shape_num_layers 
-        self.shape_latent_dim = shape_latent_dim 
+        # self.shape_num_layers = shape_num_layers 
+        # self.shape_latent_dim = shape_latent_dim 
 
         self.motion_num_layers = motion_num_layers 
         self.motion_latent_dim = motion_latent_dim 
 
-        self.trans_num_layers = trans_num_layers 
-        self.trans_latent_dim = trans_latent_dim 
+        # self.trans_num_layers = trans_num_layers 
+        # self.trans_latent_dim = trans_latent_dim 
 
         self.input_motion_length = kargs.get("input_motion_length")
         self.cond_mask_prob = kargs.get("cond_mask_prob", 0.0)
@@ -176,43 +176,26 @@ class MultiBranchMLP(nn.Module):
         
         # process condition
         self.lmk3d_process = nn.Linear(self.lmk3d_dim, self.cond_latent_dim)
-        self.pred_shape_process = nn.Linear(self.shape_dim, self.cond_latent_dim)
-
-        self.mica_shape_process = nn.Linear(self.shape_dim, self.shape_dim)
-
         self.lmk2d_process = nn.Linear(self.lmk2d_dim, self.cond_latent_dim)
-        self.pred_motion_process = nn.Linear(self.exp_dim+self.pose_dim, self.cond_latent_dim)
+        self.mica_shape_process = nn.Sequential(
+            nn.LayerNorm(self.shape_dim),
+            nn.Linear(self.shape_dim, self.cond_latent_dim)
+        )
 
-        # pred shape
-        self.shape_branch = ShapeBranchMLP(
-            shape_dim=self.shape_dim, 
-            cond_dim=self.shape_dim,    # pure mica shape code
-            latent_dim=self.shape_latent_dim,
-            num_layers=self.shape_num_layers,
-            dropout=self.dropout,
-            dataset=self.dataset,
-            **kargs)
-
-        # pred expression + pose
-        self.motion_nfeats = self.exp_dim+self.pose_dim
+        # get per_frame feature map
         self.motion_branch = SequenceBranchMLP(
-            input_nfeats=self.motion_nfeats, 
-            output_nfeats=self.motion_nfeats, 
+            input_nfeats=self.n_feats, 
+            output_nfeats=self.n_feats, 
             input_motion_length=self.input_motion_length,
             cond_latent_dim=self.cond_latent_dim,
             latent_dim=self.motion_latent_dim, 
             num_layers=self.motion_num_layers, 
             dataset=self.dataset)
         
-        # pred trans 
-        self.trans_branch = SequenceBranchMLP(
-            input_nfeats=self.trans_dim, 
-            output_nfeats=self.trans_dim, 
-            input_motion_length=self.input_motion_length,
-            cond_latent_dim=self.cond_latent_dim,
-            latent_dim=self.trans_latent_dim, 
-            num_layers=self.trans_num_layers, 
-            dataset=self.dataset)
+        # aggrate shape prediction across all frames
+        self.avg_pool = nn.AdaptiveAvgPool1d(1)
+        self.shape_output_process = nn.Linear(self.shape_dim, self.shape_dim)
+        
 
     def mask_cond_sparse(self, cond, force_mask=True):  # mask the condition for classifier-free guidance
         bs = cond.shape[0]
@@ -279,41 +262,30 @@ class MultiBranchMLP(nn.Module):
         lmk2d_masked = self.mask_cond_sparse(lmk_2d, force_mask=force_mask)
         img_masked = self.mask_cond_sparse(img_arr, force_mask=force_mask)
 
-        # separate target
-        input_shape = x[:, 0, :self.shape_dim]  # (bs, 300)
-        input_motion = x[:, :, self.shape_dim:-3]  # (bs,n,30+100)
-        input_trans = x[:, :, -3:]  # (bs,n,3)
-
         # pred shape from cropped image using mica
         shape_mica = self.mica(img_masked) # (bs,300)
-        shape_mica_emb = self.mica_shape_process(shape_mica)
+        assert not shape_mica.isnan().any()
 
         # process the condition to the same cond latent dim space
+        shape_mica_emb = self.mica_shape_process(shape_mica).unsqueeze(1)
         lmk3d_emb = self.lmk3d_process(lmk3d_masked)
         lmk2d_emb = self.lmk2d_process(lmk2d_masked)
-
-        # pred shape branch
-        output_shape = self.shape_branch(input_shape, shape_mica_emb, timesteps)
-
+        cond_emb = shape_mica_emb + lmk3d_emb + lmk2d_emb # (bs, n, cond_dim)
+        
         # pred motion branch
-        shape_pred_emb = self.pred_shape_process(output_shape).unsqueeze(1) # (bs, 1, cond_dim)
-        motion_cond_emb = shape_pred_emb + lmk3d_emb
-        output_motion = self.motion_branch(input_motion, motion_cond_emb, timesteps)
+        output_motion = self.motion_branch(x, cond_emb, timesteps)
+        assert not output_motion.isnan().any()
 
-        # pred trans branch
-        motion_pred_emb = self.pred_motion_process(output_motion)
-        trans_cond_emb = lmk2d_emb + motion_pred_emb + shape_pred_emb
-        output_trans = self.trans_branch(input_trans, trans_cond_emb, timesteps)
+        # output process
+        shape_seq = output_motion[:, :, :self.shape_dim].transpose(1, 2) # (bs, 300, n)
+        shape_agg = self.avg_pool(shape_seq).squeeze(2) # (bs, 300)
+        output_shape = self.shape_output_process(shape_agg)
 
         # concat the output
         output = torch.cat(
-            [output_shape.unsqueeze(1).expand(-1,output_trans.shape[1],-1), output_motion, output_trans], 
+            [output_shape.unsqueeze(1).repeat(1,output_motion.shape[1],1), output_motion[:,:,self.shape_dim:]], 
             axis = -1
         )
-        assert not shape_mica.isnan().any()
-        assert not output_shape.isnan().any()
-        assert not output_motion.isnan().any()
-        assert not output_trans.isnan().any()
 
         if return_mica:
             return output, shape_mica

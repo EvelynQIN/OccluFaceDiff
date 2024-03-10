@@ -49,7 +49,7 @@ class TrainDataset(Dataset):
             input_motion_length = seqlen 
         elif self.input_motion_length is None:  
             # in transformer, randomly clip a subseq
-            input_motion_length = torch.randint(min(50, seqlen), seqlen+1, (1,))[0]
+            input_motion_length = torch.randint(min(60, seqlen), seqlen+1, (1,))[0]
         else:
             # fix motion len
             input_motion_length = self.input_motion_length 

@@ -5,7 +5,7 @@ dataset_path: "./processed_data"
 weight_decay: 0.0005
 batch_size: 32
 gradient_accumulation_steps: 8
-lr: 0.0001
+lr: 0.0003
 device: 0 
 num_workers: 8 
 train_dataset_repeat_times: 128
@@ -31,17 +31,17 @@ lmk3d_dim: 204  # 68x3
 lmk2d_dim: 136  # 68x2
 cond_latent_dim: 512
 
-shape_num_layers: 4
-shape_latent_dim: 512
+# shape_num_layers: 8
+# shape_latent_dim: 512
 
-motion_latent_dim: 512
-motion_num_layers: 4
+motion_latent_dim: 1024
+motion_num_layers:  12
 
-trans_latent_dim: 256
-trans_num_layers: 4
-dropout: 0.1
+# trans_latent_dim: 256
+# trans_num_layers: 4
+dropout: 0.0
 
-arch: "diffusion_DiffMLP_512d" 
+arch: "diffusion_DiffMLP_512d_4l" 
 
 # for flame
 flame_model_path: "flame_2020/generic_model.pkl"
