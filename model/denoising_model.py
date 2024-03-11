@@ -319,13 +319,21 @@ class FaceTransformer(nn.Module):
             return cond
 
 
-    def forward(self, x, timesteps, lmk_3d, lmk_2d, img_arr, force_mask=False, return_mica=False, **kwargs):
+    def forward(self, x, timesteps, lmk_3d, lmk_2d, img_arr, occlusion_mask, force_mask=False, return_mica=False, **kwargs):
         """
         x: [batch_size, nframes, nfeats] 
         timesteps: [batch_size] (int)
-        sparse_emb: [batch_size, nframes, sparse_dim]
+        sparse_emb: [batch_size, nframes, nlmks, 2/3]
+        occlusion_mask: [batch_size, nframes, nlmks]
         """
+        bs, n = lmk_3d.shape[:1]
         ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
+
+        # mask the occluded lmk to be 0
+        occlusion = (1-occlusion_mask).unsqueeze(-1)
+        lmk_3d = (lmk_3d * occlusion).reshape(bs, n, -1)
+        lmk_2d = (lmk_2d * occlusion).reshape(bs, n, -1)
+
         lmk3d_emb = self.lmk3d_process(
             self.mask_cond_lmk(lmk_3d, force_mask=force_mask)
         ) # [seqlen, bs, d]

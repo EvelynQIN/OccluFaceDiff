@@ -143,7 +143,7 @@ class TrainLoop:
             self.model.train()
             print(f"Starting training epoch {epoch}")
             self.epoch = epoch
-            for flame_params, lmk_2d, lmk_3d_normed, img_arr, lmk_3d_cam in tqdm(self.train_loader):
+            for flame_params, lmk_2d, lmk_3d_normed, img_arr, lmk_3d_cam, occlusion_mask in tqdm(self.train_loader):
                 self.step += 1
                 flame_params = flame_params.to(self.device)
                 lmk_2d = lmk_2d.to(self.device)
@@ -154,6 +154,7 @@ class TrainLoop:
                     "lmk_3d": lmk_3d_normed.to(self.device),
                     "img_arr": img_arr.to(self.device),
                     "lmk_3d_cam": lmk_3d_cam.to(self.device),
+                    "occlusion_mask": occlusion_mask.to(self.device),
                     "mean": self.mean,
                     "std": self.std
                 }
@@ -213,7 +214,7 @@ class TrainLoop:
             val_loss[key] = 0.0
         eval_steps = 0.0
         with torch.no_grad():
-            for flame_params, lmk_2d, lmk_3d_normed, img_arr, lmk_3d_cam in tqdm(self.val_loader):
+            for flame_params, lmk_2d, lmk_3d_normed, img_arr, lmk_3d_cam, occlusion_mask in tqdm(self.val_loader):
                 eval_steps += 1
                 flame_params = flame_params.to(self.device)
                 lmk_2d = lmk_2d.to(self.device)
@@ -226,6 +227,7 @@ class TrainLoop:
                     "lmk_3d": lmk_3d_normed.to(self.device),
                     "img_arr": img_arr.to(self.device),
                     "lmk_3d_cam": lmk_3d_cam.to(self.device),
+                    "occlusion_mask": occlusion_mask.to(self.device),
                     "mean": self.mean,
                     "std": self.std
                 }
