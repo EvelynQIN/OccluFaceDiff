@@ -96,7 +96,7 @@ class TrainDataset(Dataset):
         return target.float(), lmk_2d.float(), lmk_3d_normed.float(), img_arr.float(), lmk_3d_cam.float(), occlusion_mask
     
     def add_random_occlusion_mask(self, lmk_2d):
-        input_motion_length, num_lmks = lmk_2d.shape[:1]
+        input_motion_length, num_lmks = lmk_2d.shape[:2]
         occlusion_mask = torch.zeros(input_motion_length, num_lmks) # (n, v)
         add_mask = torch.bernoulli(torch.ones(1) * self.occlusion_mask_prob)[0]
         if add_mask == 0:

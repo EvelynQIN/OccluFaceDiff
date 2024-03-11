@@ -326,7 +326,7 @@ class FaceTransformer(nn.Module):
         sparse_emb: [batch_size, nframes, nlmks, 2/3]
         occlusion_mask: [batch_size, nframes, nlmks]
         """
-        bs, n = lmk_3d.shape[:1]
+        bs, n = lmk_3d.shape[:2]
         ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
 
         # mask the occluded lmk to be 0

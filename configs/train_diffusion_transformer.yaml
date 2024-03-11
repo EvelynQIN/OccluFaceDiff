@@ -2,7 +2,7 @@ save_dir: "./checkpoints/e2e"
 num_epoch: 300
 dataset: "FaMoS" 
 dataset_path: "./processed_data"
-weight_decay: 0.001
+weight_decay: 0.01
 batch_size: 1 
 gradient_accumulation_steps: 256
 lr: 0.0003 
@@ -12,7 +12,7 @@ num_workers: 8
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
-train_dataset_repeat_times: 256
+train_dataset_repeat_times: 128
 # resume_checkpoint: "checkpoints/Transformer_128d_nomask_1l/model_140.pt"
 
 # log
@@ -21,7 +21,7 @@ save_interval: 1
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_68_512d_2l_4h" 
+arch: "diffusion_Transformer_68_512d_2l_4h_occ" 
 target_nfeat: 433
 lmk3d_dim: 204  # 68x3
 lmk2d_dim: 136  # 68x2
