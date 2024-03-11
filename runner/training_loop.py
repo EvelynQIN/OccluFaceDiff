@@ -147,14 +147,19 @@ class TrainLoop:
                 self.step += 1
                 flame_params = flame_params.to(self.device)
                 lmk_2d = lmk_2d.to(self.device)
-                trans_cam = self.cam_model(lmk_2d)
+                occlusion_mask = occlusion_mask.to(self.device)
+
+                # TODO: mask the lmks to predict cam trans
+                bs, n = lmk_2d.shape[:2]
+                trans_cam = self.cam_model(lmk_2d.reshape(bs, n, -1))
+
                 target = torch.cat([flame_params, trans_cam], dim=-1)
                 model_kwargs = {
                     "lmk_2d": lmk_2d.to(self.device),
                     "lmk_3d": lmk_3d_normed.to(self.device),
                     "img_arr": img_arr.to(self.device),
                     "lmk_3d_cam": lmk_3d_cam.to(self.device),
-                    "occlusion_mask": occlusion_mask.to(self.device),
+                    "occlusion_mask": occlusion_mask,
                     "mean": self.mean,
                     "std": self.std
                 }
