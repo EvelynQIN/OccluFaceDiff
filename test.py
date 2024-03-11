@@ -11,8 +11,8 @@ from data_loaders.dataloader import load_data, TestDataset
 
 from model.FLAME import FLAME
 
-from model.networks import PureMLP
 from tqdm import tqdm
+import json
 
 from utils import utils_transform, utils_visualize
 from utils.metrics import get_metric_function
@@ -56,10 +56,10 @@ def parse_model_target(target):
     nexp = 100 
     npose = 5*6 
     ntrans = 3 
-    shape = target[:, :, :nshape]
-    exp = target[:, :, nshape:nshape+nexp]
-    pose = target[:, :, nshape+nexp:-ntrans]
-    trans = target[:, :, -ntrans:]
+    shape = target[:, :nshape]
+    exp = target[:, nshape:nshape+nexp]
+    pose = target[:, nshape+nexp:-ntrans]
+    trans = target[:, -ntrans:]
     return shape, exp, pose, trans
 
 def non_overlapping_test(
@@ -293,8 +293,8 @@ def evaluate_prediction(
     for metric in metrics:
         eval_log[metric] = (
             get_metric_function(metric)(
-                shape_gt[:,0,:], expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
-                shape_pred[:,0,:], expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
+                shape_gt[0,:], expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+                shape_pred[0,:], expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
                 fps, flame_v_mask 
             )
             .numpy()
@@ -311,11 +311,16 @@ def evaluate_prediction(
             faces = flame.faces_tensor.numpy()
             video_path = os.path.join(video_dir, f"{motion_name}.gif")    
             
+            verts_pred[:, :, 1:] = -verts_pred[:, :, 1:]
+            verts_gt[:, :, 1:] = -verts_gt[:, :, 1:]
+            lmk_3d_pred[:, :, 1:] = -lmk_3d_pred[:, :, 1:]
+            lmk_3d_gt[:,:,1:] = -lmk_3d_gt[:,:,1:]
             pred_animation = utils_visualize.mesh_sequence_to_video_frames(verts_pred, faces, lmk_3d_pred)    
             gt_animation = utils_visualize.mesh_sequence_to_video_frames(verts_gt, faces, lmk_3d_gt)
 
             vertex_error_per_frame = torch.norm(verts_gt-verts_pred, p=2, dim=2) * 1000.0
-            error_heatmaps = utils_visualize.compose_heatmap_to_video_frames(verts_gt, faces, vertex_error_per_frame)
+            camera={'pos':(0.0, 0.25, 0.8), 'view_angle': 60}
+            error_heatmaps = utils_visualize.compose_heatmap_to_video_frames(verts_gt, faces, vertex_error_per_frame, camera=camera)
             utils_visualize.concat_videos_to_gif([gt_animation, pred_animation, error_heatmaps], video_path, fps)
         
     return eval_log
@@ -359,7 +364,8 @@ def main():
         args,
         args.dataset,
         args.dataset_path,
-        "val",
+        split,
+        subject_id='071'
     )
     
     dataset = TestDataset(
@@ -418,21 +424,20 @@ def main():
                 noise=noise,
                 const_noise=False,
             )
-            
+            output_sample = output_sample.cpu().float().squeeze(0)
+            target = target.cpu().float().squeeze(0)
             if not args.no_normalization:
-                output_sample = dataset.inv_transform(output_sample.cpu().float())
-                target = dataset.inv_transform(target.cpu().float())
-            else:
-                output_sample = output_sample.cpu().float()
+                output_sample[:,:-3] = dataset.inv_transform(output_sample[:,:-3])
+                target[:,:-3] = dataset.inv_transform(target[:,:-3])
             
             lmk_2d_gt = (lmk_2d + 1) * IMAGE_SIZE / 2
 
             instance_log = evaluate_prediction(
                 args,
                 all_metrics,
-                output_sample.squeeze(0),
+                output_sample,
                 flame,
-                target.squeeze(0), 
+                target, 
                 lmk_2d_gt.reshape(motion_length, -1, 2).to('cpu'),
                 fps,
                 motion_id,
@@ -446,12 +451,18 @@ def main():
 
     # Print the value for all the metrics
     print("Metrics for the predictions")
+    output = {}
     for metric in pred_metrics:
-        print(f"{metric} : {log[metric] / len(dataset)}")
+        output[metric] = log[metric] / len(dataset)
+        print(f"{metric} : {output[metric]}")
 
     print("Metrics for the ground truth")
     for metric in gt_metrics:
-        print(f"{metric} : {log[metric] / len(dataset)}")
+        output[metric] = log[metric] / len(dataset)
+        print(f"{metric} : {output[metric]}")
+    
+    with open(os.path.join(args.output_dir, args.arch, f"metrics_{split}.json"), 'w') as fp:
+        json.dump(output, fp)
     
     # visualize the heatmap for full vertex error
     mesh_path = "flame_2020/template.ply"

@@ -3,6 +3,9 @@ import numpy as np
 from skimage import transform as trans
 from skimage.transform import estimate_transform, warp, resize, rescale
 import torch
+import tqdm 
+import os 
+from glob import glob
 
 input_mean = 127.5
 input_std = 127.5
@@ -75,4 +78,8 @@ def batch_crop_lmks(lmks, trans_scale, scale, image_size=224):
         cropped_lmk = torch.matmul(tform, torch.hstack([lmk, torch.ones([lmk.shape[0],1])]).transpose(0, 1)).transpose(0, 1)[:,:2] 
         # normalized kpt
         lmks_cropped[i] = cropped_lmk/image_size * 2  - 1
-    return lmks_cropped
+    return lmks_cropped 
+
+def video_to_frames(video_path, fps=60):
+    video_name = os.path.split(video_path)[1].split( '.')[0]
+    os.system(f'ffmpeg -y -framerate {fps} -pattern_type glob -i \'output/{video_name}/frames/*.jpg\' -c:v libx264 {video_path}')

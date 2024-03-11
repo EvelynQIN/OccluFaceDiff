@@ -33,9 +33,9 @@ def mesh_sequence_to_video_frames(mesh_verts, faces, lmk_3d=None):
     h, w = 640, 480
 
     cam = pyrender.PerspectiveCamera(yfov=np.pi / 3.0) 
-    camera_pose = np.array([[1.0, 0, 0.0, 0.00],
-                            [0.0, 1.0, 0.0, 0.00],
-                            [0.0, 0.0, 1.0, 0.4],
+    camera_pose = np.array([[1, 0, 0, 0],
+                            [0, 1, 0, 0.22],
+                            [0, 0, 1, 0.6],
                             [0.0, 0.0, 0.0, 1.0]])
 
     light = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=3.0)
@@ -102,11 +102,16 @@ def mesh_sequence_to_video(mesh_verts, faces, video_path, fps, lmk_3d=None):
     """
     
     h, w = 640, 480
+    cam = pyrender.PerspectiveCamera(np.pi / 3) 
+    
+    # [[0.3669,  0.6816,  0.6331, 0],
+    # [-0.6816, -0.2663,  0.6816, -0.222],
+    # [0.6331, -0.6816,  0.3669, -1],
+    # [0.0, 0.0, 0.0, 1.0]]
 
-    cam = pyrender.PerspectiveCamera(yfov=np.pi / 3.0) 
-    camera_pose = np.array([[1.0, 0, 0.0, 0.00],
-                            [0.0, 1.0, 0.0, 0.00],
-                            [0.0, 0.0, 1.0, 0.4],
+    camera_pose = np.array([[1, 0, 0, 0],
+                            [0, 1, 0, 0.22],
+                            [0, 0, 1, 0.8],
                             [0.0, 0.0, 0.0, 1.0]])
 
     light = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=3.0)
@@ -164,7 +169,7 @@ def mesh_sequence_to_video(mesh_verts, faces, video_path, fps, lmk_3d=None):
     video.release()
     
 
-def error_heatmap(template_mesh, metrics, output_array=True, img_path=None, size=(480,640), color_range=None):
+def error_heatmap(template_mesh, metrics, output_array=True, img_path=None, size=(480,640), color_range=None, camera=None):
     """generate heatmap w.r.t. the metrics onto the template face mask
 
     Args:
@@ -182,7 +187,10 @@ def error_heatmap(template_mesh, metrics, output_array=True, img_path=None, size
         vmesh.cmap("jet", metrics)
     vmesh.add_scalarbar(title="mm")
     
-    plt = show(vmesh, offscreen=True, size=size, bg="black")
+    if camera is not None:
+        plt = show(vmesh, offscreen=True, size=size, bg="black", camera=camera)
+    else:
+        plt = show(vmesh, offscreen=True, size=size, bg="black")
     if output_array or img_path is None:
         heatmap_img = plt.screenshot(asarray=output_array)
         plt.close()
@@ -191,7 +199,7 @@ def error_heatmap(template_mesh, metrics, output_array=True, img_path=None, size
         plt.screenshot(img_path)
         plt.close()
 
-def compose_heatmap_to_video_frames(verts_gt, faces, vertex_error, size = (640, 480)):
+def compose_heatmap_to_video_frames(verts_gt, faces, vertex_error, size = (640, 480), camera=None):
     num_frames = verts_gt.shape[0]
     h, w = size
     heatmap_frames = np.zeros((num_frames, h, w, 3), dtype=np.uint8)
@@ -205,7 +213,7 @@ def compose_heatmap_to_video_frames(verts_gt, faces, vertex_error, size = (640, 
             faces=faces,
             process=False
         )
-        heatmap_frames[i] = error_heatmap(mesh, vertex_error[i], output_array=True, size=(w, h), color_range=(vmin,vmax))
+        heatmap_frames[i] = error_heatmap(mesh, vertex_error[i], output_array=True, size=(w, h), color_range=(vmin,vmax), camera=camera)
     return heatmap_frames
 
 def concat_videos_to_gif(video_list, output_path, fps):

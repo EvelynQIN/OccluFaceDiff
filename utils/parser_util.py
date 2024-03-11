@@ -13,11 +13,11 @@ def parse_and_load_from_model(parser):
     # args according to the loaded model
     # do not try to specify them from cmd line since they will be overwritten
     add_data_options(parser)
-    add_mlp_options(parser)
+    add_transformer_options(parser)
     add_diffusion_options(parser)
     args = parser.parse_args()
     args_to_overwrite = []
-    for group_name in ["dataset", "mlp", "diffusion"]:
+    for group_name in ["dataset", "transformer", "diffusion"]:
         args_to_overwrite += get_args_per_group_name(parser, args, group_name)
 
     # load args from model

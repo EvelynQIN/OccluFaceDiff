@@ -21,7 +21,7 @@ save_interval: 1
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_68_512d_48l_4h" 
+arch: "diffusion_Transformer_68_512d_2l_4h" 
 target_nfeat: 433
 lmk3d_dim: 204  # 68x3
 lmk2d_dim: 136  # 68x2
@@ -32,11 +32,11 @@ use_mask: True  # use alibi mask
 
 # unusable for gru
 ff_size: 1024
-num_enc_layers: 4
+num_enc_layers: 2
 num_heads: 4
 
 # unusable for transformer encoder 
-num_dec_layers: 8 
+num_dec_layers: 2 
 
 # unusable for warmup cosine scheduler
 # lr_anneal_steps: 225000 

@@ -19,6 +19,7 @@ class TrainDataset(Dataset):
         input_motion_length=120,
         train_dataset_repeat_times=1,
         no_normalization=True,
+        occlusion_mask=False
     ):
         self.dataset = dataset
         self.mean = norm_dict['mean']
@@ -27,6 +28,7 @@ class TrainDataset(Dataset):
         self.train_dataset_repeat_times = train_dataset_repeat_times
         self.no_normalization = no_normalization
         self.input_motion_length = input_motion_length
+        self.occlusion_mask = occlusion_mask
 
     def __len__(self):
         return len(self.motion_path_list) * self.train_dataset_repeat_times
@@ -130,7 +132,7 @@ class TestDataset(Dataset):
         lmk_2d = motion_dict['lmk_2d'].reshape(seqlen, -1)  # (n, 68x2)
         lmk_3d_normed = motion_dict['lmk_3d_normed'].reshape(seqlen, -1) # (n, 68x3)
         target = motion_dict['target'] # (n, shape300 + exp100 + rot30 + trans3)
-        motion_id = os.path.split(self.motion_path_list[id])[-1].split(os.sep)[0]
+        motion_id = os.path.split(self.motion_path_list[id])[1].split('.')[0]
         
         
         n_imgs = torch.sum(motion_dict['img_mask'])
@@ -246,20 +248,8 @@ def load_data(args, dataset, dataset_path, split, subject_id = None, selected_mo
         skip_frame = 1
     else:
         skip_frame = 1
-    
-    input_motion_length = args.input_motion_length if "input_motion_length" in args.keys() else None
-    motion_paths_fname = os.path.join(dataset_path, dataset, 'valid_motion_paths', f'{split}.npy')
-    
-    if os.path.exists(motion_paths_fname):
-        motion_paths = np.load(motion_paths_fname, allow_pickle=True)
-    else:
-        if not os.path.exists(os.path.join(dataset_path, dataset, 'valid_motion_paths')):
-            os.makedirs(os.path.join(dataset_path, dataset, 'valid_motion_paths'))
-        discard_shorter_seq = True if (input_motion_length is not None) and (split != "test") else False
-        motion_paths = get_path(dataset_path, dataset, split, subject_id, selected_motion_ids)
-        if discard_shorter_seq:
-            motion_paths = get_valid_motion_path_list(motion_paths, skip_frame, input_motion_length) 
-        np.save(motion_paths_fname, motion_paths, allow_pickle=True)
+
+    motion_paths = get_path(dataset_path, dataset, split, subject_id, selected_motion_ids)
 
     # compute the mean and std for the training data
     norm_dict_path = get_mean_std_path(dataset)

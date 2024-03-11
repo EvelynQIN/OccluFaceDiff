@@ -1,9 +1,10 @@
+# TODO
 import math
 import os
 import random
-
+import pickle
 import numpy as np
-
+import trimesh
 import torch
 
 from data_loaders.dataloader import load_data, TestDataset
@@ -12,157 +13,195 @@ from model.FLAME import FLAME
 
 from model.networks import PureMLP
 from tqdm import tqdm
-import time
 
 from utils import utils_transform, utils_visualize
 from utils.metrics import get_metric_function
 from utils.model_util import create_model_and_diffusion, load_model_wo_clip
-from utils.parser_util import predict_args
+from utils.parser_util import sample_args
+from utils.famos_camera import batch_cam_to_img_project
+from configs.config import get_cfg_defaults
 
-def load_diffusion_model(args):
+device = torch.device("cuda")
+
+IMAGE_SIZE = 224
+
+pred_metrics = [
+    "pred_jitter",
+    "lmk_2d_mpe",
+]
+
+all_metrics = pred_metrics
+
+def parse_model_target(target):
+    nshape = 300
+    nexp = 100 
+    npose = 5*6 
+    ntrans = 3 
+    shape = target[:, :, :nshape]
+    exp = target[:, :, nshape:nshape+nexp]
+    pose = target[:, :, nshape+nexp:-ntrans]
+    trans = target[:, :, -ntrans:]
+    return shape, exp, pose, trans
+
+def prepare_data_from_imgs(img_folder):
+    """prepare motion input from frames of one video
+
+    Args:
+        img_dir: 
+    Returns:
+        motion: dict of motion input (torch)
+    """
+
+def evaluate_prediction(
+    args,
+    metrics,
+    sample,
+    flame,
+    motion_target, 
+    lmk_2d_gt,
+    fps,
+    motion_id,
+    flame_v_mask,
+    split
+):
+    num_frames = motion_target.shape[0]
+    shape_gt, expr_gt, pose_gt, trans_gt = parse_model_target(motion_target)
+    shape_pred, expr_pred, pose_pred, trans_pred = parse_model_target(sample)
+    
+    # pose 6d to aa
+    pose_aa_gt = utils_transform.sixd2aa(pose_gt.reshape(-1, 6)).reshape(num_frames, -1)
+    pose_aa_pred = utils_transform.sixd2aa(pose_pred.reshape(-1, 6)).reshape(num_frames, -1)
+    
+    
+    # flame regress
+    verts_gt, lmk_3d_gt = flame(shape_gt, expr_gt, pose_aa_gt)   
+    verts_pred, lmk_3d_pred = flame(shape_pred, expr_pred, pose_aa_pred)         
+    
+    # 2d reprojection
+    lmk_2d_pred = batch_cam_to_img_project(lmk_3d_pred, trans_pred) 
+
+    eval_log = {}
+    for metric in metrics:
+        eval_log[metric] = (
+            get_metric_function(metric)(
+                shape_gt[:,0,:], expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
+                shape_pred[:,0,:], expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
+                fps, flame_v_mask 
+            )
+            .numpy()
+        )
+    
+    # Create visualization
+    if args.vis:
+        subject_id = motion_id[:11] 
+        motion_name = motion_id[12:]
+        if (split == "val" and subject_id == "subject_001") or (split == "test" and subject_id == "subject_071"):
+            video_dir = os.path.join(args.output_dir, args.arch, subject_id)
+            if not os.path.exists(video_dir):
+                os.makedirs(video_dir)
+            faces = flame.faces_tensor.numpy()
+            video_path = os.path.join(video_dir, f"{motion_name}.gif")    
+            
+            pred_animation = utils_visualize.mesh_sequence_to_video_frames(verts_pred, faces, lmk_3d_pred)    
+            gt_animation = utils_visualize.mesh_sequence_to_video_frames(verts_gt, faces, lmk_3d_gt)
+
+            vertex_error_per_frame = torch.norm(verts_gt-verts_pred, p=2, dim=2) * 1000.0
+            error_heatmaps = utils_visualize.compose_heatmap_to_video_frames(verts_gt, faces, vertex_error_per_frame)
+            utils_visualize.concat_videos_to_gif([gt_animation, pred_animation, error_heatmaps], video_path, fps)
+        
+    return eval_log
+
+
+def load_diffusion_model_from_ckpt(args, pretrained_args):
     print("Creating model and diffusion...")
     args.arch = args.arch[len("diffusion_") :]
-    model, diffusion = create_model_and_diffusion(args)
+    cam_model, denoise_model, diffusion = create_model_and_diffusion(args, pretrained_args)
 
     print(f"Loading checkpoints from [{args.model_path}]...")
     state_dict = torch.load(args.model_path, map_location="cpu")
-    load_model_wo_clip(model, state_dict)
+    load_model_wo_clip(denoise_model, state_dict)
 
-    model.to("cuda:0")  # dist_util.dev())
-    model.eval()  # disable random masking
-    return model, diffusion
+    cam_model.to(args.device)
+    cam_model.eval()
+    denoise_model.to(args.device)  # dist_util.dev())
+    denoise_model.eval()  # disable random masking
+    return cam_model, denoise_model, diffusion
 
-def get_one_face_motion(motion_path):
-    motion = torch.load(motion_path)
-    lmk_3d = motion['lmk68_3d']
-    trans = motion['flame_params']['root_trans']
-    pose = motion['flame_params']["full_pose_6d"]
-    shape = motion["flame_params"]["shape"]
-    expression = motion["flame_params"]["expression"]
-    verts = motion["mesh_verts"]
 
-    return lmk_3d, trans, pose, shape, expression, verts
+def main():
+    args = sample_args()
+    pretrained_args = get_cfg_defaults()
+    # to guanrantee reproducibility
+    torch.backends.cudnn.benchmark = False
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
-def compute_metrics(target, motion_pred, lmk_gt, shape, verts_gt, flame):
-    bs, n, c = target.shape
-    target = target.reshape(-1, c)
-    motion_pred = motion_pred.reshape(-1, c)
-    expr = motion_pred[:, 33:]
-    trans = motion_pred[:, :3]
-    pose_6d = motion_pred[:, 3: 33]
-    shape = shape.reshape(bs*n, -1)
+    fps = args.fps 
 
-    trans_loss = torch.mean(
-        torch.norm(
-            (target[:, :3] - trans),
-            2,
-            1
-        )
-    )
-    pose_loss = torch.mean(
-        torch.norm(
-            (target[:, 3:33] - pose_6d),
-            2,
-            1
-        )
-    )
-    expr_loss = torch.mean(
-        torch.norm(
-            (target[:, 33:] - expr),
-            2,
-            1
-        )
-    )
+    flame = FLAME(args.flame_model_path, args.flame_lmk_embedding_path)
+    print("Loading dataset...")
 
-    pose_aa = utils_transform.sixd2aa(pose_6d.reshape(-1, 6)).reshape(-1, 3*5)
-    vert_pred, lmk_pred = flame(shape, expr, pose_aa, trans)
-    
-    dist_verts = torch.mean(
-        torch.norm(
-            verts_gt.reshape(-1, 3) - vert_pred.reshape(-1, 3),
-            2,
-            1
-        )
+    split = args.split
+    device = 'cuda:0'
+    # load data from given split
+    print("creating val data loader...")
+    motion_paths, norm_dict = load_data(
+        args,
+        args.dataset,
+        args.dataset_path,
+        "val",
     )
     
-    dist_lmk = torch.mean(
-        torch.norm(
-            lmk_gt.reshape(-1, 3) - lmk_pred.reshape(-1, 3),
-            2,
-            1
-        )
+    dataset = TestDataset(
+        args.dataset,
+        norm_dict,
+        motion_paths,
+        args.no_normalization,
     )
-    loss = trans_loss + pose_loss + expr_loss
 
-    loss_dict = {
-        "trans_loss": trans_loss.item(),
-        "pose_loss": pose_loss.item(),
-        "expr_loss": expr_loss.item(),
-        "training_loss": loss.item(),
-        "verts": dist_verts.item(),
-        "lmk3d": dist_lmk.item()
-    }
-
-    return loss_dict, vert_pred
-
-def test_model(args):
-    model, diffusion = load_diffusion_model(args)
-    print(model)
-
-    input_motion_length = args.input_motion_length
-    device = "cuda:0"
-    flame = FLAME(args)
-
-    start_time = time.time()
-
-    lmk_3d, trans, pose, shape, expression, verts = get_one_face_motion(args.motion_path)
-    motion_target = torch.concat((trans, pose, expression), dim = -1)    # (n, 133)
-    num_frames = lmk_3d.shape[0]
-    assert num_frames >= input_motion_length, "motion length is too short"
-
-    # construct sparse input
-    count = 0     
-    motion_inputs, motion_targets, shapes, verts_list, start_frame_id = [], [], [], [], []
+    log = {}
+    for metric in pred_metrics+gt_metrics:
+        log[metric] = 0
     
-    # sliding window for long motion sequence (non-overlapping)
-    while count + input_motion_length <= num_frames:
-        start_frame_id.append(count)
-        motion_inputs.append(lmk_3d[count:count+input_motion_length])
-        motion_targets.append(motion_target[count:count+input_motion_length])
-        shapes.append(shape[count:count+input_motion_length])
-        verts_list.append(verts[count:count+input_motion_length])
-        count += input_motion_length
-        
+    for metric in full_vertex_metrics:
+        log[metric] = np.zeros(5023)
     
-    if count < num_frames:
-        start_frame_id.append(num_frames-input_motion_length)
-        motion_inputs.append(lmk_3d[-input_motion_length :])
-        motion_targets.append(motion_target[-input_motion_length :])
-        shapes.append(shape[-input_motion_length :])
-        verts_list.append(verts[-input_motion_length :])
+    flame_vmask_path = "flame_2020/FLAME_masks.pkl"
+    with open(flame_vmask_path, 'rb') as f:
+        flame_v_mask = pickle.load(f, encoding="latin1")
 
-    motion_inputs = torch.stack(motion_inputs, dim=0)
-    motion_targets = torch.stack(motion_targets, dim=0) 
-    shapes = torch.stack(shapes, dim=0) 
-    verts_list = torch.stack(verts_list, dim=0)   
+    for k, v in flame_v_mask.items():
+        flame_v_mask[k] = torch.from_numpy(v)
     
-    n_slice = motion_inputs.shape[0]
-    motion_inputs = motion_inputs.reshape(n_slice, input_motion_length, -1).to(device)
-
-    if args.fix_noise:
-        # fix noise seed for every frame
-        noise = torch.randn(1, 1, 1).cuda()
-        noise = noise.repeat(n_slice, args.input_motion_length, args.motion_nfeat)
-    else:
-        noise = None
-
-
-    motion_pred = diffusion.p_sample_loop(
-                model,
-                (n_slice, args.input_motion_length, args.motion_nfeat),
-                sparse=motion_inputs,
+    cam_model, denoise_model, diffusion = load_diffusion_model_from_ckpt(args, pretrained_args)
+    sample_fn = diffusion.p_sample_loop
+            
+    for sample_index in tqdm(range(len(dataset))):
+        with torch.no_grad():
+            flame_params, lmk_2d, lmk_3d_normed, img_arr, motion_id = dataset[sample_index]
+            motion_length = flame_params.shape[0]
+            flame_params = flame_params.unsqueeze(0).to(device)
+            lmk_2d = lmk_2d.unsqueeze(0).to(device)
+            trans_cam = cam_model(lmk_2d)
+            target = torch.cat([flame_params, trans_cam], dim=-1)
+            model_kwargs = {
+                "lmk_2d": lmk_2d,
+                "lmk_3d": lmk_3d_normed.unsqueeze(0).to(device),
+                "img_arr": img_arr.unsqueeze(0).to(device),
+            }
+            if args.fix_noise:
+                # fix noise seed for every frame
+                noise = torch.randn(1, 1, 1).cuda()
+                noise = noise.repeat(1, motion_length, args.target_nfeat)
+            else:
+                noise = None
+                
+            output_sample = sample_fn(
+                denoise_model,
+                (1, motion_length, args.target_nfeat),
                 clip_denoised=False,
-                model_kwargs=None,
+                model_kwargs=model_kwargs,
                 skip_timesteps=0,
                 init_image=None,
                 progress=False,
@@ -170,46 +209,48 @@ def test_model(args):
                 noise=noise,
                 const_noise=False,
             )
+            
+            if not args.no_normalization:
+                output_sample = dataset.inv_transform(output_sample.cpu().float())
+                target = dataset.inv_transform(target.cpu().float())
+            else:
+                output_sample = output_sample.cpu().float()
+            
+            lmk_2d_gt = (lmk_2d + 1) * IMAGE_SIZE / 2
 
-    motion_pred = motion_pred.detach().cpu()
-    print("shape of predict motion", motion_pred.shape)
+            instance_log = evaluate_prediction(
+                args,
+                all_metrics,
+                output_sample.squeeze(0),
+                flame,
+                target.squeeze(0), 
+                lmk_2d_gt.reshape(motion_length, -1, 2).to('cpu'),
+                fps,
+                motion_id,
+                flame_v_mask,
+                split
+            )
+            for key in instance_log:
+                log[key] += instance_log[key]
+            
+            torch.cuda.empty_cache()
 
-    elapsed = time.time() - start_time
-    print("Inference time for ", motion_pred.shape[0], " slices is: ", elapsed, " seconds.")
-    print("Inference time for 1 frame is: ", elapsed / (motion_pred.shape[0] * motion_pred.shape[1]), " seconds.")
+    # Print the value for all the metrics
+    print("Metrics for the predictions")
+    for metric in pred_metrics:
+        print(f"{metric} : {log[metric] / len(dataset)}")
+
+    print("Metrics for the ground truth")
+    for metric in gt_metrics:
+        print(f"{metric} : {log[metric] / len(dataset)}")
     
-    # compute the evaluation metrics
-    loss_dict, verts_pred = compute_metrics(motion_targets, motion_pred, motion_inputs.to('cpu'), shapes, verts_list, flame)
-    print("eval metrics: ")
-    output_str = ""
-    for k, v in loss_dict.items():
-        output_str += f"{k} = {np.round(v, 4)} || "
-    print(output_str)
-
-    # render the video for the full motion
-    motion_name = os.path.split(args.motion_path)[-1].split(".")[0]
-    video_dir = os.path.join("vis_result", args.arch)
-    if not os.path.exists(video_dir):
-        os.makedirs(video_dir)
-    video_path = os.path.join(video_dir, f"{motion_name}_pred.mp4")
-
-    # remove the overlapping motion on the last slice  
-    prev_end_id = start_frame_id[-2] + input_motion_length
-    if prev_end_id > start_frame_id[-1]:
-        overlap_len = prev_end_id - start_frame_id[-1]
-        mesh_verts = np.concatenate((verts_pred[:prev_end_id], verts_pred[prev_end_id+overlap_len:]), axis=0)
-    utils_visualize.mesh_sequence_to_video(mesh_verts, flame.faces_tensor.numpy(), video_path, args.fps)
-
-    gt_video_path = os.path.join(video_dir, f"{motion_name}_gt.mp4")
-    utils_visualize.mesh_sequence_to_video(verts, flame.faces_tensor.numpy(), gt_video_path, args.fps)
-    print(f"saving videos to {video_dir}")
-
-def main():
-    
-    args = predict_args()
-    print(args)
-    test_model(args)
-
+    # visualize the heatmap for full vertex error
+    mesh_path = "flame_2020/template.ply"
+    template_mesh = trimesh.load_mesh(mesh_path)
+    for metric in full_vertex_metrics:
+        mean_error = log[metric] / len(dataset)
+        img_path = os.path.join(args.output_dir, args.arch, f"{metric}_{split}.png")
+        utils_visualize.error_heatmap(template_mesh, mean_error, False, img_path)
 
 if __name__ == "__main__":
     main()

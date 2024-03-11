@@ -341,8 +341,8 @@ class GaussianDiffusion:
             model_output = model(x, self._scale_timesteps(t))
 
         if model_kwargs is not None:
-            if (
-                "inpainting_mask" in model_kwargs["y"].keys()
+            if ("y" in model_kwargs
+                and "inpainting_mask" in model_kwargs["y"].keys()
                 and "inpainted_motion" in model_kwargs["y"].keys()
             ):
                 inpainting_mask, inpainted_motion = (
