@@ -43,8 +43,14 @@ class TrainDataset(Dataset):
         id = idx % len(self.motion_path_list)
 
         motion_dict = torch.load(self.motion_path_list[id])
-        
         seqlen = motion_dict['target'].shape[0]
+        
+        if motion_dict['target'].shape[0] < 50:
+            id = 0
+            print(f"{self.motion_path_list[id]} len = {seqlen}")
+            motion_dict = torch.load(self.motion_path_list[id])
+            seqlen = motion_dict['target'].shape[0]
+        
         
         if self.train_dataset_repeat_times == 1:
             # do not repeat
