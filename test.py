@@ -271,7 +271,8 @@ def evaluate_prediction(
     fps,
     motion_id,
     flame_v_mask,
-    split
+    split,
+    occlusion_mask
 ):
     num_frames = motion_target.shape[0]
     shape_gt, expr_gt, pose_gt, trans_gt = parse_model_target(motion_target)
@@ -373,6 +374,7 @@ def main():
         norm_dict,
         motion_paths,
         args.no_normalization,
+        occlusion_mask_prob=0
     )
 
     log = {}
@@ -394,16 +396,17 @@ def main():
             
     for sample_index in tqdm(range(len(dataset))):
         with torch.no_grad():
-            flame_params, lmk_2d, lmk_3d_normed, img_arr, motion_id = dataset[sample_index]
+            flame_params, lmk_2d, lmk_3d_normed, img_arr, occlusion_mask, motion_id = dataset[sample_index]
             motion_length = flame_params.shape[0]
             flame_params = flame_params.unsqueeze(0).to(device)
             lmk_2d = lmk_2d.unsqueeze(0).to(device)
-            trans_cam = cam_model(lmk_2d)
+            trans_cam = cam_model(lmk_2d.reshape(1, motion_length, -1))
             target = torch.cat([flame_params, trans_cam], dim=-1)
             model_kwargs = {
                 "lmk_2d": lmk_2d,
                 "lmk_3d": lmk_3d_normed.unsqueeze(0).to(device),
                 "img_arr": img_arr.unsqueeze(0).to(device),
+                "occlusion_mask": occlusion_mask.unsqueeze(0).to(device),
             }
             if args.fix_noise:
                 # fix noise seed for every frame
@@ -442,7 +445,8 @@ def main():
                 fps,
                 motion_id,
                 flame_v_mask,
-                split
+                split,
+                occlusion_mask
             )
             for key in instance_log:
                 log[key] += instance_log[key]

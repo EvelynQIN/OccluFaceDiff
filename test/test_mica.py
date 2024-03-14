@@ -49,7 +49,6 @@ def deterministic(rank):
     cudnn.deterministic = True
     cudnn.benchmark = False
 
-
 # def process(args, app, image_size=224, draw_bbox=False):
 #     dst = Path(args.a)
 #     dst.mkdir(parents=True, exist_ok=True)

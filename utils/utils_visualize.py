@@ -110,8 +110,8 @@ def mesh_sequence_to_video(mesh_verts, faces, video_path, fps, lmk_3d=None):
     # [0.0, 0.0, 0.0, 1.0]]
 
     camera_pose = np.array([[1, 0, 0, 0],
-                            [0, 1, 0, 0.22],
-                            [0, 0, 1, 0.8],
+                            [0, 1, 0, 0],
+                            [0, 0, 1, 0.5],
                             [0.0, 0.0, 0.0, 1.0]])
 
     light = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=3.0)

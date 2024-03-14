@@ -330,6 +330,8 @@ class FaceTransformer(nn.Module):
         ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
 
         # mask the occluded lmk to be 0
+        # print(lmk_3d.shape)
+        # print(occlusion_mask.shape)
         occlusion = (1-occlusion_mask).unsqueeze(-1)
         lmk_3d = (lmk_3d * occlusion).reshape(bs, n, -1)
         lmk_2d = (lmk_2d * occlusion).reshape(bs, n, -1)

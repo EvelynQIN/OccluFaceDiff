@@ -142,12 +142,14 @@ class TestDataset(Dataset):
         norm_dict,
         motion_path_list,
         no_normalization=True,
+        occlusion_mask_prob=0,
     ):
         self.dataset = dataset
         self.mean = norm_dict['mean']
         self.std = norm_dict['std']
         self.motion_path_list = motion_path_list
         self.no_normalization = no_normalization
+        self.occlusion_mask_prob = occlusion_mask_prob
 
     def __len__(self):
         return len(self.motion_path_list)
@@ -166,8 +168,8 @@ class TestDataset(Dataset):
         
         seqlen = motion_dict['target'].shape[0]
         
-        lmk_2d = motion_dict['lmk_2d'].reshape(seqlen, -1)  # (n, 68x2)
-        lmk_3d_normed = motion_dict['lmk_3d_normed'].reshape(seqlen, -1) # (n, 68x3)
+        lmk_2d = motion_dict['lmk_2d']  # (n, 68, 2)
+        lmk_3d_normed = motion_dict['lmk_3d_normed'] # (n, 68, 3)
         target = motion_dict['target'] # (n, shape300 + exp100 + rot30 + trans3)
         motion_id = os.path.split(self.motion_path_list[id])[1].split('.')[0]
         
@@ -190,14 +192,60 @@ class TestDataset(Dataset):
             
         # Normalization 
         if not self.no_normalization:    
-            lmk_3d_normed = ((lmk_3d_normed.reshape(-1, 3) - self.mean['lmk_3d_normed']) / (self.std['lmk_3d_normed'] + 1e-8)).reshape(seqlen, -1)
+            lmk_3d_normed = ((lmk_3d_normed.reshape(-1, 3) - self.mean['lmk_3d_normed']) / (self.std['lmk_3d_normed'] + 1e-8)).reshape(seqlen, -1, 3)
             target = (target - self.mean['target']) / (self.std['target'] + 1e-8)
         
-        assert (not target.isnan().any()) 
-        assert (not lmk_2d.isnan().any()) 
-        assert (not lmk_3d_normed.isnan().any()) 
+        # add random occlusion mask
+        occlusion_mask = self.add_random_occlusion_mask(lmk_2d)  
         
-        return target.float(), lmk_2d.float(), lmk_3d_normed.float(), img_arr.float(), motion_id
+        return target.float(), lmk_2d.float(), lmk_3d_normed.float(), img_arr.float(), occlusion_mask, motion_id
+
+    def add_random_occlusion_mask(self, lmk_2d, **model_kwargs):
+        input_motion_length, num_lmks = lmk_2d.shape[:2]
+        occlusion_mask = torch.zeros(input_motion_length, num_lmks) # (n, v)
+        add_mask = torch.bernoulli(torch.ones(1) * self.occlusion_mask_prob)[0]
+        if add_mask == 0:
+            return occlusion_mask
+        
+        # select occlusion type
+        occlusion_type = model_kwargs.get("occlusion_type", torch.randint(low=0, high=3, size=(1,))[0])
+
+        if occlusion_type == 0:
+            # occlude fixed set of lmks
+            if "occlude_lmks" in model_kwargs:
+                occlude_lmks  = model_kwargs["occlude_lmks"]
+            else:
+                occlude_center_lmk_id = model_kwargs.get("occlude_center_lmk_id", torch.randint(low=0, high=num_lmks, size=(1,))[0])
+                occlude_radius = model_kwargs.get("occlude_radius", torch.rand(1)[0] * 1.5)
+                lmk_2d_dist_to_center = torch.norm(
+                    lmk_2d[0] - lmk_2d[0, occlude_center_lmk_id][None],
+                    2,
+                    -1
+                )
+                occlude_lmks = lmk_2d_dist_to_center < occlude_radius
+            occlusion_mask[:, occlude_lmks] = 1
+        elif occlusion_type == 1:
+            # occlude random set of lmks for each frame
+            for i in range(input_motion_length):
+                occlude_center_lmk_id = torch.randint(low=0, high=num_lmks, size=(1,))[0]
+                occlude_radius = torch.rand(1)[0] * 1.5
+                lmk_2d_dist_to_center = torch.norm(
+                    lmk_2d[i] - lmk_2d[i, occlude_center_lmk_id][None],
+                    2,
+                    -1
+                )
+                occlude_lmks = lmk_2d_dist_to_center < occlude_radius
+                occlusion_mask[i, occlude_lmks] = 1
+        else:
+            # occlude random num of frames
+            if "occlude_frame_ids" in model_kwargs:
+                occlude_frame_ids = model_kwargs["occlusion_type"]
+            else:
+                num_occluded_frames = torch.randint(low=1, high=input_motion_length//2, size=(1,))[0]
+                occlude_frame_ids =  torch.LongTensor(random.sample(range(input_motion_length), num_occluded_frames))
+
+            occlusion_mask[occlude_frame_ids] = 1
+        return occlusion_mask
 
 
 def get_path(dataset_path, dataset, split, subject_id=None, motion_list=None):

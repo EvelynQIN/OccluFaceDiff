@@ -1,4 +1,4 @@
-pretrained_model_path: './pretrained/mica.tar'
+pretrained_model_path: '../pretrained/mica.tar'
 
 # ---------------------------------------------------------------------------- #
 # Options for Face model
@@ -9,7 +9,6 @@ layers: 8
 hidden_layers_size: 256
 mapping_layers: 3
 use_pretrained: True
-arcface_pretrained_model: '/scratch/is-rg-ncs/models_weights/arcface-torch/backbone100.pth'
 
 lr: 0.0001
 arcface_lr: 0.001

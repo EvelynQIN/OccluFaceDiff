@@ -40,7 +40,7 @@ class FLAME(nn.Module):
     Given flame parameters this class generates a differentiable FLAME function
     which outputs the a mesh and 2D/3D facial landmarks
     """
-    def __init__(self, flame_model_path, flame_lmk_embedding_path):
+    def __init__(self, flame_model_path, flame_lmk_embedding_path, n_shape=300, n_exp=100):
         super(FLAME, self).__init__()
         print("creating the FLAME Decoder")
         with open(flame_model_path, 'rb') as f:
@@ -53,7 +53,7 @@ class FLAME(nn.Module):
         self.register_buffer('v_template', to_tensor(to_np(flame_model.v_template), dtype=self.dtype))
         # The shape components and expression
         shapedirs = to_tensor(to_np(flame_model.shapedirs), dtype=self.dtype)
-        n_shape, n_exp = 300, 100   # TODO
+
         shapedirs = torch.cat([shapedirs[:,:,:n_shape], shapedirs[:,:,300:300+n_exp]], 2)
         self.register_buffer('shapedirs', shapedirs)
         # The pose components

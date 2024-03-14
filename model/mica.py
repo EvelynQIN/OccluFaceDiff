@@ -104,6 +104,18 @@ class MICA(nn.Module):
         identity_code = self.avg_pool(identity_codes).squeeze(2) # (bs, 512)
         return identity_code
 
+    def encode_single_img(self, arcface_imgs):
+        """get one identity code per image input
+        Args:
+            arcface_imgs: (bs, 3, 112, 112)
+
+        Returns:
+            identity_codes: (bs, 512)
+        """
+        identity_codes = F.normalize(self.arcface(arcface_imgs))
+
+        return identity_codes
+    
     def decode(self, identity_code):
 
         pred_shape_code = self.flameModel(identity_code) # (bs, 300)
