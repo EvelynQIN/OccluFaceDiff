@@ -278,7 +278,7 @@ def train_calibration_model(args, train_loader, valid_loader):
     )
     nb_iter = 0
 
-    vis_id = [0, 10, 12]    # frame id for visualization (in validation)
+    vis_id = [0, 50, 70, 120]    # frame id for visualization (in validation)
 
     # train + val for each epoch
     for epoch in tqdm(range(args.num_epoch)):
@@ -416,7 +416,7 @@ def main():
     val_dict, _ = load_data(
         args.dataset,
         args.dataset_path,
-        "val"
+        "test"
     )
     
     val_dataset = LmkDataset(

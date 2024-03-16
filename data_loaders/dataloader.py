@@ -13,25 +13,25 @@ import random
 class TrainDataset(Dataset):
     def __init__(
         self,
-        dataset,
+        dataset_name,
         norm_dict,
-        motion_path_list,
+        data,
         input_motion_length=120,
         train_dataset_repeat_times=1,
         no_normalization=True,
         occlusion_mask_prob=0.5
     ):
-        self.dataset = dataset
+        self.dataset_name = dataset_name
         self.mean = norm_dict['mean']
         self.std = norm_dict['std']
-        self.motion_path_list = motion_path_list
+        self.data = data
         self.train_dataset_repeat_times = train_dataset_repeat_times
         self.no_normalization = no_normalization
         self.input_motion_length = input_motion_length
         self.occlusion_mask_prob = occlusion_mask_prob
 
     def __len__(self):
-        return len(self.motion_path_list) * self.train_dataset_repeat_times
+        return len(self.data['target']) * self.train_dataset_repeat_times
 
     def inv_transform(self, target):
         
@@ -42,22 +42,15 @@ class TrainDataset(Dataset):
     def __getitem__(self, idx):
         id = idx % len(self.motion_path_list)
 
-        motion_dict = torch.load(self.motion_path_list[id])
-        seqlen = motion_dict['target'].shape[0]
-        
-        if motion_dict['target'].shape[0] < 50:
-            id = 0
-            print(f"{self.motion_path_list[id]} len = {seqlen}")
-            motion_dict = torch.load(self.motion_path_list[id])
-            seqlen = motion_dict['target'].shape[0]
-        
+        motion_dict = self.data[id]
+        seqlen = motion_dict['target'].shape[0] 
         
         if self.train_dataset_repeat_times == 1:
             # do not repeat
             input_motion_length = seqlen 
         elif self.input_motion_length is None:  
             # in transformer, randomly clip a subseq
-            input_motion_length = torch.randint(min(60, seqlen), seqlen+1, (1,))[0]
+            input_motion_length = torch.randint(min(50, seqlen), seqlen+1, (1,))[0]
         else:
             # fix motion len
             input_motion_length = self.input_motion_length 
@@ -69,8 +62,7 @@ class TrainDataset(Dataset):
         
         lmk_2d = motion_dict['lmk_2d'][start_id:start_id + input_motion_length]  # (n, 68, 2)
         lmk_3d_normed = motion_dict['lmk_3d_normed'][start_id:start_id + input_motion_length] # (n, 68, 3)
-        lmk_3d_cam = motion_dict['lmk_3d_cam'][start_id:start_id + input_motion_length].reshape(input_motion_length, -1) # (n, 68x3)
-        target = motion_dict['target'][start_id:start_id + input_motion_length] # (n, rot30 + shape300 + exp100)
+        target = motion_dict['target'][start_id:start_id + input_motion_length] # (n, shape300 + exp100 + rot6d30)
         
         n_imgs = torch.sum(motion_dict['img_mask'][start_id:start_id + input_motion_length])
         img_start_fid = torch.sum(motion_dict['img_mask'][:start_id])
@@ -99,7 +91,7 @@ class TrainDataset(Dataset):
         # add random occlusion mask
         occlusion_mask = self.add_random_occlusion_mask(lmk_2d) 
         
-        return target.float(), lmk_2d.float(), lmk_3d_normed.float(), img_arr.float(), lmk_3d_cam.float(), occlusion_mask
+        return target.float(), lmk_2d.float(), lmk_3d_normed.float(), img_arr.float(), occlusion_mask
     
     def add_random_occlusion_mask(self, lmk_2d):
         input_motion_length, num_lmks = lmk_2d.shape[:2]
@@ -146,14 +138,14 @@ class TestDataset(Dataset):
         self,
         dataset,
         norm_dict,
-        motion_path_list,
+        motions,
         no_normalization=True,
         occlusion_mask_prob=0,
     ):
         self.dataset = dataset
         self.mean = norm_dict['mean']
         self.std = norm_dict['std']
-        self.motion_path_list = motion_path_list
+        self.motions = motions
         self.no_normalization = no_normalization
         self.occlusion_mask_prob = occlusion_mask_prob
 
@@ -170,7 +162,7 @@ class TestDataset(Dataset):
         
         id = idx % len(self.motion_path_list)
 
-        motion_dict = torch.load(self.motion_path_list[id])
+        motion_dict =self.motions[id]
         
         seqlen = motion_dict['target'].shape[0]
         
@@ -276,34 +268,25 @@ def get_path(dataset_path, dataset, split, subject_id=None, motion_list=None):
 def get_mean_std_path(dataset):
     return dataset + "_norm_dict.pt"
 
-def get_face_motion(motion_paths, skip_frame, split, args):
+def get_face_motion(motion_paths):
     motion_list = defaultdict(list)
-    # discard the motion sequence shorter than the specified length for train / val
-    input_motion_length = args.input_motion_length
-    discard_shorter_seq = True if (input_motion_length is not None) and (split != "test") else False
 
-    # image crop information
-    # scale = args.scale
-    # trans_scale = args.trans_scale
-    # image_size = args.image_size
+    print(f"Load motions from processed data.")
     for motion_path in tqdm(motion_paths):
         motion = torch.load(motion_path)
         nframes = motion['target'].shape[0]
-        if discard_shorter_seq and nframes < input_motion_length*skip_frame:
+        if nframes < 50:
             continue
         motion_list['motion_id'].append(os.path.split(motion_path)[-1].split(".")[0])
-
-        # crop and normalize 2d lmks
-        # lmks_2d_cropped = batch_crop_lmks(lmks_2d, trans_scale, scale, image_size)
-
-        # motion_list['lmk_2d'].append(motion['lmk_2d'][0::skip_frame])
-        motion_list['lmk_3d_normed'].append(motion['lmk_3d_normed'][0::skip_frame])
-        # motion_list['lmk_3d_cam'].append(motion['lmk_3d_cam'][0::skip_frame])
-        # motion_list['img_arr'].append(motion['arcface_input'][0::skip_frame])
-        # motion_list['img_mask'].append(motion['img_mask'][0::skip_frame].bool())
-
-        # ensure shape remains same for all frames
-        motion_list['target'].append(motion['target'][0::skip_frame])
+        # reduce flame params (shape 100, expression 50)
+        target = torch.cat([
+            motion['target'][:,:100], motion['target'][:,300:350], motion['target'][:,400:]], 
+            dim=-1)
+        motion_list['target'].append(target)
+        motion_list['lmk_3d_normed'].append(motion['lmk_3d_normed'])
+        motion_list['lmk_2d'].append(motion['lmk_2d'])
+        motion_list['img_arr'].append(motion['arcface_input'])
+        motion_list['img_mask'].append(motion['img_mask'])     
         
     return motion_list
 
@@ -320,7 +303,7 @@ def get_valid_motion_path_list(motion_paths, skip_frame, input_motion_length):
 
     return motion_path_list
 
-def load_data(args, dataset, dataset_path, split, subject_id = None, selected_motion_ids = None):
+def load_data(dataset, dataset_path, split, subject_id = None, selected_motion_ids = None):
     """
     Collect the data for the given split
 
@@ -333,19 +316,19 @@ def load_data(args, dataset, dataset_path, split, subject_id = None, selected_mo
             split : train or test
             input_motion_length : the input motion length
     """
-    # TODO: train all datasets at fps=60
-    if dataset == "FaMoS":
-        # downsample FaMoS to half
-        skip_frame = 1
-    else:
-        skip_frame = 1
 
     motion_paths = get_path(dataset_path, dataset, split, subject_id, selected_motion_ids)
+    motions = get_face_motion(motion_paths)
 
     # compute the mean and std for the training data
     norm_dict_path = get_mean_std_path(dataset)
     if os.path.exists(os.path.join(dataset_path, norm_dict_path)):
+        print(f"Norm dict found.")
         norm_dict = torch.load(os.path.join(dataset_path, norm_dict_path))
+        mean_target = norm_dict['mean']['target']
+        std_target = norm_dict['std']['target']
+        norm_dict['mean']['target'] = torch.cat([mean_target[:100], mean_target[300:350], mean_target[400:]])
+        norm_dict['std']['target'] = torch.cat([std_target[:100], std_target[300:350], std_target[400:]])
     else:
         norm_dict = {}
         lmk_3d_normed = []
@@ -358,8 +341,7 @@ def load_data(args, dataset, dataset_path, split, subject_id = None, selected_mo
         target_list = torch.cat(target, dim=0)
         norm_dict['mean'] = {
             "lmk_3d_normed": verts_3d_list.mean(dim=0).float(),
-            "target": target_list.mean(dim=0).float(),
-            "trans": torch.FloatTensor([0.004, 0.222, 1.200])
+            "target": target_list.mean(dim=0).float()
         }
         norm_dict['std'] = {
             "lmk_3d_normed": verts_3d_list.std(dim=0).float(),
@@ -368,8 +350,13 @@ def load_data(args, dataset, dataset_path, split, subject_id = None, selected_mo
         
         with open(os.path.join(dataset_path, norm_dict_path), "wb") as f:
             torch.save(norm_dict, f)
+        
+        mean_target = norm_dict['mean']['target']
+        std_target = norm_dict['std']['target']
+        norm_dict['mean']['target'] = torch.cat([mean_target[:100], mean_target[300:350], mean_target[400:]])
+        norm_dict['std']['target'] = torch.cat([std_target[:100], std_target[300:350], std_target[400:]])
 
-    return  motion_paths, norm_dict
+    return  motions, norm_dict
 
 
 def get_dataloader(

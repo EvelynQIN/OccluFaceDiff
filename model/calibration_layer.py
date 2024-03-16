@@ -38,7 +38,7 @@ class Cam_Calibration(nn.Module):
         )
         if self.ckpt_path is not None:
             self.load_model()
-            self.freezer([self.net])
+            self.freezer([self.shape_process, self.lmk_process, self.net])
 
     def load_model(self):
         if os.path.exists(self.ckpt_path):

@@ -227,7 +227,7 @@ class GaussianDiffusion:
             / (1.0 - self.alphas_cumprod)
         )
         
-        self.flame=FLAME(flame_model_path, flame_lmk_embedding_path)
+        self.flame=FLAME(flame_model_path, flame_lmk_embedding_path, n_shape=100, n_exp=50)
 
         flame_vmask_path = "flame_2020/FLAME_masks.pkl"
         with open(flame_vmask_path, 'rb') as f:

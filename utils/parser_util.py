@@ -363,6 +363,13 @@ def add_training_options(parser):
         help="update gradient every n steps",
     )
 
+    group.add_argument(
+        "--occlusion_mask_prb",
+        default=0,
+        type=float,
+        help="Probability for adding random occlusion mask.",
+    )
+
 def add_predict_options(parser):
     group = parser.add_argument_group("sampling")
     group.add_argument(

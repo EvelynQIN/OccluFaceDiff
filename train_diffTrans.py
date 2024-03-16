@@ -91,8 +91,7 @@ def main():
         json.dump(dict(args), fw, indent=4, sort_keys=True) 
     
     print("creating training data loader...")    
-    train_motion_paths, norm_dict = load_data(
-        args,
+    train_motions, norm_dict = load_data(
         args.dataset,
         args.dataset_path,
         "train",
@@ -100,10 +99,11 @@ def main():
     train_dataset = TrainDataset(
         args.dataset,
         norm_dict,
-        train_motion_paths,
+        train_motions,
         None,
         args.train_dataset_repeat_times,
         args.no_normalization,
+        args.occlusion_mask_prb
     )
     train_loader = get_dataloader(
         train_dataset, "train", batch_size=args.batch_size, num_workers=args.num_workers
@@ -111,20 +111,21 @@ def main():
     
     # val data loader
     print("creating val data loader...")
-    val_motion_paths, _ = load_data(
+    val_motions, _ = load_data(
         args,
         args.dataset,
         args.dataset_path,
-        "val",
+        "test",
     )
     
     val_dataset = TrainDataset(
         args.dataset,
         norm_dict,
-        val_motion_paths,
+        val_motions,
         None,
         1,
         args.no_normalization,
+        args.occlusion_mask_prb
     )
     
     val_loader = get_dataloader(

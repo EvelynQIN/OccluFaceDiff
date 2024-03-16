@@ -29,8 +29,8 @@ def denormalize(value, mean, std):
     return  value * std + mean
 
 def parse_model_target(target):
-    nshape = 300
-    nexp = 100 
+    nshape = 100
+    nexp = 50 
     npose = 5*6 
     ntrans = 3 
     shape = target[:, 0, :nshape]
@@ -88,7 +88,7 @@ class DiffusionModel(GaussianDiffusion):
         )
         
         # lmk verts loss 
-        # denormalize thd flame params
+        # denormalize thd flame params without trans
         flame_params_pred = denormalize(
             model_output[:,:,:-3], model_kwargs['mean']['target'], model_kwargs['std']['target']
         ).reshape(bs*n, -1)
@@ -101,10 +101,10 @@ class DiffusionModel(GaussianDiffusion):
         pose_aa_gt = utils_transform.sixd2aa(flame_params_gt[:, -30:].reshape(-1, 6)).reshape(bs*n, -1)
 
         verts_pred, lmk3d_pred = self.flame(
-            flame_params_pred[:, :300], flame_params_pred[:, 300:-30], pose_aa_pred)
+            flame_params_pred[:, :100], flame_params_pred[:, 100:-30], pose_aa_pred)
         
-        verts_gt, _ = self.flame(
-            flame_params_gt[:, :300], flame_params_gt[:, 300:-30], pose_aa_gt)
+        verts_gt, lmk3d_gt = self.flame(
+            flame_params_gt[:, :100], flame_params_gt[:, 100:-30], pose_aa_gt)
         
         v_weights = self.flame_verts_weight.unsqueeze(1).to(target.device)  # (v, 1)
         verts_3d_dist = torch.norm(verts_pred.reshape(bs*n, -1, 3) - verts_gt.reshape(bs*n, -1, 3), 2, -1)    # (b, v)
@@ -116,9 +116,9 @@ class DiffusionModel(GaussianDiffusion):
             trans=trans_pred.reshape(-1, 3)
         ).reshape(-1, 2)
         
-        # gt lmk2d error
+        # gt lmk2d error from the calibration layer
         lmk2d_pred_gt = batch_cam_to_img_project(
-            points=model_kwargs["lmk_3d_cam"].reshape(bs*n, -1, 3),
+            points=lmk3d_gt,
             trans=trans_gt.reshape(-1, 3)
         ).reshape(-1, 2)
 
@@ -135,7 +135,7 @@ class DiffusionModel(GaussianDiffusion):
         
         # mica_shape_error 
         shape_mica_loss = torch.mean(
-            torch.norm(flame_params_gt[:, :300].reshape(bs, n, -1)[:, 0,:] - shape_mica, 2, -1))
+            torch.norm(flame_params_gt[:, :100].reshape(bs, n, -1)[:, 0,:] - shape_mica, 2, -1))
             
         loss = 3.0 * shape_loss + 30.0 * pose_loss + 10.0 * expr_loss + 10 * trans_loss \
                 + 0.01 * verts3d_loss + 0.01 * lmk2d_loss \

@@ -13,6 +13,7 @@ diffusion_steps: 1000
 overwrite: True 
 no_normalization: False
 train_dataset_repeat_times: 128
+occlusion_mask_prb: 0.3
 # resume_checkpoint: "checkpoints/Transformer_128d_nomask_1l/model_140.pt"
 
 # log

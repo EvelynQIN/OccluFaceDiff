@@ -261,8 +261,8 @@ class FaceTransformer(nn.Module):
         self.cond_mask_prob = kargs.get('cond_mask_prob', 0.)
         self.arch = arch
         
-        self.nshape = 300
-        self.nexp = 100 
+        self.nshape = 100
+        self.nexp = 50 
         self.npose = 5 * 6 
         self.ntrans = 3
         
@@ -344,7 +344,7 @@ class FaceTransformer(nn.Module):
             self.mask_cond_lmk(lmk_2d, force_mask=force_mask)
         ) # [seqlen, bs, d]
         
-        shape_mica = self.mica(img_arr) # [bs, 300]
+        shape_mica = self.mica(img_arr)[:, :self.nshape] # [bs, nshape]
         shape_mica_emb = self.mica_process(
             self.mask_cond_lmk(shape_mica, force_mask=force_mask)
         )

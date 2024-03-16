@@ -28,10 +28,11 @@ cfg.mica.arcface_lr = 0.001
 # ---------------------------------------------------------------------------- #
 cfg.cam = CN()
 cfg.cam.model_name = "trans_perspective"
-cfg.cam.input_nfeat = 136 # input feature dim 68 x 2
+cfg.cam.lmk2d_dim = 136 # input feature dim 68 x 2
+cfg.cam.n_shape = 100
 cfg.cam.output_nfeat = 3 # number of cam params (one set per frame)
 cfg.cam.latent_dim = 128
-cfg.cam.ckpt_path = "pretrained/cam_calib.pth"
+cfg.cam.ckpt_path = "checkpoints/calib/trans_calib_128d/model-epoch-49-step-77050.pth"
 
 def get_cfg_defaults():
     return cfg.clone()

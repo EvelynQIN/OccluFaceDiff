@@ -170,7 +170,7 @@ def get_dataloader(
         drop_last = True
         num_workers = num_workers
     else:
-        shuffle = True
+        shuffle = False
         drop_last = False
         num_workers = 1
     loader = DataLoader(

@@ -80,7 +80,8 @@ def get_transformer_args(args, mica_args):
 
 def get_cam_args(args):
     return {
-        "input_feature_dim": args.input_nfeat,
+        "lmk2d_dim": args.lmk2d_dim,
+        "n_shape": args.n_shape,
         "output_feature_dim": args.output_nfeat,
         "latent_dim": args.latent_dim,
         "ckpt_path": args.ckpt_path,
