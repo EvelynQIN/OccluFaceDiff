@@ -91,10 +91,9 @@ def get_training_data(motion, flame, calib_fname):
     R_f = utils_transform.aa2matrot(rot_aa[:, :3].reshape(-1, 3)) # (nframes, 3, 3)
     R_C = torch.from_numpy(calibration['extrinsics'][:, :3]).expand(n_frames,-1,-1).float()
     R_m2c = torch.bmm(R_C, R_f)
-    trans_zeros = torch.zeros((n_frames, 3))
     root_rot_aa = utils_transform.matrot2aa(R_m2c)
     rot_aa[:, :3] = root_rot_aa
-    _, lmk_3d_cam_local = flame(shape, expression, rot_aa, trans_zeros) # (nframes, V, 3)
+    _, lmk_3d_cam_local = flame(shape, expression, rot_aa) # (nframes, V, 3)
     
     # normalize the 3d lmk (rotated to be in cam coord system), rooted at idx=30
     lmk_3d_normed = batch_normalize_lmk_3d(lmk_3d_cam_local)

@@ -18,7 +18,8 @@ class LmkDataset(Dataset):
         normalization=True
     ):
         self.data = data
-        self.norm_dict = norm_dict
+        self.mean = norm_dict['mean']
+        self.std = norm_dict['std']
         self.normalization = normalization
         self.occlusion_mask_prob = occlusion_mask_prob
 
@@ -38,7 +39,7 @@ class LmkDataset(Dataset):
         # generate occlusion mask
         occlusion_mask = (1 - self.add_random_occlusion_mask(lmk_2d)).bool()
         occluded_lmk2d = lmk_2d.clone()
-        occluded_lmk2d[occlusion_mask] = 0
+        occluded_lmk2d[occlusion_mask,] = 0
 
         # ## crop information
         # tform = self.crop(lmk_2d)
@@ -51,7 +52,7 @@ class LmkDataset(Dataset):
         return occluded_lmk2d.reshape(-1).float(), shape, lmk_2d.float(), verts_2d.float(), target.float()
     
     def add_random_occlusion_mask(self, lmk_2d):
-        num_lmks = lmk_2d.shape[1]
+        num_lmks = lmk_2d.shape[0]
         occlusion_mask = torch.zeros(num_lmks) # (n, v)
         add_mask = torch.bernoulli(torch.ones(1) * self.occlusion_mask_prob)[0]
         if add_mask == 0:
@@ -132,7 +133,7 @@ def load_data(dataset, dataset_path, split):
     lmk_2d_list, target_list= [], []
     verts2d_list = []
     print(f'[LOAD DATA] from FaMoS')
-    for motion_path in tqdm(motion_paths):
+    for motion_path in tqdm(motion_paths[:320]):
         motion = torch.load(motion_path)
         skip_frames = 2 # avoid data overlap
         lmk_2d = motion["lmk_2d"][0::skip_frames]

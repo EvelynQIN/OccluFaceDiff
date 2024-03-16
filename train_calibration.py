@@ -178,14 +178,14 @@ def train_calibration_model(args, train_loader, valid_loader):
     verts_weights[face_ids] = 3.0
 
     verts_loss_weights = {
-        "lmk2d": lmk_weights,
+        "lmk_2d": lmk_weights,
         "flame_verts": verts_weights
     }
 
         
     model = Cam_Calibration(
         lmk2d_dim=args.lmk2d_dim, # input feature dim 68 x 2
-        n_shape=args.shape_dim,
+        n_shape=args.n_shape,
         output_feature_dim=args.output_feature_dim, # number of cam params (one set per frame)
         latent_dim=args.latent_dim,
         ckpt_path=None,
@@ -224,6 +224,7 @@ def train_calibration_model(args, train_loader, valid_loader):
             occluded_lmk2d = occluded_lmk2d.to(device)
             shape = shape.to(device)
             verts_2d = verts_2d.to(device)
+            lmk_2d = lmk_2d.to(device)
             flame_params = target.to(device)
             cam_pred = model(occluded_lmk2d, shape)
 
@@ -261,6 +262,7 @@ def train_calibration_model(args, train_loader, valid_loader):
                 occluded_lmk2d = occluded_lmk2d.to(device)
                 shape = shape.to(device)
                 verts_2d = verts_2d.to(device)
+                lmk_2d = lmk_2d.to(device)
                 flame_params = target.to(device)
                 cam_pred = model(occluded_lmk2d, shape)
 
@@ -361,7 +363,7 @@ def main():
         val_dataset, "val", batch_size=args.batch_size, num_workers=args.num_workers
     )
 
-    train_calibration_model(args, train_loader, val_loader, norm_dict)
+    train_calibration_model(args, train_loader, val_loader)
 
 if __name__ == "__main__":
     main()
