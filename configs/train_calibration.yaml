@@ -1,5 +1,5 @@
 save_dir: "./checkpoints/calib/" 
-num_epoch: 50
+num_epoch: 1
 dataset: "FaMoS" 
 dataset_path: "./processed_data"
 weight_decay: 0.001

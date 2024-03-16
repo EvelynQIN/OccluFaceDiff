@@ -133,7 +133,7 @@ def load_data(dataset, dataset_path, split):
     lmk_2d_list, target_list= [], []
     verts2d_list = []
     print(f'[LOAD DATA] from FaMoS')
-    for motion_path in tqdm(motion_paths[:320]):
+    for motion_path in tqdm(motion_paths):
         motion = torch.load(motion_path)
         skip_frames = 2 # avoid data overlap
         lmk_2d = motion["lmk_2d"][0::skip_frames]
@@ -170,7 +170,7 @@ def get_dataloader(
         drop_last = True
         num_workers = num_workers
     else:
-        shuffle = False
+        shuffle = True
         drop_last = False
         num_workers = 1
     loader = DataLoader(
