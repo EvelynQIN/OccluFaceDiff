@@ -80,10 +80,12 @@ def get_training_data(motion, flame, calib_fname):
     
     n_frames = expression.shape[0]
     # get 2d landmarks from gt mesh
-    _, lmk_3d = flame(shape, expression, rot_aa, trans) # (nframes, V, 3)
+    verts_3d, lmk_3d = flame(shape, expression, rot_aa, trans) # (nframes, V, 3)
     calibration = load_mpi_camera(calib_fname, resize_factor=4)
     lmk_2d = batch_3d_to_2d(calibration, lmk_3d)
-    lmk_2d_cropped = batch_crop_lmks(lmk_2d, trans_scale=0, scale=1.5, image_size=224)
+    verts_2d = batch_3d_to_2d(calibration, verts_3d)
+    lmk_2d_cropped, verts_2d_cropped = batch_crop_lmks(
+        lmk_2d, verts_2d, trans_scale=0, scale=1.5, image_size=224)
 
     # change the root rotation of flame in cam coords and zeros the translation to get the lmk3d
     R_f = utils_transform.aa2matrot(rot_aa[:, :3].reshape(-1, 3)) # (nframes, 3, 3)
@@ -102,12 +104,11 @@ def get_training_data(motion, flame, calib_fname):
     target = torch.cat([shape, expression, rot_6d], dim=1)
     output = {
         "lmk_2d": lmk_2d_cropped, 
-        # "verts_2d": verts_2d,
+        "verts_2d_cropped": verts_2d_cropped,
         "lmk_3d_normed": lmk_3d_normed,
         "lmk_3d_cam": lmk_3d_cam_local,
         "target": target, 
         "frame_id": frame_id,
-        # "flame_verts_cam": flame_verts_cam,
     }
     return output, lmk_2d
 

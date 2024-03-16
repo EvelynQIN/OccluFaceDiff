@@ -6,30 +6,39 @@ import os
 class Cam_Calibration(nn.Module):
     def __init__(
         self,
-        input_feature_dim, # input feature dim 68 x 2
+        lmk2d_dim, # input feature dim 68 x 2
+        n_shape,
         output_feature_dim, # number of cam params (one set per frame)
         latent_dim,
-        ckpt_path,
+        ckpt_path=None,
     ):
         super().__init__()
 
-        self.input_feature_dim = input_feature_dim 
+        # condition dim
+        self.lmk2d_dim = lmk2d_dim
+        self.n_shape = n_shape
+
+        # output dim
         self.output_feature_dim = output_feature_dim 
         self.latent_dim = latent_dim 
         self.ckpt_path = ckpt_path
+        
         self.tag = 'CAM'
         
+        self.shape_process = nn.Linear(self.n_shape, self.latent_dim)
+        
+        self.lmk_process = nn.Linear(self.lmk2d_dim, self.latent_dim)
+
         self.net = nn.Sequential(
-            nn.Linear(self.input_feature_dim, self.latent_dim),
+            nn.Linear(self.latent_dim * 2, self.latent_dim),
             nn.ReLU(),
-            nn.Linear(self.latent_dim, self.latent_dim // 2),
+            nn.Linear(self.latent_dim, self.latent_dim),
             nn.ReLU(),
-            nn.Linear(self.latent_dim // 2, self.output_feature_dim)
+            nn.Linear(self.latent_dim, self.output_feature_dim)
         )
-
-        self.load_model()
-
-        self.freezer([self.net])
+        if self.ckpt_path is not None:
+            self.load_model()
+            self.freezer([self.net])
 
     def load_model(self):
         if os.path.exists(self.ckpt_path):
@@ -44,13 +53,18 @@ class Cam_Calibration(nn.Module):
             for block in layer.parameters():
                 block.requires_grad = False
         print(f'[{self.tag}] All params are frozen.')
-    def forward(self, lmk2d):
+
+    def forward(self, lmk2d, shape_100):
         """
         Args:
             lmk2d: [batch_size, 68x2]
+            shape_100: [batch_size, 100]
         Return:
             cam_params: [batch_size, output_feature_dim]
         """
-        output = self.net(lmk2d)
+        lmk2d_emb = self.lmk_process(lmk2d)
+        shape_100_emb = self.shape_process(shape_100)
+        input_emb = torch.cat([lmk2d_emb, shape_100_emb], dim=-1)
+        output = self.net(input_emb)
         
         return output

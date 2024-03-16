@@ -62,23 +62,32 @@ def crop(lmk, trans_scale, scale, image_size=224):
     
     return torch.from_numpy(tform.params).float()
 
-def batch_crop_lmks(lmks, trans_scale, scale, image_size=224):
+def batch_crop_lmks(lmks, verts_2d, trans_scale, scale, image_size=224):
     """
     Args:
         lmks: (bs, V, 2)
+        verts_2d; (bs, flameV, 2)
     Returns:
         lmks_cropped: (bs, V, 2)
     """
     lmks_cropped = torch.zeros_like(lmks)
+    verts_cropped = torch.zeros_like(verts_2d)
     for i in range(lmks.shape[0]):
         lmk = lmks[i]
+        verts = verts_2d[i]
         # crop information
         tform = crop(lmk, trans_scale, scale, image_size)
         ## crop 
         cropped_lmk = torch.matmul(tform, torch.hstack([lmk, torch.ones([lmk.shape[0],1])]).transpose(0, 1)).transpose(0, 1)[:,:2] 
         # normalized kpt
         lmks_cropped[i] = cropped_lmk/image_size * 2  - 1
-    return lmks_cropped 
+
+        ## crop 
+        cropped_verts = torch.matmul(tform, torch.hstack([verts, torch.ones([verts.shape[0],1])]).transpose(0, 1)).transpose(0, 1)[:,:2] 
+        # normalized kpt
+        verts_cropped[i] = cropped_verts/image_size * 2  - 1
+
+    return lmks_cropped, verts_cropped
 
 def video_to_frames(video_path, fps=60):
     video_name = os.path.split(video_path)[1].split( '.')[0]

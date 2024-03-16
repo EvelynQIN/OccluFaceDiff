@@ -11,12 +11,15 @@ num_workers: 8
 
 # training setting
 seed: 0
-scale: 1.5 # scale min, scale max
-trans_scale: 0.
-image_size: 224
 
 # model architechture
-model_name: "trans_orth_reversey"
-input_feature_dim: 136 # input feature dim 68 x 2
+model_name: "trans_calib_128d"
+lmk2d_dim: 136 # input feature dim 68 x 2
+n_shape: 100
 output_feature_dim: 3 # number of cam params (one set per frame)
 latent_dim: 128
+ckpt_path: NULL
+
+# for flame
+flame_model_path: "flame_2020/generic_model.pkl"
+flame_lmk_embedding_path: "flame_2020/dense_lmk_embedding.npy"

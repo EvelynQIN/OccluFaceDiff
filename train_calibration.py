@@ -5,9 +5,12 @@ import numpy as np
 import torch
 import wandb
 from tqdm import tqdm
+import pickle
+from collections import defaultdict
 
 from data_loaders.dataloader_calibration import get_dataloader, load_data, LmkDataset
 from model.calibration_layer import Cam_Calibration
+from model.FLAME import FLAME
 from utils import utils_transform
 from utils.famos_camera import batch_perspective_project_wo_distortion, batch_orth_proj
 from utils import dist_util
@@ -17,79 +20,95 @@ FOCAL_LEN = 1000.0
 PRINCIPAL_POINT_OFFSET = 112.0
 IMAGE_SIZE = 224 
 MEAN_TRANS = torch.FloatTensor([0.004, 0.222, 1.200])   # guessing from training 
+FIXED_INTRIN = torch.FloatTensor([
+        [FOCAL_LEN, 0., PRINCIPAL_POINT_OFFSET],
+        [0., FOCAL_LEN, PRINCIPAL_POINT_OFFSET],
+        [0., 0., 1.]
+    ])
+
 
 class Struct:
     def __init__(self, **entries):
         self.__dict__.update(entries)
 
-def lmk_reproj_loss(model_output, lmk3d, lmk2d_gt, verbose=False):
+def verts_loss_weighted(gt, pred, weights):
+    bs = pred.shape[0]
+    k = torch.sum(weights) * 2.0
+
+    lmk_diff_normed = torch.abs(
+        (gt.reshape(bs,-1,2) - pred.reshape(bs,-1,2))).sum(-1)
+    
+    reprojection_loss_normed_weighted = torch.mean(
+        torch.matmul(lmk_diff_normed, weights.unsqueeze(-1)) * 1.0 / k)
+    
+    return reprojection_loss_normed_weighted
+
+def lmk_reproj_loss(
+        model_output, 
+        lmk_2d, 
+        verts_2d, 
+        flame_params, 
+        flame, 
+        verts_loss_weights, 
+        vis=False, 
+        vis_id=None,
+        verbose=False
+    ):
     # fixed focal length and principal point offset
     device = model_output.device
     bs = model_output.shape[0]
-    intrin = torch.FloatTensor([
-        [FOCAL_LEN, 0., PRINCIPAL_POINT_OFFSET],
-        [0., FOCAL_LEN, PRINCIPAL_POINT_OFFSET],
-        [0., 0., 1.]
-    ]).unsqueeze(0).expand(bs, 3, 3).to(device) # (bs, 3, 3)
+    intrin = FIXED_INTRIN.unsqueeze(0).expand(bs, 3, 3).to(device) # (bs, 3, 3)
     mean_trans = MEAN_TRANS.unsqueeze(0).expand(bs, -1).to(device)
     T = (model_output + mean_trans).unsqueeze(-1) # (bs, 3, 1)
     R = torch.eye(3).unsqueeze(0).expand(bs,-1, -1).to(device) # (bs, 3, 3)
     extrin = torch.cat([R, T], dim=-1)  # (bs, 3, 4)
-    lmk2d_reproject = batch_perspective_project_wo_distortion(lmk3d, intrin, extrin)
-    
-    # define loss weights
-    weights = torch.ones((68,)).cuda()
 
-    # face contour 
-    weights[5:7] = 2
-    weights[10:12] = 2
-    # eye points
-    weights[36:48] = 2
-    weights[36] = 4
-    weights[39] = 4
-    weights[42] = 4
-    weights[45] = 4
-    # nose points
-    weights[30] = 1.5
-    weights[31] = 1.5
-    weights[35] = 1.5
-    # inner mouth
-    weights[60:68] = 1.5
-    weights[48:60] = 1.5
-    weights[48] = 4
-    weights[54] = 4
+    shape = flame_params[:, :300]
+    exp = flame_params[:, 300:400]
+    rot_6d = flame_params[:, 400:]
+    rot_aa = utils_transform.sixd2aa(rot_6d.reshape(-1, 6)).reshape(bs, -1)
+    verts_3d, lmk_3d = flame(shape, exp, rot_aa)
 
-    k = torch.sum(weights) * 2.0
-
-    # denormalize 
-    lmk2d_gt_denormed = (lmk2d_gt + 1) * IMAGE_SIZE / 2.0
-
-    # normalize 
+    lmk2d_reproject = batch_perspective_project_wo_distortion(lmk_3d, intrin, extrin)
     lmk2d_reproject_normed = lmk2d_reproject / IMAGE_SIZE * 2.0 - 1
-
-    reprojection_loss = torch.mean(
-        torch.abs(
-            (lmk2d_gt_denormed.reshape(-1, 2) - lmk2d_reproject.reshape(-1, 2))).sum(1)
-    )
-
-    lmk_diff_normed = torch.abs(
-        (lmk2d_gt.reshape(bs,-1,2) - lmk2d_reproject_normed.reshape(bs,-1,2))).sum(-1)
     
-    reprojection_loss_normed_weighted = torch.mean(
-        torch.matmul(lmk_diff_normed, weights.unsqueeze(-1)) * 1.0 / k)
+    verts_2d_reproject = batch_perspective_project_wo_distortion(verts_3d, intrin, extrin)
+    verts_2d_reproject_normed = verts_2d_reproject / IMAGE_SIZE * 2.0 - 1
+    
+    shape = flame_params[:, :300]
+    exp = flame_params[:, 300:400]
+    rot_6d = flame_params[:, 400:]
+    rot_aa = utils_transform.sixd2aa(rot_6d.reshape(-1, 6)).reshape(bs, -1)
+
+    weights_lmk = verts_loss_weights['lmk_2d'].to(device)
+    lmk2d_loss_weighted = verts_loss_weighted(lmk_2d, lmk2d_reproject_normed, weights_lmk)
+
+    weights_flame = verts_loss_weights['flame_verts'].to(device)
+    verts2d_loss_weighted = verts_loss_weighted(verts_2d, verts_2d_reproject_normed, weights_flame)
 
     output_mean = None
     if verbose:
         output_mean = torch.mean(T, dim=0)
     
-    reg_trans = 100.0 * torch.mean(model_output ** 2) * 1.0 / 2
+    reg_trans = 10.0 * torch.mean(model_output ** 2) * 1.0 / 2
     
     loss_dict = {
-        "loss": reprojection_loss,
-        "loss_normed": reprojection_loss_normed_weighted + reg_trans
+        "lmk2d_loss": lmk2d_loss_weighted,
+        "verts_2d_loss": verts2d_loss_weighted,
+        "loss": lmk2d_loss_weighted + reg_trans + verts2d_loss_weighted
     }
 
-    return loss_dict, output_mean
+    log_imgs = None
+    
+    if vis: 
+        log_imgs = []
+        lmk_2d_denormed = (lmk_2d + 1) * IMAGE_SIZE / 2
+        for i in vis_id:
+            image_arr = plot_kpts(lmk_2d_denormed[i].reshape(-1, 2), lmk2d_reproject[i].reshape(-1, 2))
+            image = wandb.Image(image_arr)
+            log_imgs.append(image)
+
+    return loss_dict, output_mean, log_imgs
 
 def plot_kpts(kpts_gt, kpts_pred):
     ''' Draw 68 key points
@@ -121,43 +140,55 @@ def plot_kpts(kpts_gt, kpts_pred):
 
     return image
 
-def vis_kpts(lmk2ds, lmk3ds, model):
-    model_output = model(lmk2ds).detach().cpu()
-    lmk2ds = lmk2ds.detach().cpu().numpy()
-    lmk3ds = lmk3ds.detach().cpu()
-    # fixed focal length and principal point offset
-    bs = lmk3ds.shape[0]
-    intrin = torch.FloatTensor([
-        [FOCAL_LEN, 0., PRINCIPAL_POINT_OFFSET],
-        [0., FOCAL_LEN, PRINCIPAL_POINT_OFFSET],
-        [0., 0., 1.]
-    ]).unsqueeze(0).expand(bs, 3, 3) # (bs, 3, 3)
-    
-    mean_trans = MEAN_TRANS.unsqueeze(0).expand(bs, -1)
-    T = (model_output + mean_trans).unsqueeze(-1) # (bs, 3, 1)
-
-    R = torch.eye(3).unsqueeze(0).expand(bs,-1, -1) # (bs, 3, 3)
-    extrin = torch.cat([R, T], dim=-1)  # (bs, 3, 4)
-    lmk2d_reproject = batch_perspective_project_wo_distortion(lmk3ds, intrin, extrin).numpy()
-    
-    lmk2d_gt_denormed = (lmk2ds + 1) * IMAGE_SIZE / 2.0
-    imgs = []
-    for i in range(bs):
-        image_arr = plot_kpts(lmk2d_gt_denormed[i].reshape(-1, 2), lmk2d_reproject[i].reshape(-1, 2))
-        image = wandb.Image(image_arr)
-        imgs.append(image)
-    return imgs
-    
-
 def train_calibration_model(args, train_loader, valid_loader):
     print("creating MLP model...")
     num_gpus = torch.cuda.device_count()
     args.num_workers = args.num_workers * num_gpus
+
+    flame = FLAME(flame_model_path=args.flame_model_path, flame_lmk_embedding_path=args.flame_lmk_embedding_path)
+
+    flame_vmask_path = "flame_2020/FLAME_masks.pkl"
+    with open(flame_vmask_path, 'rb') as f:
+        flame_v_mask = pickle.load(f, encoding="latin1")
     
+    # define landamark loss weights
+    lmk_weights = torch.ones((68,))
+    # face contour 
+    lmk_weights[5:7] = 2
+    lmk_weights[10:12] = 2
+    # eye points
+    lmk_weights[36:48] = 2
+    lmk_weights[36] = 4
+    lmk_weights[39] = 4
+    lmk_weights[42] = 4
+    lmk_weights[45] = 4
+    # nose points
+    lmk_weights[30] = 1.5
+    lmk_weights[31] = 1.5
+    lmk_weights[35] = 1.5
+    # inner mouth
+    lmk_weights[60:68] = 1.5
+    lmk_weights[48:60] = 1.5
+    lmk_weights[48] = 4
+    lmk_weights[54] = 4
+
+    # define flame_verts loss weights
+    verts_weights = torch.ones((5023,)) * 0.5
+    face_ids = flame_v_mask['face']
+    verts_weights[face_ids] = 3.0
+
+    verts_loss_weights = {
+        "lmk2d": lmk_weights,
+        "flame_verts": verts_weights
+    }
+
+        
     model = Cam_Calibration(
-        args.input_feature_dim, # input feature dim 68 x 2
-        args.output_feature_dim, # number of cam params (one set per frame)
-        args.latent_dim,
+        lmk2d_dim=args.lmk2d_dim, # input feature dim 68 x 2
+        n_shape=args.shape_dim,
+        output_feature_dim=args.output_feature_dim, # number of cam params (one set per frame)
+        latent_dim=args.latent_dim,
+        ckpt_path=None,
     )
 
     if num_gpus > 1:
@@ -188,27 +219,28 @@ def train_calibration_model(args, train_loader, valid_loader):
     for epoch in tqdm(range(args.num_epoch)):
         model.train()
         x, y, z = [], [], []
-        for lmk_2d, lmk_3d in tqdm(train_loader):
+        for occluded_lmk2d, shape, lmk_2d, verts_2d, target in tqdm(train_loader):
             device = dist_util.dev()
-            lmk_2d = lmk_2d.to(device)
-            lmk_3d = lmk_3d.to(device)
+            occluded_lmk2d = occluded_lmk2d.to(device)
+            shape = shape.to(device)
+            verts_2d = verts_2d.to(device)
+            flame_params = target.to(device)
+            cam_pred = model(occluded_lmk2d, shape)
 
-            cam_pred = model(lmk_2d)
-
-            loss_dict, trans_mean = lmk_reproj_loss(cam_pred, lmk_3d, lmk_2d, verbose=True)
+            loss_dict, trans_mean, _ = lmk_reproj_loss(cam_pred, lmk_2d, verts_2d, flame_params, flame, verts_loss_weights, verbose=True)
             optimizer.zero_grad()
-            loss_dict["loss_normed"].backward()
+            loss_dict["loss"].backward()
             optimizer.step()
             tx, ty, tz = trans_mean.detach().cpu().numpy()
             x.append(tx)
             y.append(ty)
             z.append(tz)
-
-            loss_dict = {
-                "train/epoch": epoch,
-                "train/reprojection_loss": loss_dict["loss"].item(),
-                "train/train_loss": loss_dict["loss_normed"].item()
+            log_dict = {
+                "train/epoch": epoch
             }
+            for k in loss_dict:
+                log_dict[f'train/{k}'] = loss_dict[k].item()
+            
             wandb.log(loss_dict)
             nb_iter += 1
         
@@ -218,43 +250,47 @@ def train_calibration_model(args, train_loader, valid_loader):
         print(f'trans_z: mean = {np.mean(z)} || std = {np.std(z)}')
         
         model.eval()
-        total_loss = 0.0
+        total_loss = defaultdict(float)
         eval_steps = 0.0
         x, y, z = [], [], []
+        vis_step = len(valid_loader)
         with torch.no_grad():
-            for lmk_2d, lmk_3d in tqdm(valid_loader):
-                device = dist_util.dev()
-                lmk_2d = lmk_2d.to(device)
-                lmk_3d = lmk_3d.to(device)
-
-                cam_pred = model(lmk_2d)
-
-                loss_dict, trans_mean = lmk_reproj_loss(cam_pred, lmk_3d, lmk_2d, verbose=True)
+            for occluded_lmk2d, shape, lmk_2d, verts_2d, target in tqdm(valid_loader):
                 eval_steps += 1
-                total_loss += float(loss_dict["loss"].item())
+                device = dist_util.dev()
+                occluded_lmk2d = occluded_lmk2d.to(device)
+                shape = shape.to(device)
+                verts_2d = verts_2d.to(device)
+                flame_params = target.to(device)
+                cam_pred = model(occluded_lmk2d, shape)
+
+                vis = True if epoch % 5 == 0 and eval_steps == vis_step else False
+                loss_dict, trans_mean, log_imgs = lmk_reproj_loss(
+                    cam_pred, lmk_2d, verts_2d, flame_params, flame, verts_loss_weights, vis, vis_id, verbose=True)
+                
+                vis_step = False
+                for k in loss_dict:
+                    total_loss[k] += float(loss_dict[k].item())
                 tx, ty, tz = trans_mean.detach().cpu().numpy()
                 x.append(tx)
                 y.append(ty)
                 z.append(tz)
             
-            loss_dict = {
-                    "val/epoch": epoch,
-                    "val/reprojection_loss": total_loss / eval_steps
-            }
+            log_dict = {"val/epoch": epoch}
+            for k in total_loss:
+                log_dict[f'val/{k}'] = total_loss[k] / eval_steps
+
             print(f"Val for epoch {epoch}:")
             print(f'trans_x: mean = {np.mean(x)} || std = {np.std(x)}')
             print(f'trans_y: mean = {np.mean(y)} || std = {np.std(y)}')
             print(f'trans_z: mean = {np.mean(z)} || std = {np.std(z)}')
             
             if epoch % 5 == 0:
-                lmks_2d_vis = lmk_2d[vis_id]
-                lmk_3d_vis = lmk_3d[vis_id]
-                imgs = vis_kpts(lmks_2d_vis, lmk_3d_vis, model)
-                loss_dict['val/imgs'] = imgs
+                log_dict['val/imgs'] = log_imgs
                 
-            wandb.log(loss_dict)
+            wandb.log(log_dict)
     
-        if epoch % args.save_interval == 0:
+        if epoch % args.save_interval == 0 or epoch == args.num_epoch-1:
             with open(
                 os.path.join(args.save_dir, "model-epoch-" + str(epoch) + "-step-" + str(nb_iter) + ".pth"),
                 "wb",
@@ -270,13 +306,13 @@ def main():
     args = Struct(**cfg)
 
     torch.backends.cudnn.benchmark = False
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    # random.seed(args.seed)
+    # np.random.seed(args.seed)
+    # torch.manual_seed(args.seed)
     
     # init wandb log
     wandb.init(
-        project="pred_cam",
+        project="pred_cam_with_shape",
         name=args.model_name,
         config=args,
         settings=wandb.Settings(start_method="fork"),
@@ -293,16 +329,15 @@ def main():
         json.dump(cfg, fw, indent=4, sort_keys=True) 
     
     print("creating training data loader...")    
-    train_dict = load_data(
+    train_dict, norm_dict = load_data(
         args.dataset,
         args.dataset_path,
         "train",
     )
     dataset = LmkDataset(
         train_dict,
-        scale=args.scale,
-        trans_scale=args.trans_scale,
-        image_size=args.image_size,
+        norm_dict,
+        occlusion_mask_prob=0.5
     )
     train_loader = get_dataloader(
         dataset, "train", batch_size=args.batch_size, num_workers=args.num_workers
@@ -310,7 +345,7 @@ def main():
     
     # val data loader
     print("creating val data loader...")
-    val_dict = load_data(
+    val_dict, _ = load_data(
         args.dataset,
         args.dataset_path,
         "val"
@@ -318,16 +353,15 @@ def main():
     
     val_dataset = LmkDataset(
         val_dict,
-        scale=args.scale,
-        trans_scale=args.trans_scale,
-        image_size=args.image_size
+        norm_dict,
+        occlusion_mask_prob=0.5
     )
     
     val_loader = get_dataloader(
         val_dataset, "val", batch_size=args.batch_size, num_workers=args.num_workers
     )
 
-    train_calibration_model(args, train_loader, val_loader)
+    train_calibration_model(args, train_loader, val_loader, norm_dict)
 
 if __name__ == "__main__":
     main()
