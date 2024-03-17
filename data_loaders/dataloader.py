@@ -40,10 +40,9 @@ class TrainDataset(Dataset):
         return target
 
     def __getitem__(self, idx):
-        id = idx % len(self.motion_path_list)
+        id = idx % len(self.data['target'])
 
-        motion_dict = self.data[id]
-        seqlen = motion_dict['target'].shape[0] 
+        seqlen = self.data['target'][id].shape[0] 
         
         if self.train_dataset_repeat_times == 1:
             # do not repeat
@@ -60,13 +59,14 @@ class TrainDataset(Dataset):
         else:
             start_id = torch.randint(0, int(seqlen - input_motion_length), (1,))[0]     # random crop a motion seq
         
-        lmk_2d = motion_dict['lmk_2d'][start_id:start_id + input_motion_length]  # (n, 68, 2)
-        lmk_3d_normed = motion_dict['lmk_3d_normed'][start_id:start_id + input_motion_length] # (n, 68, 3)
-        target = motion_dict['target'][start_id:start_id + input_motion_length] # (n, shape300 + exp100 + rot6d30)
+        lmk_2d = self.data['lmk_2d'][id][start_id:start_id + input_motion_length]  # (n, 68, 2)
+        lmk_3d_normed = self.data['lmk_3d_normed'][id][start_id:start_id + input_motion_length] # (n, 68, 3)
+        target = self.data['target'][id][start_id:start_id + input_motion_length] # (n, shape300 + exp100 + rot6d30)
         
-        n_imgs = torch.sum(motion_dict['img_mask'][start_id:start_id + input_motion_length])
-        img_start_fid = torch.sum(motion_dict['img_mask'][:start_id])
-        img_arr = motion_dict['arcface_input'][img_start_fid:img_start_fid+n_imgs] # (n_imgs, 3, 112, 112)
+        img_mask = self.data['img_mask'][id]
+        n_imgs = torch.sum(img_mask[start_id:start_id + input_motion_length])
+        img_start_fid = torch.sum(img_mask[:start_id])
+        img_arr = self.data['arcface_input'][id][img_start_fid:img_start_fid+n_imgs] # (n_imgs, 3, 112, 112)
 
         # make sure there are always 4 images within the clipped sequence
         needed_imgs = 4 - n_imgs
@@ -76,10 +76,10 @@ class TrainDataset(Dataset):
             img_arr = img_arr[img_ids]
         elif needed_imgs > 0:
             # repeat needed images
-            n_img_available = torch.sum(motion_dict['img_mask'])
+            n_img_available = torch.sum(img_mask)
             assert n_img_available > 0
             img_arr_added_ids = torch.randint(0, n_img_available, size=(needed_imgs,))
-            img_arr_repeated = motion_dict['arcface_input'][img_arr_added_ids]
+            img_arr_repeated = self.data['arcface_input'][id][img_arr_added_ids]
             img_arr = torch.cat([img_arr, img_arr_repeated], dim=0) if needed_imgs < 4 else img_arr_repeated
         assert (not img_arr.isnan().any()) and img_arr.shape[0] == 4
             
@@ -272,7 +272,7 @@ def get_face_motion(motion_paths):
     motion_list = defaultdict(list)
 
     print(f"Load motions from processed data.")
-    for motion_path in tqdm(motion_paths):
+    for motion_path in tqdm(motion_paths[:64]):
         motion = torch.load(motion_path)
         nframes = motion['target'].shape[0]
         if nframes < 50:
@@ -285,9 +285,10 @@ def get_face_motion(motion_paths):
         motion_list['target'].append(target)
         motion_list['lmk_3d_normed'].append(motion['lmk_3d_normed'])
         motion_list['lmk_2d'].append(motion['lmk_2d'])
-        motion_list['img_arr'].append(motion['arcface_input'])
-        motion_list['img_mask'].append(motion['img_mask'])     
-        
+        motion_list['arcface_input'].append(motion['arcface_input'])
+        motion_list['img_mask'].append(motion['img_mask'])    
+        assert torch.sum(motion['img_mask']) ==  motion['arcface_input'].shape[0], f"{motion_path}"
+       
     return motion_list
 
 def get_valid_motion_path_list(motion_paths, skip_frame, input_motion_length):

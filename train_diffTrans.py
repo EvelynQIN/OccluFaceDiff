@@ -112,7 +112,6 @@ def main():
     # val data loader
     print("creating val data loader...")
     val_motions, _ = load_data(
-        args,
         args.dataset,
         args.dataset_path,
         "test",
