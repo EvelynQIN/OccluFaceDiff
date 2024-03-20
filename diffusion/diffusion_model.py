@@ -28,6 +28,26 @@ def normalize(value, mean, std):
 def denormalize(value, mean, std):
     return  value * std + mean
 
+def mouth_closure_lmk_loss(pred_lmks, target_lmks):
+    upper_mouth_lmk_ids = [49, 50, 51, 52, 53, 61, 62, 63]
+    lower_mouth_lmk_ids = [59, 58, 57, 56, 55, 67, 66, 65]
+    diff_pred = pred_lmks[:, upper_mouth_lmk_ids, :] - pred_lmks[:, lower_mouth_lmk_ids, :]
+    diff_target = target_lmks[:, upper_mouth_lmk_ids, :] - target_lmks[:, lower_mouth_lmk_ids, :]
+    diff = torch.mean(
+        torch.norm(diff_pred - diff_target, p=2, dim=-1)
+    )
+    return diff
+
+def eye_closure_lmk_loss(pred_lmks, target_lmks):
+    upper_eyelid_lmk_ids = [37, 38, 43, 44]
+    lower_eyelid_lmk_ids = [41, 40, 47, 46]
+    diff_pred = pred_lmks[:, upper_eyelid_lmk_ids, :] - pred_lmks[:, lower_eyelid_lmk_ids, :]
+    diff_target = target_lmks[:, upper_eyelid_lmk_ids, :] - target_lmks[:, lower_eyelid_lmk_ids, :]
+    diff = torch.mean(
+        torch.norm(diff_pred - diff_target, p=2, dim=-1)
+    )
+    return diff
+
 def parse_model_target(target):
     nshape = 100
     nexp = 50 
@@ -49,7 +69,7 @@ class DiffusionModel(GaussianDiffusion):
         )
     
     # TODO: loss computation between target and prediction
-    def masked_l2(self, target, model_output, shape_mica, **model_kwargs):
+    def masked_l2(self, target, model_output, **model_kwargs):
 
         bs, n, c = target.shape    
 
@@ -60,6 +80,9 @@ class DiffusionModel(GaussianDiffusion):
         # l2 loss on flame parameters       
         shape_loss =  torch.mean(
             torch.norm((shape_gt - shape_pred), 2, -1))
+        
+        mica_shape_loss = torch.mean(
+            torch.norm((shape_gt - model_kwargs['mica_shape']), 2, -1))
         
         pose_loss = torch.mean(
             torch.norm((pose_gt - pose_pred), 2, -1))
@@ -106,9 +129,13 @@ class DiffusionModel(GaussianDiffusion):
         verts_gt, lmk3d_gt = self.flame(
             flame_params_gt[:, :100], flame_params_gt[:, 100:-30], pose_aa_gt)
         
+        # 3d mesh verts loss
         v_weights = self.flame_verts_weight.unsqueeze(1).to(target.device)  # (v, 1)
         verts_3d_dist = torch.norm(verts_pred.reshape(bs*n, -1, 3) - verts_gt.reshape(bs*n, -1, 3), 2, -1)    # (b, v)
         verts3d_loss = torch.mean(torch.matmul(verts_3d_dist, v_weights))
+        
+        mouth_closure_loss = mouth_closure_lmk_loss(lmk3d_pred.reshape(bs*n, -1, 3), lmk3d_gt.reshape(bs*n, -1, 3))
+        eye_closure_loss = eye_closure_lmk_loss(lmk3d_pred.reshape(bs*n, -1, 3), lmk3d_gt.reshape(bs*n, -1, 3))
             
         # project 3d points to image plane 
         lmk2d_pred = batch_cam_to_img_project(
@@ -116,29 +143,42 @@ class DiffusionModel(GaussianDiffusion):
             trans=trans_pred.reshape(-1, 3)
         ).reshape(-1, 2)
         
-        # gt lmk2d error from the calibration layer
-        lmk2d_pred_gt = batch_cam_to_img_project(
-            points=lmk3d_gt,
-            trans=trans_gt.reshape(-1, 3)
+        verts_2d_pred = batch_cam_to_img_project(
+            points=verts_pred,
+            trans=trans_pred.reshape(-1, 3)
+        ).reshape(-1, 2)
+        
+        # projected 2d points from gt mesh verts
+        verts_2d_camcalib = batch_cam_to_img_project(
+            points=verts_gt,
+            trans=trans_pred.reshape(-1, 3)
         ).reshape(-1, 2)
 
         # normalize lmk2d
         IMAGE_SIZE = 224
         lmk2d_pred_normed = lmk2d_pred / IMAGE_SIZE * 2 - 1
-        lmk2d_pred_gt_normed = lmk2d_pred_gt / IMAGE_SIZE * 2 -1
+        verts_2d_pred_normed = verts_2d_pred / IMAGE_SIZE * 2 - 1
+        verts_2d_camcalib_normed = verts_2d_camcalib / IMAGE_SIZE * 2 - 1
+        
         
         lmk2d_loss = torch.mean(
             torch.norm(model_kwargs["lmk_2d"].reshape(-1, 2) - lmk2d_pred_normed, 2, -1))
         
-        lmk2d_loss_gt = torch.mean(
-            torch.norm(model_kwargs["lmk_2d"].reshape(-1, 2) - lmk2d_pred_gt_normed, 2, -1))
+        verts_2d_diff = torch.norm(
+            verts_2d_pred_normed.reshape(bs*n, -1, 2) - model_kwargs['verts_2d'].reshape(bs*n, -1, 2), 
+            2, 
+            -1)    # (b, v)
+        verts2d_loss = torch.mean(torch.matmul(verts_2d_diff, v_weights))
         
-        # mica_shape_error 
-        shape_mica_loss = torch.mean(
-            torch.norm(flame_params_gt[:, :100].reshape(bs, n, -1)[:, 0,:] - shape_mica, 2, -1))
+        verts_2d_cam_diff = torch.norm(
+            verts_2d_camcalib_normed.reshape(bs*n, -1, 2) - model_kwargs['verts_2d'].reshape(bs*n, -1, 2), 
+            2, 
+            -1)    # (b, v)
+        verts2d_cam_loss = torch.mean(torch.matmul(verts_2d_cam_diff, v_weights))
             
-        loss = 3.0 * shape_loss + 30.0 * pose_loss + 10.0 * expr_loss + 10 * trans_loss \
-                + 0.01 * verts3d_loss + 0.01 * lmk2d_loss \
+        loss = 1.0 * shape_loss + 50.0 * pose_loss + 30.0 * expr_loss + 10 * trans_loss \
+                + 1.0 * mouth_closure_loss + 1.0 * eye_closure_loss \
+                + 1.0 * verts3d_loss + 0.1 * lmk2d_loss  + 1.0 * verts2d_loss + 0.1 * verts2d_cam_loss \
                 + 0.0 * pose_jitter + 0.0 * exp_jitter
 
         loss_dict = {
@@ -151,8 +191,11 @@ class DiffusionModel(GaussianDiffusion):
             "verts3d_loss": verts3d_loss,
             "expt_jitter": exp_jitter,
             "pose_jitter": pose_jitter,
-            "lmk2d_gt_loss": lmk2d_loss_gt,
-            "shape_mica_loss": shape_mica_loss
+            "verts_2d_loss": verts2d_loss,
+            "verts2d_cam_loss": verts2d_cam_loss,
+            "shape_mica_loss": mica_shape_loss,
+            "mouth_closure_loss": mouth_closure_loss, 
+            "eye_closure_loss": eye_closure_loss
         }
 
         return loss_dict
@@ -181,7 +224,7 @@ class DiffusionModel(GaussianDiffusion):
             if self.loss_type == LossType.RESCALED_KL:  
                 terms["loss"] *= self.num_timesteps
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
-            model_output, shape_mica = model(x_t, self._scale_timesteps(t), return_mica=True, **model_kwargs)
+            model_output = model(x_t, self._scale_timesteps(t), **model_kwargs)
 
             if self.model_var_type in [
                 ModelVarType.LEARNED,
@@ -219,7 +262,6 @@ class DiffusionModel(GaussianDiffusion):
             terms.update(self.masked_l2(
                 target,
                 model_output,
-                shape_mica,
                 **model_kwargs
             ))
 

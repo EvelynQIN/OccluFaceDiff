@@ -17,6 +17,7 @@ import gc
 import pyrender
 from vedo import trimesh2vedo, show
 from PIL import Image
+from enum import Enum
 
 # os.environ["PYOPENGL_PLATFORM"] = "egl"
 
@@ -242,3 +243,86 @@ def concat_videos_to_gif(video_list, output_path, fps):
     #     im_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
     #     video.write(im_bgr)
     # video.release()
+
+## ===========Reference from MICA tracker================== ##
+
+def video_to_frames(video_path, fps=60):
+    video_name = os.path.split(video_path)[1].split( '.')[0]
+    os.system(f'ffmpeg -y -framerate {fps} -pattern_type glob -i \'output/{video_name}/frames/*.jpg\' -c:v libx264 {video_path}')
+
+def merge_views(views):
+    grid = []
+    for view in views:
+        grid.append(np.concatenate(view, axis=2))
+    grid = np.concatenate(grid, axis=1)
+
+    # tonemapping
+    return to_image(grid)
+
+def to_image(img):
+    img = (img.transpose(1, 2, 0) * 255)[:, :, [2, 1, 0]]
+    img = np.minimum(np.maximum(img, 0), 255).astype(np.uint8)
+    return img
+
+def plot_all_kpts(image, kpts, color, occlusion_mask=None):
+    if color == 'r':
+        c = (0, 0, 255)
+    elif color == 'g':
+        c = (0, 255, 0)
+    
+    mask_c = (255, 0, 0) # blue
+
+    image = image.copy()
+    kpts = kpts.copy()
+
+    for i in range(kpts.shape[0]):
+        st = kpts[i, :2]
+        kpt_color = mask_c if occlusion_mask is not None and occlusion_mask[i] else c
+            
+        image = cv2.circle(image, (int(st[0]), int(st[1])), 1, kpt_color, 2)
+
+    return image
+
+def tensor_vis_landmarks(images, landmarks, color, occlusion_masks=None):
+    """
+    Args:
+        images: float, (bs, 3, h, w) in RGB
+        landmarks: (bs, 68, 3)
+    Returns:
+        vis_landmarks: (bs, 3, h, w) in RGB
+    """
+    vis_landmarks = []
+    images = images.cpu().numpy()   # float, (bs, )
+    predicted_landmarks = landmarks.detach().cpu().numpy()
+    if occlusion_masks is not None:
+        occlusion_masks = occlusion_masks.detach().cpu().numpy() == 1
+    for i in range(images.shape[0]):
+        image = images[i]   # bgr
+        image = image.transpose(1, 2, 0)[:, :, [2, 1, 0]].copy() 
+        image = (image * 255)
+        predicted_landmark = predicted_landmarks[i]
+        if occlusion_masks is not None:
+            occlusion_mask = occlusion_masks[i]
+            image_landmarks = plot_all_kpts(image, predicted_landmark, color, occlusion_mask)
+        else:
+            image_landmarks = plot_all_kpts(image, predicted_landmark, color)
+        vis_landmarks.append(image_landmarks)
+
+    vis_landmarks = np.stack(vis_landmarks)
+    vis_landmarks = torch.from_numpy(
+        vis_landmarks[:, :, :, [2, 1, 0]].transpose(0, 3, 1, 2)) / 255.  # , dtype=torch.float32) # bgr
+    return vis_landmarks
+
+def images_to_video(path, fps=25, src='video', video_format='DIVX'):
+    img_array = []
+    for filename in tqdm(sorted(glob.glob(f'{path}/{src}/*.jpg'))):
+        img = cv2.imread(filename)
+        height, width, layers = img.shape
+        size = (width, height)
+        img_array.append(img)
+
+    if len(img_array) > 0:
+        out = cv2.VideoWriter(f'{path}/video.avi', cv2.VideoWriter_fourcc(*video_format), fps, size)
+        for i in range(len(img_array)):
+            out.write(img_array[i])
+        out.release()

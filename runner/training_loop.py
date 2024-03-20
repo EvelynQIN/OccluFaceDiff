@@ -105,9 +105,7 @@ class TrainLoop:
         for k in std.keys():
             self.std[k] = std[k].to(self.device)
 
-        self.loss_keys = ["loss", "shape_loss", "expr_loss", "pose_loss", "trans_loss",
-                          "lmk2d_norm_loss", "verts3d_loss",
-                          "expt_jitter", "pose_jitter"]
+        self.loss_keys = None
 
     def _load_and_sync_parameters(self):
         resume_checkpoint = self.resume_checkpoint
@@ -122,8 +120,6 @@ class TrainLoop:
                     map_location=dist_util.dev(),
                 )
             )
-        else:
-            self.model.mica.load_model(device=dist_util.dev())
 
     def _load_optimizer_state(self):
         main_checkpoint = self.resume_checkpoint
@@ -143,7 +139,7 @@ class TrainLoop:
             self.model.train()
             print(f"Starting training epoch {epoch}")
             self.epoch = epoch
-            for flame_params, lmk_2d, lmk_3d_normed, img_arr, occlusion_mask in tqdm(self.train_loader):
+            for flame_params, lmk_2d, lmk_3d_normed, verts_2d, mica_shape, occlusion_mask in tqdm(self.train_loader):
                 self.step += 1
                 flame_params = flame_params.to(self.device)
                 lmk_2d = lmk_2d.to(self.device)
@@ -158,7 +154,8 @@ class TrainLoop:
                 model_kwargs = {
                     "lmk_2d": lmk_2d.to(self.device),
                     "lmk_3d": lmk_3d_normed.to(self.device),
-                    "img_arr": img_arr.to(self.device),
+                    "mica_shape": mica_shape.to(self.device),
+                    "verts_2d":verts_2d.to(self.device),
                     "occlusion_mask": occlusion_mask,
                     "mean": self.mean,
                     "std": self.std
@@ -201,6 +198,8 @@ class TrainLoop:
         )
 
         losses = compute_losses()
+        if self.loss_keys is None:
+            self.loss_keys = losses.keys()
 
         # if isinstance(self.schedule_sampler, LossAwareSampler):
         #     self.schedule_sampler.update_with_local_losses(t, losses["loss"].detach())
@@ -219,7 +218,7 @@ class TrainLoop:
             val_loss[key] = 0.0
         eval_steps = 0.0
         with torch.no_grad():
-            for flame_params, lmk_2d, lmk_3d_normed, img_arr, occlusion_mask in tqdm(self.val_loader):
+            for flame_params, lmk_2d, lmk_3d_normed, verts_2d, mica_shape, occlusion_mask in tqdm(self.val_loader):
                 eval_steps += 1
                 flame_params = flame_params.to(self.device)
                 lmk_2d = lmk_2d.to(self.device)
@@ -236,8 +235,9 @@ class TrainLoop:
                 model_kwargs = {
                     "lmk_2d": lmk_2d.to(self.device),
                     "lmk_3d": lmk_3d_normed.to(self.device),
-                    "img_arr": img_arr.to(self.device),
-                    "occlusion_mask": occlusion_mask.to(self.device),
+                    "mica_shape": mica_shape.to(self.device),
+                    "verts_2d":verts_2d.to(self.device),
+                    "occlusion_mask": occlusion_mask,
                     "mean": self.mean,
                     "std": self.std
                 }

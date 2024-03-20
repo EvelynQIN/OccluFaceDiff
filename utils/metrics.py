@@ -8,6 +8,9 @@ import math
 RADIANS_TO_DEGREES = 360.0 / (2 * math.pi)  # 57.2958 grads
 METERS_TO_MILLIMETERS = 1000.0
 
+N_SHAPE = 100
+N_EXP = 50
+
 def pred_jitter(
     shape_gt, expr_pred, pose_aa_pred, trans_pred, verts_pred, lmk_3d_pred, lmk_2d_pred,
     shape_pred, expr_gt, pose_aa_gt, trans_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
@@ -68,7 +71,7 @@ def shape_error(
 ):
     mean_shape_error = torch.mean(
         torch.norm(
-            shape_gt.reshape(-1, 300) - shape_pred.reshape(-1, 300),
+            shape_gt.reshape(-1, N_SHAPE) - shape_pred.reshape(-1, N_SHAPE),
             2,
             1
         )
@@ -82,7 +85,7 @@ def expre_error(
 ):
     mean_expression_error = torch.mean(
         torch.norm(
-            expr_gt.reshape(-1, 100) - expr_pred.reshape(-1, 100),
+            expr_gt.reshape(-1, N_EXP) - expr_pred.reshape(-1, N_EXP),
             2,
             1
         )

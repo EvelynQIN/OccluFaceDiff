@@ -7,7 +7,7 @@ import numpy as np
 import trimesh
 import torch
 
-from data_loaders.dataloader import load_data, TestDataset
+from data_loaders.dataloader_from_path import load_data, TestDataset
 
 from model.FLAME import FLAME
 
@@ -52,8 +52,8 @@ full_vertex_metrics = [
 all_metrics = pred_metrics + gt_metrics + full_vertex_metrics
 
 def parse_model_target(target):
-    nshape = 300
-    nexp = 100 
+    nshape = 100
+    nexp = 50 
     npose = 5*6 
     ntrans = 3 
     shape = target[:, :nshape]
@@ -271,8 +271,8 @@ def evaluate_prediction(
     fps,
     motion_id,
     flame_v_mask,
-    split,
-    occlusion_mask
+    split=None,
+    **model_kwargs
 ):
     num_frames = motion_target.shape[0]
     shape_gt, expr_gt, pose_gt, trans_gt = parse_model_target(motion_target)
@@ -354,27 +354,26 @@ def main():
 
     fps = args.fps 
 
-    flame = FLAME(args.flame_model_path, args.flame_lmk_embedding_path)
+    flame = FLAME(args.flame_model_path, args.flame_lmk_embedding_path, n_shape=args.n_shape, n_exp=args.n_exp)
     print("Loading dataset...")
 
     split = args.split
     device = 'cuda:0'
     # load data from given split
     print("creating val data loader...")
-    motion_paths, norm_dict = load_data(
-        args,
+    motion_data, norm_dict = load_data(
         args.dataset,
         args.dataset_path,
         split,
-        subject_id='071'
+        subject_id='080'
     )
     
     dataset = TestDataset(
         args.dataset,
         norm_dict,
-        motion_paths,
+        motion_data,
         args.no_normalization,
-        occlusion_mask_prob=0
+        occlusion_mask_prob=0.1
     )
 
     log = {}
@@ -400,14 +399,21 @@ def main():
             motion_length = flame_params.shape[0]
             flame_params = flame_params.unsqueeze(0).to(device)
             lmk_2d = lmk_2d.unsqueeze(0).to(device)
-            trans_cam = cam_model(lmk_2d.reshape(1, motion_length, -1))
+            occlusion_mask = occlusion_mask.unsqueeze(0).to(device)
+
+            bs, n = lmk_2d.shape[:2]
+            occlusion = (1-occlusion_mask).unsqueeze(-1)
+            lmk_2d_occ = (lmk_2d * occlusion).reshape(bs, n, -1)
+            trans_cam = cam_model(lmk_2d_occ, flame_params[:, :, :100])
+
             target = torch.cat([flame_params, trans_cam], dim=-1)
             model_kwargs = {
                 "lmk_2d": lmk_2d,
                 "lmk_3d": lmk_3d_normed.unsqueeze(0).to(device),
                 "img_arr": img_arr.unsqueeze(0).to(device),
-                "occlusion_mask": occlusion_mask.unsqueeze(0).to(device),
+                "occlusion_mask": occlusion_mask,
             }
+
             if args.fix_noise:
                 # fix noise seed for every frame
                 noise = torch.randn(1, 1, 1).cuda()
@@ -445,8 +451,7 @@ def main():
                 fps,
                 motion_id,
                 flame_v_mask,
-                split,
-                occlusion_mask
+                split
             )
             for key in instance_log:
                 log[key] += instance_log[key]
@@ -465,7 +470,10 @@ def main():
         output[metric] = log[metric] / len(dataset)
         print(f"{metric} : {output[metric]}")
     
-    with open(os.path.join(args.output_dir, args.arch, f"metrics_{split}.json"), 'w') as fp:
+    output_folder = os.path.join(args.output_dir, args.arch)
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    with open(os.path.join(output_folder, f"metrics_{split}.json"), 'w') as fp:
         json.dump(output, fp)
     
     # visualize the heatmap for full vertex error
@@ -473,7 +481,7 @@ def main():
     template_mesh = trimesh.load_mesh(mesh_path)
     for metric in full_vertex_metrics:
         mean_error = log[metric] / len(dataset)
-        img_path = os.path.join(args.output_dir, args.arch, f"{metric}_{split}.png")
+        img_path = os.path.join(output_folder, f"{metric}_{split}.png")
         utils_visualize.error_heatmap(template_mesh, mean_error, False, img_path)
 
 if __name__ == "__main__":

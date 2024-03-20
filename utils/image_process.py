@@ -62,6 +62,26 @@ def crop(lmk, trans_scale, scale, image_size=224):
     
     return torch.from_numpy(tform.params).float()
 
+def crop_np(lmk, trans_scale, scale, image_size=224):
+    left = np.min(lmk[:,0]); right = np.max(lmk[:,0]); 
+    top = np.min(lmk[:,1]); bottom = np.max(lmk[:,1])
+
+    old_size = (right - left + bottom - top)/2
+    center = np.array([right - (right - left) / 2.0, bottom - (bottom - top) / 2.0 ])
+    # translate center
+    trans_scale = (np.random.rand(2)*2 -1) * trans_scale
+    center = center + trans_scale*old_size # 0.5
+
+    # scale = torch.rand(1) * (self.scale[1] - self.scale[0]) + self.scale[0]
+    size = int(old_size*scale)
+
+    # crop image
+    src_pts = np.array([[center[0]-size/2, center[1]-size/2], [center[0] - size/2, center[1]+size/2], [center[0]+size/2, center[1]-size/2]])
+    DST_PTS = np.array([[0,0], [0,image_size - 1], [image_size - 1, 0]])
+    tform = estimate_transform('similarity', src_pts, DST_PTS)
+    
+    return tform
+
 def batch_crop_lmks(lmks, verts_2d, trans_scale, scale, image_size=224):
     """
     Args:
@@ -89,6 +109,21 @@ def batch_crop_lmks(lmks, verts_2d, trans_scale, scale, image_size=224):
 
     return lmks_cropped, verts_cropped
 
-def video_to_frames(video_path, fps=60):
-    video_name = os.path.split(video_path)[1].split( '.')[0]
-    os.system(f'ffmpeg -y -framerate {fps} -pattern_type glob -i \'output/{video_name}/frames/*.jpg\' -c:v libx264 {video_path}')
+def batch_normalize_lmk_3d(lmk_3d):
+    """
+    normalize 3d landmarks s.t. the len between no.30 and no.27 = 1
+    set the root to be the no.30 lmk (nose_tip)
+    Args:
+        lmk_3d: tensor (bs, n, 3)
+    Returns:
+        lmk_3d_normed: tensor (bs, n, 3)
+    """
+    root_idx = 30
+    pivot_idx = 27
+    bs, num_lmk, _ = lmk_3d.shape
+    root_node = lmk_3d[:, root_idx] # (bs, 3)
+    nose_len = torch.norm(lmk_3d[:, pivot_idx]-root_node, 2, -1)    # (bs, )
+    lmk_3d_normed = lmk_3d - root_node.unsqueeze(1).expand(-1, num_lmk, -1)
+    lmk_3d_normed = torch.divide(lmk_3d_normed, nose_len.reshape(-1, 1, 1).expand(-1, num_lmk, 3))
+    return lmk_3d_normed
+

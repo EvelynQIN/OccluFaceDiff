@@ -23,7 +23,7 @@ def parse_and_load_from_model(parser):
     # load args from model
     model_path = get_model_path_from_args()
     args_path = os.path.join(os.path.dirname(model_path), "args.json")
-    assert os.path.exists(args_path), "Arguments json file was not found!"
+    assert os.path.exists(args_path), f"Arguments json file -- {args_path} was not found!"
     with open(args_path, "r") as fr:
         model_args = json.load(fr)
     for a in args_to_overwrite:
@@ -273,6 +273,32 @@ def add_data_options(parser):
         "--image_size", default=224, type=int, help="size of image to scrop."
     )
 
+    group.add_argument(
+        "--focal_length", default=1000.0, type=float, help="the focal length."
+    )
+
+    group.add_argument(
+        "--principal_point", default=112, type=float, help="the principal point."
+    )
+    
+    group.add_argument(
+        "--n_shape", default=100, type=int, help="number of flame params."
+    )
+
+    group.add_argument(
+        "--n_exp", default=50, type=int, help="number of flame params."
+    )
+    
+    group.add_argument(
+        "--n_pose", default=30, type=int, help="number of flame params."
+    )
+
+    group.add_argument(
+        "--n_trans", default=3, type=int, help="number of flame params."
+    )
+
+    
+    
 
 def add_training_options(parser):
     group = parser.add_argument_group("training")
@@ -370,32 +396,6 @@ def add_training_options(parser):
         help="Probability for adding random occlusion mask.",
     )
 
-def add_predict_options(parser):
-    group = parser.add_argument_group("sampling")
-    group.add_argument(
-        "--fix_noise",
-        action="store_true",
-        help="fix init noise for the output",
-    )
-    group.add_argument(
-        "--fps",
-        default=30,
-        type=int,
-        help="FPS",
-    )
-    group.add_argument(
-        "--model_path",
-        default='',
-        type=str,
-        help="Path to model####.pt file to be sampled."
-    )
-    group.add_argument(
-        "--motion_path",
-        type=str,
-        default='',
-        help="path to the .pt motion file"
-    )
-
 def add_sampling_options(parser):
     group = parser.add_argument_group("sampling")
     group.add_argument(
@@ -438,6 +438,61 @@ def add_sampling_options(parser):
         help="path to the folder to store the rendered video"
     )
 
+def add_predict_options(parser):
+    group = parser.add_argument_group("predict")
+
+    group.add_argument(
+        "--vis",
+        action="store_true",
+        help="visualize the output during evaluation",
+    )
+    
+
+    group.add_argument(
+        "--fix_noise",
+        action="store_true",
+        help="fix init noise for the output",
+    )
+    
+    group.add_argument(
+        "--fps",
+        default=60,
+        type=int,
+        help="FPS",
+    )
+    
+    group.add_argument(
+        "--motion_id",
+        default="",
+        type=str,
+        help="name of the motion sequence.",
+    )
+    
+    group.add_argument(
+        "--subject_id",
+        default="",
+        type=str,
+        help="name of the subject.",
+    )
+    
+    group.add_argument(
+        "--save_folder",
+        default="vis_result",
+        type=str,
+        help="folder to save visualization result.",
+    )
+    
+    group.add_argument(
+        "--model_path",
+        type=str,
+        help="Path to model####.pt file to be sampled.",
+    )
+    
+    group.add_argument(
+        "--exp_name",
+        type=str,
+        help="name of the experiment.",
+    )
 
 def add_evaluation_options(parser):
     group = parser.add_argument_group("eval")
@@ -467,14 +522,6 @@ def train_trans_args():
     add_training_options(parser)
     return parser.parse_args()
 
-
-def predict_args():
-    parser = ArgumentParser()
-    # args specified by the user: (all other will be loaded from the model)
-    add_base_options(parser)
-    add_predict_options(parser)
-    return parse_and_load_from_model(parser)
-
 def sample_args():
     parser = ArgumentParser()
     # args specified by the user: (all other will be loaded from the model)
@@ -483,9 +530,9 @@ def sample_args():
     return parse_and_load_from_model(parser)
 
 
-def evaluation_parser():
+def predict_args():
     parser = ArgumentParser()
     # args specified by the user: (all other will be loaded from the model)
     add_base_options(parser)
-    add_evaluation_options(parser)
+    add_predict_options(parser)
     return parse_and_load_from_model(parser)

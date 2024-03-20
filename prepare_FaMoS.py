@@ -7,9 +7,12 @@ import glob
 from utils import utils_transform
 import pickle
 from model.FLAME import FLAME
+from model.mica import MICA
 from utils.famos_camera import batch_perspective_project, load_mpi_camera
-from utils.image_process import get_arcface_input, batch_crop_lmks
+from utils.image_process import get_arcface_input, batch_crop_lmks, crop_np, batch_normalize_lmk_3d
 import cv2 
+from skimage.transform import estimate_transform, warp, resize, rescale
+from configs.config import get_cfg_defaults
 
 def batch_3d_to_2d(calibration, lmk_3d):
     
@@ -23,25 +26,7 @@ def batch_3d_to_2d(calibration, lmk_3d):
 
     return lmk_2d
 
-def batch_normalize_lmk_3d(lmk_3d):
-    """
-    normalize 3d landmarks s.t. the len between no.30 and no.27 = 1
-    set the root to be the no.30 lmk (nose_tip)
-    Args:
-        lmk_3d: tensor (bs, n, 3)
-    Returns:
-        lmk_3d_normed: tensor (bs, n, 3)
-    """
-    root_idx = 30
-    pivot_idx = 27
-    bs, num_lmk, _ = lmk_3d.shape
-    root_node = lmk_3d[:, root_idx] # (bs, 3)
-    nose_len = torch.norm(lmk_3d[:, pivot_idx]-root_node, 2, -1)    # (bs, )
-    lmk_3d_normed = lmk_3d - root_node.unsqueeze(1).expand(-1, num_lmk, -1)
-    lmk_3d_normed = torch.divide(lmk_3d_normed, nose_len.reshape(-1, 1, 1).expand(-1, num_lmk, 3))
-    return lmk_3d_normed
-
-def get_images_input_for_arcface(img_dir, subject_id, motion_id, cam_name, frame_ids, lmk2d):
+def get_mica_shape_prediction(img_dir, subject_id, motion_id, cam_name, frame_ids, lmk2d, mica):
 
     motion_dir = os.path.join(img_dir, subject_id, motion_id)
     img_frame_ids = sorted(np.asarray(os.listdir(motion_dir), dtype=int)) # to be 0 indexed
@@ -64,14 +49,64 @@ def get_images_input_for_arcface(img_dir, subject_id, motion_id, cam_name, frame
             print(f"{img_path} cannot be read, skipped!")
             continue
         mask[idx] = 1
-        arcface_input = get_arcface_input(lmk_5[idx].numpy(), img)
+        arcface_input = get_arcface_input(lmk_5[idx].numpy(), img) 
         img_arr.append(arcface_input)
-    img_arr = np.stack(img_arr)
+    img_arr = np.stack(img_arr) # (n_imgs, 3, 112, 112)
     
-    return mask.bool(), torch.from_numpy(img_arr).float()
+    with torch.no_grad():
+        mica_shape = mica.encode_single_img(
+            torch.from_numpy(img_arr).float().to('cuda'))  # (n_imgs, 300)
+    
+    return mask.bool(), mica_shape.to('cpu')
+
+def get_images_input_for_test(img_dir, subject_id, motion_id, cam_name, frame_ids, lmk2ds):
+
+    motion_dir = os.path.join(img_dir, subject_id, motion_id)
+    img_frame_ids = sorted(np.asarray(os.listdir(motion_dir), dtype=int)) # to be 0 indexed
+    img_frame_ids = torch.LongTensor(img_frame_ids)
+    idxs = torch.nonzero(frame_ids[..., None] == img_frame_ids)[:,0]
+    n_frames = lmk2ds.shape[0]
+    arcface_imgs = []
+    cropped_imgs = []
+    cropped_lmks = []
+
+    mask = torch.zeros(n_frames)
+    lmk_5 = lmk2ds[:, [37, 44, 30, 60, 64], :]  # left eye, right eye, nose, left mouth, right mouth
+    lmk_5[:, 0, :] = lmk2ds[:, [38, 41], :].mean(1)  # center of left eye
+    lmk_5[:, 1, :] = lmk2ds[:, [44, 47], :].mean(1)  # center of right eye
+    for i in range(n_frames):
+        lmk68 = lmk2ds[i].numpy()
+        # crop information
+        tform = crop_np(lmk68, trans_scale=0, scale=1.5, image_size=224)
+        cropped_lmk68 = np.dot(tform.params, np.hstack([lmk68, np.ones([lmk68.shape[0],1])]).T).T 
+        cropped_lmks.append(cropped_lmk68[:, :2])
+
+        # if image available
+        if i in idxs:
+            frame_id = f"{frame_ids[i]:06d}"
+            img_path = os.path.join(motion_dir, frame_id, f"{motion_id}.{frame_id}.{cam_name}.png")
+            if not os.path.isfile(img_path):
+                print(f"{img_path} not existed, skipped!")
+                continue
+            img = cv2.imread(img_path) # in BGR format
+            if img is None or img.shape[0] == 0 or img.shape[1] == 0:
+                print(f"{img_path} cannot be read, skipped!")
+                continue
+            mask[i] = 1
+            arcface_input = get_arcface_input(lmk_5[i].numpy(), img)
+            arcface_imgs.append(arcface_input)
+
+            img = img.astype(float) / 255.0
+            cropped_image = warp(img, tform.inverse, output_shape=(224, 224)) 
+            cropped_imgs.append(cropped_image.transpose(2,0,1)[[2, 1, 0], :, :]) # (3, 224, 224) in RGB
+
+    arcface_imgs = np.stack(arcface_imgs)
+    cropped_imgs = np.stack(cropped_imgs)
+    cropped_lmks = np.stack(cropped_lmks)
+    
+    return mask.bool(), torch.from_numpy(arcface_imgs).float(), torch.from_numpy(cropped_imgs).float(), torch.from_numpy(cropped_lmks).float()
 
 def get_training_data(motion, flame, calib_fname):
-    # zero the global translation and pose (rigid transformation)
     shape = torch.Tensor(motion["flame_shape"])
     expression = torch.Tensor(motion["flame_expr"])
     rot_aa = torch.Tensor(motion["flame_pose"]) # full poses exluding eye poses (root, neck, jaw, left_eyeball, right_eyeball)
@@ -105,17 +140,81 @@ def get_training_data(motion, flame, calib_fname):
         "lmk_2d": lmk_2d_cropped, 
         "verts_2d_cropped": verts_2d_cropped,
         "lmk_3d_normed": lmk_3d_normed,
-        "lmk_3d_cam": lmk_3d_cam_local,
         "target": target, 
         "frame_id": frame_id,
     }
     return output, lmk_2d
+
+def prepare_one_motion_for_test(
+        dataset, subject_id, motion_id, flame_model_path, flame_lmk_embedding_path,
+        n_shape=100, n_exp=50):
+    flame_params_folder = os.path.join('dataset', dataset, "flame_params")
+    camera_calibration_folder = os.path.join('dataset', dataset, "calibrations")
+    camera_name = "26_C" # name of the selected camera view
+    img_dir = os.path.join('dataset', dataset, 'downsampled_images_4')
+    flame_params_file = os.path.join(flame_params_folder, subject_id, f'{motion_id}.npy')
+    calib_fname = os.path.join(camera_calibration_folder, subject_id, motion_id, f"{camera_name}.tka")
+    motion = np.load(flame_params_file, allow_pickle=True)[()]
+    flame = FLAME(flame_model_path, flame_lmk_embedding_path)   # original flame with full params
+
+    calibration = load_mpi_camera(calib_fname, resize_factor=4)
+
+    shape = torch.Tensor(motion["flame_shape"])
+    expression = torch.Tensor(motion["flame_expr"])
+    rot_aa = torch.Tensor(motion["flame_pose"]) # full poses exluding eye poses (root, neck, jaw, left_eyeball, right_eyeball)
+    trans = torch.Tensor(motion['flame_trans'])
+    frame_id = torch.LongTensor(motion['frame_id'])
+    
+    n_frames = expression.shape[0]
+
+    # get 2d landmarks from gt mesh
+    _, lmk_3d = flame(shape, expression, rot_aa, trans) # (nframes, V, 3)
+    calibration = load_mpi_camera(calib_fname, resize_factor=4)
+    lmk_2d = batch_3d_to_2d(calibration, lmk_3d)
+
+    # get cropped images and landmarks
+    img_mask, arcface_imgs, cropped_imgs, cropped_lmk_2d = get_images_input_for_test(
+        img_dir, subject_id, motion_id, camera_name, frame_id, lmk_2d)
+    
+    # change the root rotation of flame in cam coords and zeros the translation to get the lmk3d
+    R_f = utils_transform.aa2matrot(rot_aa[:, :3].reshape(-1, 3)) # (nframes, 3, 3)
+    R_C = torch.from_numpy(calibration['extrinsics'][:, :3]).expand(n_frames,-1,-1).float()
+    R_m2c = torch.bmm(R_C, R_f)
+    root_rot_aa = utils_transform.matrot2aa(R_m2c)
+    rot_aa[:, :3] = root_rot_aa
+    _, lmk_3d_cam_local = flame(shape, expression, rot_aa) # (nframes, V, 3)
+    
+    # normalize the 3d lmk (rotated to be in cam coord system), rooted at idx=30
+    lmk_3d_normed = batch_normalize_lmk_3d(lmk_3d_cam_local)
+    
+    # get 6d pose representation
+    rot_6d = utils_transform.aa2sixd(rot_aa.reshape(-1, 3)).reshape(n_frames, -1) # (nframes, 5*6)
+    target = torch.cat([shape[:,:n_shape], expression[:, :n_exp], rot_6d], dim=1)
+    output = {
+        "lmk_2d": cropped_lmk_2d, # (n, 68, 2)
+        "lmk_3d_normed": lmk_3d_normed, # (n, 68, 3)
+        "target": target,  # (n, 180)
+        "frame_id": frame_id, # (n)
+        "img_mask": img_mask,   # (n)
+        "arcface_imgs": arcface_imgs, # (n_imgs, 3, 112, 112)
+        "cropped_imgs": cropped_imgs,   # (n_imgs, 3, 224, 224)
+    }
+    
+    return output
+
 
 def main(args):
     dataset = 'FaMoS'
     print("processing dataset ", dataset)
 
     flame = FLAME(args.flame_model_path, args.flame_lmk_embedding_path)
+    
+    # load mica pretrained
+    pretrained_args = get_cfg_defaults()
+    mica = MICA(pretrained_args.mica)
+    mica.load_model('cpu')
+    mica.to('cuda')
+    mica.eval()
     
     flame_params_folder = os.path.join(args.root_dir, dataset, "flame_params")
     camera_calibration_folder = os.path.join(args.root_dir, dataset, "calibrations")
@@ -184,18 +283,18 @@ def main(args):
                 data = np.load(file, allow_pickle=True)[()]
                 num_frames = len(data["flame_verts"])
                 print(f"processing {file} with {num_frames} frames")
-                if num_frames == 0:
+                if num_frames < 10:
                     print(f"{subject}_{motion_id} is nulll")
                     continue
                 calib_fname = os.path.join(camera_calibration_folder, subject, motion_id, f"{camera_name}.tka")
                 output, lmk_2d = get_training_data(data, flame, calib_fname)
-                mask, img_arr = get_images_input_for_arcface(img_dir, subject, motion_id, camera_name, output["frame_id"], lmk_2d)
+                mask, mica_shape = get_mica_shape_prediction(img_dir, subject, motion_id, camera_name, output["frame_id"], lmk_2d, mica)
                 if torch.sum(mask) == 0:
                     print(f"{subject}_{motion_id} images is nulll")
                     continue
                 n_sequences += 1
                 output['img_mask'] = mask
-                output['arcface_input'] = img_arr
+                output['mica_shape'] = mica_shape
                 for k in output:
                     assert output[k] is not None
                 torch.save(output, output_path)

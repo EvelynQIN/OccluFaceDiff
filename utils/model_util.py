@@ -75,8 +75,12 @@ def get_transformer_args(args, mica_args):
         "dropout": args.dropout,
         "dataset": args.dataset,
         "use_mask": args.use_mask,
-        "cond_mask_prob": args.cond_mask_prob
-    }
+        "cond_mask_prob": args.cond_mask_prob,
+        "n_shape": args.n_shape,
+        "n_exp": args.n_exp,
+        "n_pose": args.n_pose,
+        "n_trans": args.n_trans
+   }
 
 def get_cam_args(args):
     return {

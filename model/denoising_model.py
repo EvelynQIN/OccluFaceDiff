@@ -237,7 +237,12 @@ class FaceTransformer(nn.Module):
         activation="gelu", 
         dataset='FaMoS',
         use_mask=True,
-        **kargs):
+        load_mica=False,
+        n_shape = 100,
+        n_exp = 50,
+        n_pose = 5 * 6,
+        n_trans = 3,
+        **kwargs):
         super().__init__()
 
         self.tag = 'FaceTransformer'
@@ -258,20 +263,24 @@ class FaceTransformer(nn.Module):
         self.dropout = dropout
         self.activation = activation
 
-        self.cond_mask_prob = kargs.get('cond_mask_prob', 0.)
+        self.cond_mask_prob = kwargs.get('cond_mask_prob', 0.)
         self.arch = arch
         
-        self.nshape = 100
-        self.nexp = 50 
-        self.npose = 5 * 6 
-        self.ntrans = 3
+        self.nshape = n_shape
+        self.nexp = n_exp
+        self.npose = n_pose
+        self.ntrans = n_trans
         
         ### layers
         
         # process the condition 
         self.lmk3d_process = InputProcess(self.lmk3d_dim, self.latent_dim)
         self.lmk2d_process = InputProcess(self.lmk2d_dim, self.latent_dim)
-        self.mica_process = nn.Linear(self.nshape, self.latent_dim)
+        self.mica_process = nn.Sequential(
+            nn.Linear(self.nshape, self.latent_dim),
+            nn.LayerNorm(self.latent_dim),
+            nn.LeakyReLU(0.2, inplace=True)
+        )
         
         self.input_process = InputProcess(self.input_feats, self.latent_dim)
         
@@ -281,7 +290,9 @@ class FaceTransformer(nn.Module):
         self.register_buffer('tgt_mask', target_mask)
         
         # load pretrained mica model
-        self.mica = MICA(self.mica_args)
+        if load_mica:
+            assert "mica" in kwargs, "Pretrained MICA not passed into the kwargs!"
+            self.mica = kwargs['mica']
         
         print(f"[{self.tag}] Using transformer as backbone.")
         self.transformer = nn.Transformer(
@@ -317,9 +328,58 @@ class FaceTransformer(nn.Module):
             return cond * (1.0 - mask)
         else:
             return cond
+    
+    def forward(self, x, timesteps, lmk_3d, lmk_2d, mica_shape, occlusion_mask, force_mask=False, **kwargs):
+        """
+        x: [batch_size, nframes, nfeats] 
+        timesteps: [batch_size] (int)
+        sparse_emb: [batch_size, nframes, nlmks, 2/3]
+        occlusion_mask: [batch_size, nframes, nlmks]
+        """
+        bs, n = lmk_3d.shape[:2]
+        ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
 
+        # mask the occluded lmk to be 0
+        # print(lmk_3d.shape)
+        # print(occlusion_mask.shape)
+        occlusion = (1-occlusion_mask).unsqueeze(-1)
+        lmk_3d = (lmk_3d * occlusion).reshape(bs, n, -1)
+        lmk_2d = (lmk_2d * occlusion).reshape(bs, n, -1)
 
-    def forward(self, x, timesteps, lmk_3d, lmk_2d, img_arr, occlusion_mask, force_mask=False, return_mica=False, **kwargs):
+        lmk3d_emb = self.lmk3d_process(
+            self.mask_cond_lmk(lmk_3d, force_mask=force_mask)
+        ) # [seqlen, bs, d]
+        
+        lmk2d_emb = self.lmk2d_process(
+            self.mask_cond_lmk(lmk_2d, force_mask=force_mask)
+        ) # [seqlen, bs, d]
+        
+        shape_mica_emb = self.mica_process(
+            self.mask_cond_lmk(mica_shape, force_mask=force_mask)
+        )
+        
+        cond_emb = lmk3d_emb + lmk2d_emb + shape_mica_emb[None,:, :]
+        
+        condseq = self.sequence_pos_encoder(cond_emb)  # [seqlen, bs, d]
+        
+        tgt_mask=None
+        if self.use_mask:
+            T = x.shape[1]
+            tgt_mask = self.tgt_mask[:, :T, :T].clone().detach().to(device=x.device)    # (num_heads, seqlen, seqlen)
+
+        # cross attention of the sparse cond & motion_output
+        x = self.input_process(x)
+        x = x + ts_emb   # broadcast add, [seqlen, bs, d]
+        xseq = self.sequence_pos_encoder(x)
+        
+        decoder_output = self.transformer(condseq, xseq, tgt_mask=tgt_mask) # [seqlen, bs, d]
+        output = self.outputprocess_motion(decoder_output)  # [bs, seqlen, input_nfeats]
+        shape_seq = output[:, :, :self.nshape]
+        shape_agg = self.outputprocess_shape(shape_seq).unsqueeze(1).repeat(1, output.shape[1], 1)
+        output = torch.cat([shape_agg, output[:, :, self.nshape:]],dim=-1)
+        return output
+
+    def predict(self, x, timesteps, lmk_3d, lmk_2d, img_arr, occlusion_mask, force_mask=False, return_mica=False, **kwargs):
         """
         x: [batch_size, nframes, nfeats] 
         timesteps: [batch_size] (int)
@@ -783,25 +843,16 @@ class InputProcess(nn.Module):
         super().__init__()
         self.input_feats = input_feats
         self.latent_dim = latent_dim
-        self.inputEmbedding = nn.Linear(self.input_feats, self.latent_dim)
-        
-        # input category mask (pose vs expression)
-        # self.category_mask = category_mask.to(device)
-        # self.category_aware_embedding = nn.Sequential(
-        #     nn.Linear(self.input_feats, 256),
-        #     nn.SiLU(),
-        #     nn.Linear(256, self.latent_dim)
-        # )
-        
-        # self.norm = nn.LayerNorm(self.latent_dim)
+        self.inputEmbedding = nn.Sequential(
+            nn.Linear(self.input_feats, self.latent_dim),
+            nn.LayerNorm(self.latent_dim),
+            nn.LeakyReLU(0.2, inplace=True)
+        )
 
     def forward(self, x):
         # bs, nframes, motion_nfeats = x.shape
         x = x.permute(1, 0, 2)  # (nframes, bs, motion_nfeats)
         x = self.inputEmbedding(x)
-        # category_emb = self.category_aware_embedding(self.category_mask)
-        # x = x + category_emb
-        # x = self.norm(x)
         return x
 
 class MotionOutput(nn.Module):
@@ -810,9 +861,10 @@ class MotionOutput(nn.Module):
         self.output_feats = output_feats
         self.latent_dim = latent_dim
         self.fc = nn.Sequential(
-            nn.Linear(self.latent_dim, 512),
-            nn.ReLU(),
-            nn.Linear(512, self.output_feats)
+            nn.Linear(self.latent_dim, self.latent_dim),
+            nn.LayerNorm(self.latent_dim),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(self.latent_dim, self.output_feats)
         )
         
 
@@ -830,9 +882,10 @@ class ShapeOutput(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool1d(1) # agg over the the frames
         
         self.fc = nn.Sequential(
-            nn.Linear(self.latent_dim, 512),
-            nn.ReLU(),
-            nn.Linear(512, self.output_feats)
+            nn.Linear(self.latent_dim, self.latent_dim),
+            nn.LayerNorm(self.latent_dim),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(self.latent_dim, self.output_feats)
         )
         
 
