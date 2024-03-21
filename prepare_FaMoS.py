@@ -8,6 +8,7 @@ from utils import utils_transform
 import pickle
 from model.FLAME import FLAME
 from model.mica import MICA
+from model.calibration_layer import Cam_Calibration
 from utils.famos_camera import batch_perspective_project, load_mpi_camera
 from utils.image_process import get_arcface_input, batch_crop_lmks, crop_np, batch_normalize_lmk_3d
 import cv2 
@@ -107,7 +108,7 @@ def get_images_input_for_test(img_dir, subject_id, motion_id, cam_name, frame_id
     
     return mask.bool(), torch.from_numpy(arcface_imgs).float(), torch.from_numpy(cropped_imgs).float(), torch.from_numpy(cropped_lmks).float()
 
-def get_training_data(motion, flame, calib_fname):
+def get_training_data(motion, flame, calib_fname, cam_model, mean_target, std_target, trans_offset):
     shape = torch.Tensor(motion["flame_shape"])
     expression = torch.Tensor(motion["flame_expr"])
     rot_aa = torch.Tensor(motion["flame_pose"]) # full poses exluding eye poses (root, neck, jaw, left_eyeball, right_eyeball)
@@ -136,7 +137,18 @@ def get_training_data(motion, flame, calib_fname):
     
     # get 6d pose representation
     rot_6d = utils_transform.aa2sixd(rot_aa.reshape(-1, 3)).reshape(n_frames, -1) # (nframes, 5*6)
-    target = torch.cat([shape, expression, rot_6d], dim=1)
+    target = torch.cat([shape[:, :100], expression[:, :50], rot_6d], dim=1) # (b, 180)
+    
+    # get cam T prediciton as GT
+    device = cam_model.device
+    cam_target = (target - mean_target) / (std_target + 1e-8)
+    cam_t_pred = cam_model(
+        lmk_2d_cropped.reshape(n_frames, -1).to(device), 
+        cam_target.to(device)).to('cpu')
+    cam_t = cam_t + trans_offset    # (n, 3)
+    
+    target = torch.cat([target, cam_t], dim=-1)
+    
     output = {
         "lmk_2d": lmk_2d_cropped, 
         "verts_2d_cropped": verts_2d_cropped,
@@ -210,12 +222,29 @@ def main(args):
 
     flame = FLAME(args.flame_model_path, args.flame_lmk_embedding_path)
     
+    device = 'cuda'
     # load mica pretrained
     pretrained_args = get_cfg_defaults()
     mica = MICA(pretrained_args.mica)
     mica.load_model('cpu')
-    mica.to('cuda')
+    mica.to(device)
     mica.eval()
+    
+    # load cam pred model
+    cam_model = Cam_Calibration(
+                lmk2d_dim=pretrained_args.cam.lmk2d_dim, # input feature dim 68 x 2
+                n_target=pretrained_args.cam.n_target,
+                output_feature_dim=pretrained_args.cam.output_nfeat, # number of cam params (one set per frame)
+                latent_dim=pretrained_args.cam.latent_dim,
+                ckpt_path=pretrained_args.cam.ckpt_path,
+        )
+    cam_model.to(device)
+    cam_model.eval()
+    norm_dict_cam = torch.load('processed_data/FaMoS_CamCalib_norm_dict.pt')
+    mean_target = norm_dict_cam['mean_target']
+    std_target = norm_dict_cam['std_target']
+    trans_offset = torch.FloatTensor(pretrained_args.cam.trans_offset).unsqueeze(0)
+    
     
     flame_params_folder = os.path.join(args.root_dir, dataset, "flame_params")
     camera_calibration_folder = os.path.join(args.root_dir, dataset, "calibrations")
@@ -288,7 +317,7 @@ def main(args):
                     print(f"{subject}_{motion_id} is nulll")
                     continue
                 calib_fname = os.path.join(camera_calibration_folder, subject, motion_id, f"{camera_name}.tka")
-                output, lmk_2d = get_training_data(data, flame, calib_fname)
+                output, lmk_2d = get_training_data(data, flame, calib_fname, cam_model, mean_target, std_target, trans_offset)
                 mask, mica_shape = get_mica_shape_prediction(img_dir, subject, motion_id, camera_name, output["frame_id"], lmk_2d, mica)
                 if torch.sum(mask) == 0:
                     print(f"{subject}_{motion_id} images is nulll")
