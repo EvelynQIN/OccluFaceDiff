@@ -21,18 +21,17 @@ import wandb
 from tqdm import tqdm
 from configs.config import get_cfg_defaults
 
-def train_diffusion_model(args, pretrained_args, train_dataloader, val_dataloader, norm_dict):
+def train_diffusion_model(args, train_dataloader, val_dataloader, norm_dict):
     print("creating model and diffusion...")
 
     num_gpus = torch.cuda.device_count()
     args.num_workers = args.num_workers * num_gpus
 
-    cam_model, denoise_model, diffusion = create_model_and_diffusion(args, pretrained_args) # the denoising MLP & spaced diffusion
+    denoise_model, diffusion = create_model_and_diffusion(args) # the denoising MLP & spaced diffusion
 
     if num_gpus > 1:
         print("Let's use", torch.cuda.device_count(), "GPUs!")
         dist_util.setup_dist()
-        cam_model = torch.nn.DataParallel(cam_model).cuda()
         denoise_model = torch.nn.DataParallel(denoise_model).cuda()
         print(
             "Total trainable params: %.2fM"
@@ -40,7 +39,6 @@ def train_diffusion_model(args, pretrained_args, train_dataloader, val_dataloade
         )
     else:
         dist_util.setup_dist(args.device)
-        cam_model.to(dist_util.dev())
         denoise_model.to(dist_util.dev())
         print(
             "Total trainable params: %.2fM"
@@ -48,7 +46,7 @@ def train_diffusion_model(args, pretrained_args, train_dataloader, val_dataloade
         )
 
     print("Training...")
-    TrainLoop(args, cam_model, denoise_model, diffusion, train_dataloader, val_dataloader, norm_dict).run_loop()
+    TrainLoop(args, denoise_model, diffusion, train_dataloader, val_dataloader, norm_dict).run_loop()
     print("Done.")
 
 def set_deterministic(seed):

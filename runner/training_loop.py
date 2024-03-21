@@ -25,7 +25,7 @@ import wandb
 
 # training loop for the diffusion given "model" as the denoising model
 class TrainLoop:
-    def __init__(self, args, cam_model, denoise_model, diffusion, train_loader, val_loader, norm_dict):
+    def __init__(self, args, denoise_model, diffusion, train_loader, val_loader, norm_dict):
         """
 
         Args:
@@ -92,9 +92,6 @@ class TrainLoop:
         self.eval_wrapper, self.eval_data, self.eval_gt_data = None, None, None
         self.use_ddp = False
         self.ddp_model = self.model
-
-        # the pretrained camera model (keep frozen during training)
-        self.cam_model = cam_model
         
         # used for denormalization during loss computation
         mean, std = norm_dict['mean'], norm_dict['std']
