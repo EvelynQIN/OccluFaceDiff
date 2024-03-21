@@ -44,25 +44,23 @@ def load_model_wo_clip(model, state_dict):
     assert len(unexpected_keys) == 0
     assert all([k.startswith("clip_model.") for k in missing_keys])
 
-def create_model_and_diffusion(args, pretrained_args):
+def create_model_and_diffusion(args):
     arch = args.arch  
-    cam_model = Cam_Calibration(**get_cam_args(pretrained_args.cam))
     if "Enc" in arch:
-        denoise_model = denoising_model.TransformerEncoder(**get_transformer_args(args, pretrained_args.mica))
+        denoise_model = denoising_model.TransformerEncoder(**get_transformer_args(args))
     elif "Trans" in arch:
-        denoise_model = denoising_model.FaceTransformer(**get_transformer_args(args, pretrained_args.mica))
+        denoise_model = denoising_model.FaceTransformer(**get_transformer_args(args))
     elif "GRU" in arch:
-        denoise_model = denoising_model.GRUDecoder(**get_transformer_args(args, pretrained_args.mica))
+        denoise_model = denoising_model.GRUDecoder(**get_transformer_args(args))
     elif "MLP" in arch:
-        denoise_model = MultiBranchMLP(**get_mlp_args(args, pretrained_args.mica))
+        denoise_model = MultiBranchMLP(**get_mlp_args(args))
     else:
         raise  ValueError("Invalid architecture name!")
     diffusion = create_gaussian_diffusion(args)
-    return cam_model, denoise_model, diffusion
+    return denoise_model, diffusion
 
-def get_transformer_args(args, mica_args):
+def get_transformer_args(args):
     return {
-        "mica_args": mica_args,
         "arch": args.arch,
         "nfeats": args.target_nfeat,
         "lmk3d_dim": args.lmk3d_dim,

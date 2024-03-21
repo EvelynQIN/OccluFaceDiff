@@ -6,7 +6,7 @@ import numpy as np
 
 import torch
 
-from data_loaders.dataloader_from_path import get_dataloader, load_data, TrainDataset
+from data_loaders.dataloader import get_dataloader, load_data, TrainDataset
 from model.FLAME import FLAME
 from model.networks import PureMLP
 # from runner.train_mlp import train_step, val_step
@@ -62,8 +62,6 @@ def main():
     kwargs = dict(args._get_kwargs())
     cfg_path = args.config_path
     args = Config(default_cfg_path=cfg_path, **kwargs)
-
-    pretrained_args = get_cfg_defaults()
 
     set_deterministic(args.seed)
 
@@ -135,7 +133,7 @@ def main():
         val_dataset, "val", batch_size=args.batch_size, num_workers=args.num_workers
     )
 
-    train_diffusion_model(args, pretrained_args, train_loader, val_loader, norm_dict)
+    train_diffusion_model(args, train_loader, val_loader, norm_dict)
 
 if __name__ == "__main__":
     main()

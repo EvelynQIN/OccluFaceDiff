@@ -223,7 +223,6 @@ class MultiBranchTransformer(nn.Module):
 class FaceTransformer(nn.Module):
     def __init__(
         self,
-        mica_args,
         arch,
         nfeats,
         lmk3d_dim=68*3,
@@ -246,7 +245,6 @@ class FaceTransformer(nn.Module):
         super().__init__()
 
         self.tag = 'FaceTransformer'
-        self.mica_args = mica_args
         self.input_feats = nfeats
         self.lmk3d_dim = lmk3d_dim
         self.lmk2d_dim = lmk2d_dim 
@@ -306,7 +304,7 @@ class FaceTransformer(nn.Module):
             norm_first=False
         )
         
-        self.outputprocess_shape = ShapeOutput(output_feats=self.nshape, latent_dim=self.nshape)
+        self.outputprocess_shape = ShapeOutput()
         self.outputprocess_motion = MotionOutput(output_feats=self.input_feats, latent_dim=self.latent_dim)
 
     def mask_cond_lmk(self, cond, force_mask=False):
@@ -528,91 +526,6 @@ class TransformerEncoder(nn.Module):
         output = torch.cat([output_pose, output_expr], dim=-1)  # [bs, seqlen, input_nfeats]
         return output
 
-class EncoderLayer_TS(nn.Module):
-    def __init__(
-        self, 
-        latent_dim=256, 
-        ff_size=1024, 
-        num_heads=4, 
-        dropout=0.1,
-        activation="gelu"
-    ):
-        super().__init__()
-
-        self.latent_dim = latent_dim
-
-        self.ff_size = ff_size
-        self.dropout = dropout
-        self.num_heads = num_heads
-        self.activation = activation
-        
-        seqTransEncoderLayer = nn.TransformerEncoderLayer(
-            d_model=self.latent_dim,
-            nhead=self.num_heads,
-            dim_feedforward=self.ff_size,
-            dropout=self.dropout,
-            activation=self.activation)
-
-        self.seqTransEncoder = nn.TransformerEncoder(
-            encoder_layer=seqTransEncoderLayer,
-            num_layers=1)
-
-        self.norm = nn.LayerNorm(self.latent_dim)
-
-    def forward(self, x):
-        """
-        xseq: [seqlen, bs, d] 
-        ts_emb: [1, bs, d] (int)
-        sparse_emb: [batch_size, nframes, sparse_dim]
-        """
-
-        # cross attention of the sparse cond & motion_output
-        xseq, ts_emb = x
-        xseq = xseq + ts_emb # [seqlen, bs, d] 
-        xseq = self.norm(xseq)
-        output = self.seqTransEncoder(xseq)  # [seqlen, bs, d]
-        return [output, ts_emb]
-
-class MultiEncoderLayers_TS(nn.Module):
-    def __init__(
-        self, 
-        latent_dim=256, 
-        ff_size=1024, 
-        num_heads=4, 
-        dropout=0.1,
-        activation="gelu",
-        num_layers=4,
-        **model_kwargs
-    ):
-        super().__init__()
-
-        self.latent_dim = latent_dim
-
-        self.ff_size = ff_size
-        self.dropout = dropout
-        self.num_heads = num_heads
-        self.activation = activation
-        self.num_layers = num_layers
-        
-        encoder_layers = []
-        for i in range(self.num_layers):
-            encoder_layers.append(
-                EncoderLayer_TS(
-                    self.latent_dim, self.ff_size, self.num_heads, self.dropout, self.activation)
-            )
-
-        self.encoders = nn.Sequential(*encoder_layers)
-        
-    def forward(self, x):
-        """
-        x: tuple of xseq, ts_emb
-            xseq: [seqlen, bs, d] 
-            ts_emb: [1, bs, d] 
-        """
-
-        # cross attention of the sparse cond & motion_output
-        output = self.encoders(x)[0]  # [seqlen, bs, d]
-        return output
     
 class TransformerEncoder_TS(nn.Module):
     """Inject diffusion timestep to each attention layer
@@ -874,31 +787,20 @@ class MotionOutput(nn.Module):
         return output
 
 class ShapeOutput(nn.Module):
-    def __init__(self, output_feats, latent_dim):
+    def __init__(self):
         super().__init__()
-        self.output_feats = output_feats
-        self.latent_dim = latent_dim
         
         self.avg_pool = nn.AdaptiveAvgPool1d(1) # agg over the the frames
-        
-        self.fc = nn.Sequential(
-            nn.Linear(self.latent_dim, self.latent_dim),
-            nn.LayerNorm(self.latent_dim),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(self.latent_dim, self.output_feats)
-        )
-        
 
-    def forward(self, output):
+    def forward(self, shape_seq):
         """
 
         Args:
-            output: (bs, n, nshape)
+            shape_seq: (bs, n, n_shape)
 
         Returns:
-            _type_: _description_
+            shape_agg: (bs, n_shape)
         """
-        output = output.transpose(1, 2) # [bs, nshape, n]
-        output = self.avg_pool(output).squeeze(2)    # [bs, nshape]
-        output = self.fc(output)  # [bs, output_feats]
-        return output
+        shape_seq = shape_seq.transpose(1, 2) # [bs, nshape, n]
+        shape_agg = self.avg_pool(shape_seq).squeeze(2)    # [bs, nshape]
+        return shape_agg

@@ -81,9 +81,6 @@ class DiffusionModel(GaussianDiffusion):
         shape_loss =  torch.mean(
             torch.norm((shape_gt - shape_pred), 2, -1))
         
-        mica_shape_loss = torch.mean(
-            torch.norm((shape_gt - model_kwargs['mica_shape']), 2, -1))
-        
         pose_loss = torch.mean(
             torch.norm((pose_gt - pose_pred), 2, -1))
         
@@ -111,23 +108,28 @@ class DiffusionModel(GaussianDiffusion):
         )
         
         # lmk verts loss 
-        # denormalize thd flame params without trans
+        # denormalize thd flame params
         flame_params_pred = denormalize(
-            model_output[:,:,:-3], model_kwargs['mean']['target'], model_kwargs['std']['target']
+            model_output, model_kwargs['mean']['target'], model_kwargs['std']['target']
         ).reshape(bs*n, -1)
 
         flame_params_gt = denormalize(
-            target[:,:,:-3], model_kwargs['mean']['target'], model_kwargs['std']['target']
+            target, model_kwargs['mean']['target'], model_kwargs['std']['target']
         ).reshape(bs*n, -1)
+        
+        mica_shape_gt = model_kwargs['mica_shape'] * model_kwargs['std']['target'][:100] + model_kwargs['mean']['target'][:100]
 
-        pose_aa_pred = utils_transform.sixd2aa(flame_params_pred[:, -30:].reshape(-1, 6)).reshape(bs*n, -1)
-        pose_aa_gt = utils_transform.sixd2aa(flame_params_gt[:, -30:].reshape(-1, 6)).reshape(bs*n, -1)
+        mica_shape_loss = torch.mean(
+            torch.norm((flame_params_gt[:, :100].reshape(bs, n, -1)[:, 0, :] - mica_shape_gt), 2, -1))
+        
+        pose_aa_pred = utils_transform.sixd2aa(flame_params_pred[:, 150:-3].reshape(-1, 6)).reshape(bs*n, -1)
+        pose_aa_gt = utils_transform.sixd2aa(flame_params_gt[:, 150:-3].reshape(-1, 6)).reshape(bs*n, -1)
 
         verts_pred, lmk3d_pred = self.flame(
-            flame_params_pred[:, :100], flame_params_pred[:, 100:-30], pose_aa_pred)
+            flame_params_pred[:, :100], flame_params_pred[:, 100:150], pose_aa_pred)
         
         verts_gt, lmk3d_gt = self.flame(
-            flame_params_gt[:, :100], flame_params_gt[:, 100:-30], pose_aa_gt)
+            flame_params_gt[:, :100], flame_params_gt[:, 100:150], pose_aa_gt)
         
         # 3d mesh verts loss
         v_weights = self.flame_verts_weight.unsqueeze(1).to(target.device)  # (v, 1)
@@ -140,25 +142,19 @@ class DiffusionModel(GaussianDiffusion):
         # project 3d points to image plane 
         lmk2d_pred = batch_cam_to_img_project(
             points=lmk3d_pred,
-            trans=trans_pred.reshape(-1, 3)
+            trans=flame_params_pred[:, -3:]
         ).reshape(-1, 2)
         
         verts_2d_pred = batch_cam_to_img_project(
             points=verts_pred,
-            trans=trans_pred.reshape(-1, 3)
-        ).reshape(-1, 2)
-        
-        # projected 2d points from gt mesh verts
-        verts_2d_camcalib = batch_cam_to_img_project(
-            points=verts_gt,
-            trans=trans_pred.reshape(-1, 3)
+            trans=flame_params_pred[:, -3:]
         ).reshape(-1, 2)
 
-        # normalize lmk2d
+
+        # normalize lmk2ds
         IMAGE_SIZE = 224
         lmk2d_pred_normed = lmk2d_pred / IMAGE_SIZE * 2 - 1
         verts_2d_pred_normed = verts_2d_pred / IMAGE_SIZE * 2 - 1
-        verts_2d_camcalib_normed = verts_2d_camcalib / IMAGE_SIZE * 2 - 1
         
         
         lmk2d_loss = torch.mean(
@@ -169,16 +165,10 @@ class DiffusionModel(GaussianDiffusion):
             2, 
             -1)    # (b, v)
         verts2d_loss = torch.mean(torch.matmul(verts_2d_diff, v_weights))
-        
-        verts_2d_cam_diff = torch.norm(
-            verts_2d_camcalib_normed.reshape(bs*n, -1, 2) - model_kwargs['verts_2d'].reshape(bs*n, -1, 2), 
-            2, 
-            -1)    # (b, v)
-        verts2d_cam_loss = torch.mean(torch.matmul(verts_2d_cam_diff, v_weights))
             
-        loss = 1.0 * shape_loss + 50.0 * pose_loss + 30.0 * expr_loss + 10 * trans_loss \
+        loss = 1.0 * shape_loss + 50.0 * pose_loss + 30.0 * expr_loss + 50 * trans_loss \
                 + 1.0 * mouth_closure_loss + 1.0 * eye_closure_loss \
-                + 1.0 * verts3d_loss + 0.1 * lmk2d_loss  + 1.0 * verts2d_loss + 0.1 * verts2d_cam_loss \
+                + 1.0 * verts3d_loss + 0.1 * lmk2d_loss  + 1.0 * verts2d_loss + \
                 + 0.0 * pose_jitter + 0.0 * exp_jitter
 
         loss_dict = {
@@ -192,7 +182,6 @@ class DiffusionModel(GaussianDiffusion):
             "expt_jitter": exp_jitter,
             "pose_jitter": pose_jitter,
             "verts_2d_loss": verts2d_loss,
-            "verts2d_cam_loss": verts2d_cam_loss,
             "shape_mica_loss": mica_shape_loss,
             "mouth_closure_loss": mouth_closure_loss, 
             "eye_closure_loss": eye_closure_loss

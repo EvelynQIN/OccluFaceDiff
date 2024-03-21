@@ -145,12 +145,6 @@ class TrainLoop:
                 lmk_2d = lmk_2d.to(self.device)
                 occlusion_mask = occlusion_mask.to(self.device)
 
-                bs, n = lmk_2d.shape[:2]
-                occlusion = (1-occlusion_mask).unsqueeze(-1)
-                lmk_2d_occ = (lmk_2d * occlusion).reshape(bs, n, -1)
-                trans_cam = self.cam_model(lmk_2d_occ, mica_shape[:, None, :].repeat(1, n, 1))
-
-                target = torch.cat([flame_params, trans_cam], dim=-1)
                 model_kwargs = {
                     "lmk_2d": lmk_2d.to(self.device),
                     "lmk_3d": lmk_3d_normed.to(self.device),
@@ -161,7 +155,7 @@ class TrainLoop:
                     "std": self.std
                 }
                 grad_update = True if self.step % self.gradient_accumulation_steps == 0 else False 
-                self.run_step(target, grad_update, **model_kwargs)
+                self.run_step(flame_params, grad_update, **model_kwargs)
             if epoch == self.num_epochs or epoch % self.save_interval == 0:
                 self.save()
             if epoch % self.log_interval == 0:
@@ -223,15 +217,8 @@ class TrainLoop:
                 flame_params = flame_params.to(self.device)
                 lmk_2d = lmk_2d.to(self.device)
                 occlusion_mask = occlusion_mask.to(self.device)
-                
-                bs, n = lmk_2d.shape[:2]
-                occlusion = (1-occlusion_mask).unsqueeze(-1)
-                lmk_2d_occ = (lmk_2d * occlusion).reshape(bs, n, -1)
-                trans_cam = self.cam_model(lmk_2d_occ, flame_params[:, :, :100])
 
-                target = torch.cat([flame_params, trans_cam], dim=-1)
-
-                t, weights = self.schedule_sampler.sample(target.shape[0], dist_util.dev())
+                t, weights = self.schedule_sampler.sample(flame_params.shape[0], dist_util.dev())
                 model_kwargs = {
                     "lmk_2d": lmk_2d.to(self.device),
                     "lmk_3d": lmk_3d_normed.to(self.device),
@@ -244,7 +231,7 @@ class TrainLoop:
                 compute_losses = functools.partial(
                     self.diffusion.training_losses,
                     self.ddp_model,
-                    target,
+                    flame_params,
                     t,
                     model_kwargs
                 )

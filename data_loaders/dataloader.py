@@ -278,7 +278,7 @@ def get_path(dataset_path, dataset, split, subject_id=None, motion_list=None):
 def get_mean_std_path(dataset):
     return dataset + "_norm_dict.pt"
 
-def get_face_motion(motion_paths, n_shape, n_exp):
+def get_face_motion(motion_paths, n_shape):
     motion_list = defaultdict(list)
 
     print(f"Load motions from processed data.")
@@ -288,11 +288,7 @@ def get_face_motion(motion_paths, n_shape, n_exp):
         if nframes < 50:
             continue
         motion_list['motion_id'].append(os.path.split(motion_path)[-1].split(".")[0])
-        # reduce flame params (shape 100, expression 50)
-        target = torch.cat([
-            motion['target'][:,:n_shape], motion['target'][:,300:300+n_exp], motion['target'][:,400:]], 
-            dim=-1)
-        motion_list['target'].append(target)
+        motion_list['target'].append(motion['target'])
         motion_list['lmk_3d_normed'].append(motion['lmk_3d_normed'])
         motion_list['lmk_2d'].append(motion['lmk_2d'])
         motion_list['verts_2d'].append(motion['verts_2d_cropped'])
@@ -318,8 +314,7 @@ def load_data(args, dataset, dataset_path, split, subject_id = None, selected_mo
 
     motion_paths = get_path(dataset_path, dataset, split, subject_id, selected_motion_ids)
     n_shape = args.n_shape 
-    n_exp = args.n_exp
-    motions = get_face_motion(motion_paths, n_shape, n_exp)
+    motions = get_face_motion(motion_paths, n_shape)
 
     # compute the mean and std for the training data
     norm_dict_path = get_mean_std_path(dataset)
@@ -351,11 +346,6 @@ def load_data(args, dataset, dataset_path, split, subject_id = None, selected_mo
         
         with open(os.path.join(dataset_path, norm_dict_path), "wb") as f:
             torch.save(norm_dict, f)
-        
-        mean_target = norm_dict['mean']['target']
-        std_target = norm_dict['std']['target']
-        norm_dict['mean']['target'] = torch.cat([mean_target[:n_shape], mean_target[300:300+n_exp], mean_target[400:]])
-        norm_dict['std']['target'] = torch.cat([std_target[:n_shape], std_target[300:3+n_exp], std_target[400:]])
 
     return  motions, norm_dict
 
