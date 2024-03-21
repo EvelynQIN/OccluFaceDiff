@@ -282,7 +282,7 @@ def get_face_motion(motion_paths, n_shape):
     motion_list = defaultdict(list)
 
     print(f"Load motions from processed data.")
-    for motion_path in tqdm(motion_paths):
+    for motion_path in tqdm(motion_paths[:32]):
         motion = torch.load(motion_path)
         nframes = motion['target'].shape[0]
         if nframes < 50:
@@ -321,20 +321,10 @@ def load_data(args, dataset, dataset_path, split, subject_id = None, selected_mo
     if os.path.exists(os.path.join(dataset_path, norm_dict_path)):
         print(f"Norm dict found.")
         norm_dict = torch.load(os.path.join(dataset_path, norm_dict_path))
-        mean_target = norm_dict['mean']['target']
-        std_target = norm_dict['std']['target']
-        norm_dict['mean']['target'] = torch.cat([mean_target[:n_shape], mean_target[300:300+n_exp], mean_target[400:]])
-        norm_dict['std']['target'] = torch.cat([std_target[:n_shape], std_target[300:300+n_exp], std_target[400:]])
     else:
         norm_dict = {}
-        lmk_3d_normed = []
-        target = []
-        for path in motion_paths:
-            motion = torch.load(path)
-            lmk_3d_normed.append(motion['lmk_3d_normed'])
-            target.append(motion['target'])
-        verts_3d_list = torch.cat(lmk_3d_normed, dim=0).reshape(-1, 3)
-        target_list = torch.cat(target, dim=0)
+        verts_3d_list = torch.cat(motions['lmk_3d_normed'], dim=0).reshape(-1, 3)
+        target_list = torch.cat(motions['target'], dim=0)
         norm_dict['mean'] = {
             "lmk_3d_normed": verts_3d_list.mean(dim=0).float(),
             "target": target_list.mean(dim=0).float()
