@@ -282,7 +282,7 @@ def get_face_motion(motion_paths, n_shape):
     motion_list = defaultdict(list)
 
     print(f"Load motions from processed data.")
-    for motion_path in tqdm(motion_paths[:32]):
+    for motion_path in tqdm(motion_paths):
         motion = torch.load(motion_path)
         nframes = motion['target'].shape[0]
         if nframes < 50:

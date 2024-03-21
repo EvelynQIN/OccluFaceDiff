@@ -298,16 +298,14 @@ def batch_cam_to_img_project(points, trans):
     # fixed camera intrinsics
     FOCAL_LEN = 1000.0
     PRINCIPAL_POINT_OFFSET = 112.0
-    IMAGE_SIZE = 224 
-    MEAN_TRANS = torch.FloatTensor([0.004, 0.222, 1.200])   # guessing from training 
+
     intrin = torch.FloatTensor([
         [FOCAL_LEN, 0., PRINCIPAL_POINT_OFFSET],
         [0., FOCAL_LEN, PRINCIPAL_POINT_OFFSET],
         [0., 0., 1.]
     ]).unsqueeze(0).expand(bs, 3, 3).to(device) # (bs, 3, 3)
 
-    mean_trans = MEAN_TRANS.unsqueeze(0).expand(bs, -1).to(device)
-    T = (trans + mean_trans).unsqueeze(-1) # (bs, 3, 1)
+    T = trans.unsqueeze(-1) # (bs, 3, 1)
     R = torch.eye(3).unsqueeze(0).expand(bs,-1, -1).to(device) # (bs, 3, 3)
     extrin = torch.cat([R, T], dim=-1)  # (bs, 3, 4)
 
