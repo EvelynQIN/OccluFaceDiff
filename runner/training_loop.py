@@ -148,7 +148,7 @@ class TrainLoop:
                 bs, n = lmk_2d.shape[:2]
                 occlusion = (1-occlusion_mask).unsqueeze(-1)
                 lmk_2d_occ = (lmk_2d * occlusion).reshape(bs, n, -1)
-                trans_cam = self.cam_model(lmk_2d_occ, flame_params[:, :, :100])
+                trans_cam = self.cam_model(lmk_2d_occ, mica_shape[:, None, :].repeat(1, n, 1))
 
                 target = torch.cat([flame_params, trans_cam], dim=-1)
                 model_kwargs = {

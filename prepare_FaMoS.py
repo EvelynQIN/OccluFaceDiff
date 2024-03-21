@@ -54,8 +54,9 @@ def get_mica_shape_prediction(img_dir, subject_id, motion_id, cam_name, frame_id
     img_arr = np.stack(img_arr) # (n_imgs, 3, 112, 112)
     
     with torch.no_grad():
-        mica_shape = mica.encode_single_img(
+        mica_shape = mica.predict_per_frame_shape(
             torch.from_numpy(img_arr).float().to('cuda'))  # (n_imgs, 300)
+    assert mica_shape.shape[1] == 300
     
     return mask.bool(), mica_shape.to('cpu')
 

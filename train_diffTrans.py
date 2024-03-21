@@ -6,7 +6,7 @@ import numpy as np
 
 import torch
 
-from data_loaders.dataloader import get_dataloader, load_data, TrainDataset
+from data_loaders.dataloader_from_path import get_dataloader, load_data, TrainDataset
 from model.FLAME import FLAME
 from model.networks import PureMLP
 # from runner.train_mlp import train_step, val_step

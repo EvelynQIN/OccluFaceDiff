@@ -1,11 +1,11 @@
-save_dir: "./checkpoints/calib/" 
-num_epoch: 50
+save_dir: "./checkpoints/calib/fitcam" 
+num_epoch: 10
 dataset: "FaMoS" 
 dataset_path: "./processed_data"
 weight_decay: 0.001
 batch_size: 128
-lr: 0.0003
-save_interval: 2 
+lr: 0.0001
+save_interval: 1 
 device: 0 
 num_workers: 8 
 
@@ -15,7 +15,7 @@ seed: 0
 # model architechture
 model_name: "trans_calib_128d"
 lmk2d_dim: 136 # input feature dim 68 x 2
-n_shape: 100
+n_target: 180
 output_feature_dim: 3 # number of cam params (one set per frame)
 latent_dim: 128
 ckpt_path: NULL

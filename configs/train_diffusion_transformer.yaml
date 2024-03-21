@@ -4,7 +4,7 @@ dataset: "FaMoS"
 dataset_path: "./processed_data"
 weight_decay: 0.01
 batch_size: 1 
-gradient_accumulation_steps: 128
+gradient_accumulation_steps: 2
 lr: 0.0003 
 cosine_scheduler: True
 device: 0
@@ -12,7 +12,7 @@ num_workers: 8
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
-train_dataset_repeat_times: 128
+train_dataset_repeat_times: 2
 occlusion_mask_prb: 0.5
 # resume_checkpoint: "checkpoints/Transformer_128d_nomask_1l/model_140.pt"
 
@@ -23,7 +23,7 @@ n_pose: 30
 n_trans: 3
 
 # log
-wandb_log: True
+wandb_log: False
 save_interval: 1 
 log_interval: 1 
 

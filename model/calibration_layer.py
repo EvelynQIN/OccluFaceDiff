@@ -7,7 +7,7 @@ class Cam_Calibration(nn.Module):
     def __init__(
         self,
         lmk2d_dim, # input feature dim 68 x 2
-        n_shape,
+        n_target,
         output_feature_dim, # number of cam params (one set per frame)
         latent_dim,
         ckpt_path=None,
@@ -16,7 +16,7 @@ class Cam_Calibration(nn.Module):
 
         # condition dim
         self.lmk2d_dim = lmk2d_dim
-        self.n_shape = n_shape
+        self.n_target = n_target
 
         # output dim
         self.output_feature_dim = output_feature_dim 
@@ -25,15 +25,22 @@ class Cam_Calibration(nn.Module):
         
         self.tag = 'CAM'
         
-        self.shape_process = nn.Linear(self.n_shape, self.latent_dim)
+        self.flame_process = nn.Sequential(
+            nn.Linear(self.n_target, self.latent_dim),
+            nn.LayerNorm(self.latent_dim),
+            nn.LeakyReLU(inplace=True)
+        )
         
-        self.lmk_process = nn.Linear(self.lmk2d_dim, self.latent_dim)
+        self.lmk_process = nn.Sequential(
+            nn.Linear(self.lmk2d_dim, self.latent_dim),
+            nn.LayerNorm(self.latent_dim),
+            nn.LeakyReLU(inplace=True)
+        )
 
         self.net = nn.Sequential(
             nn.Linear(self.latent_dim * 2, self.latent_dim),
-            nn.ReLU(),
-            nn.Linear(self.latent_dim, self.latent_dim),
-            nn.ReLU(),
+            nn.LayerNorm(self.latent_dim),
+            nn.LeakyReLU(inplace=True),
             nn.Linear(self.latent_dim, self.output_feature_dim)
         )
         if self.ckpt_path is not None:
@@ -54,17 +61,17 @@ class Cam_Calibration(nn.Module):
                 block.requires_grad = False
         print(f'[{self.tag}] All params are frozen.')
 
-    def forward(self, lmk2d, shape_100):
+    def forward(self, lmk_2d, target):
         """
         Args:
             lmk2d: [batch_size, 68x2]
-            shape_100: [batch_size, 100]
+            target: [batch_size, 180]
         Return:
             cam_params: [batch_size, output_feature_dim]
         """
-        lmk2d_emb = self.lmk_process(lmk2d)
-        shape_100_emb = self.shape_process(shape_100)
-        input_emb = torch.cat([lmk2d_emb, shape_100_emb], dim=-1)
+        lmk2d_emb = self.lmk_process(lmk_2d)
+        target_emb = self.flame_process(target)
+        input_emb = torch.cat([lmk2d_emb, target_emb], dim=-1)
         output = self.net(input_emb)
         
         return output
