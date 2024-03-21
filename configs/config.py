@@ -27,11 +27,14 @@ cfg.mica.arcface_lr = 0.001
 # Defaults for Cam_Calib 
 # ---------------------------------------------------------------------------- #
 cfg.cam = CN()
-cfg.cam.model_name = "trans_perspective"
+cfg.cam.model_name = "camT_prediction"
 cfg.cam.lmk2d_dim = 136 # input feature dim 68 x 2
-cfg.cam.n_shape = 100
+cfg.cam.n_target = 180
 cfg.cam.output_nfeat = 3 # number of cam params (one set per frame)
 cfg.cam.latent_dim = 128
+cfg.cam.focal_length = 1000.0
+cfg.cam.principal_point = 112.0
+cfg.cam.trans_offset = [0.004, 0.222, 1.200]
 cfg.cam.ckpt_path = "pretrained/cam_calib_shape.pth"
 
 def get_cfg_defaults():

@@ -62,7 +62,7 @@ def lmk_reproj_loss_train(
     bs = model_output.shape[0]
     intrin = FIXED_INTRIN.unsqueeze(0).expand(bs, 3, 3).to(device) # (bs, 3, 3)
     mean_trans = MEAN_TRANS.unsqueeze(0).to(device)
-    T = model_output.unsqueeze(-1)
+    T = (model_output + mean_trans).unsqueeze(-1)
     R = torch.eye(3).unsqueeze(0).expand(bs,-1, -1).to(device) # (bs, 3, 3)
     extrin = torch.cat([R, T], dim=-1)  # (bs, 3, 4)
 
@@ -93,7 +93,7 @@ def lmk_reproj_loss_train(
     if verbose:
         output_mean = torch.mean(T, dim=0)
     
-    reg_trans = 10.0 * torch.mean((model_output - mean_trans) ** 2)
+    reg_trans = 10.0 * torch.mean(model_output ** 2)
 
     
     loss_dict = {
@@ -233,7 +233,7 @@ def train_calibration_model(args, train_loader, mean_target, std_target):
             target = target.to(device)
             cam_pred = model(lmk_2d, target)
 
-            flame_params = target * mean_target + std_target
+            flame_params = target * std_target + mean_target
             vis = True if ((epoch % 2 == 0) and (train_steps == vis_step)) else False
             loss_dict, trans_mean = lmk_reproj_loss_train(cam_pred, lmk_2d, verts_2d, flame_params, flame, verts_loss_weights, verbose=True, vis=vis)
             optimizer.zero_grad()
@@ -252,7 +252,7 @@ def train_calibration_model(args, train_loader, mean_target, std_target):
                 else:
                     log_dict[f'train/{k}'] = loss_dict[k].item()
             
-            wandb.log(loss_dict)
+            wandb.log(log_dict)
             nb_iter += 1
         
         print(f"Train for epoch {epoch}:")

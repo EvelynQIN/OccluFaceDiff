@@ -47,16 +47,16 @@ def load_data(dataset, dataset_path):
     lmk_2d_list, target_list= [], []
     verts2d_list = []
     print(f'[LOAD DATA] from FaMoS')
-    for motion_path in tqdm(motion_paths[:256]):
+    for motion_path in tqdm(motion_paths):
         motion = torch.load(motion_path)
-        lmk_2d = motion["lmk_2d"]
-        target = motion["target"]
+        lmk_2d = motion["lmk_2d"][::2]
+        target = motion["target"][::2]
         # reduce flame params (shape 100, expression 50)
         target = torch.cat([
             target[:,:100], target[:,300:350], target[:,400:]], 
             dim=-1)
         
-        verts2d = motion['verts_2d_cropped']
+        verts2d = motion['verts_2d_cropped'][::2]
 
         lmk_2d_list.append(lmk_2d)  
         target_list.append(target)
@@ -78,7 +78,7 @@ def load_data(dataset, dataset_path):
             'mean_target': mean_target,
             'std_target': std_target
         }
-        torch.save(norm_dict)
+        torch.save(norm_dict, norm_path)
 
     output = {
         "lmk_2d": lmk_2d_list,
