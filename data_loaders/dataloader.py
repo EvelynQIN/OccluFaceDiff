@@ -20,7 +20,8 @@ class TrainDataset(Dataset):
         train_dataset_repeat_times=1,
         no_normalization=True,
         occlusion_mask_prob=0.5,
-        mixed_occlusion_prob=0.3
+        mixed_occlusion_prob=0.3,
+        fps=30
     ):
         self.dataset_name = dataset_name
         self.mean = norm_dict['mean']
@@ -33,6 +34,8 @@ class TrainDataset(Dataset):
         self.num_mask_regions = len(REGIONS)
         self.mask_regions = list(REGIONS.keys())
         self.mixed_occlusion_prob = mixed_occlusion_prob
+        self.fps = fps
+        self.skip_frames = 2 if self.fps == 30 else 1 # downsample to half
 
     def __len__(self):
         return len(self.data['target']) * self.train_dataset_repeat_times
@@ -46,14 +49,14 @@ class TrainDataset(Dataset):
     def __getitem__(self, idx):
         id = idx % len(self.data['target'])
 
-        seqlen = self.data['target'][id].shape[0] 
+        seqlen = self.data['target'][id].shape[0]
         
         if self.train_dataset_repeat_times == 1:
             # do not repeat
             input_motion_length = seqlen 
         elif self.input_motion_length is None:  
             # in transformer, randomly clip a subseq
-            input_motion_length = torch.randint(min(50, seqlen), seqlen+1, (1,))[0]
+            input_motion_length = torch.randint(min(50, seqlen), seqlen + 1, (1,))[0]
         else:
             # fix motion len
             input_motion_length = self.input_motion_length 
@@ -63,13 +66,14 @@ class TrainDataset(Dataset):
         else:
             start_id = torch.randint(0, int(seqlen - input_motion_length), (1,))[0]     # random crop a motion seq
         
-        lmk_2d = self.data['lmk_2d'][id][start_id:start_id + input_motion_length]  # (n, 68, 2)
-        verts_2d = self.data['verts_2d'][id][start_id:start_id + input_motion_length]  # (n, 5023, 2)
-        lmk_3d_normed = self.data['lmk_3d_normed'][id][start_id:start_id + input_motion_length] # (n, 68, 3)
-        target = self.data['target'][id][start_id:start_id + input_motion_length] # (n, shape300 + exp100 + rot6d30)
+        lmk_2d = self.data['lmk_2d'][id][start_id:start_id + input_motion_length:self.skip_frames]  # (n, 68, 2)
+        verts_2d = self.data['verts_2d'][id][start_id:start_id + input_motion_length:self.skip_frames]  # (n, 5023, 2)
+        lmk_3d_normed = self.data['lmk_3d_normed'][id][start_id:start_id + input_motion_length:self.skip_frames] # (n, 68, 3)
+        target = self.data['target'][id][start_id:start_id + input_motion_length:self.skip_frames] # (n, shape300 + exp100 + rot6d30)
+        motion_len_downsampled = target.shape[0]
         
         img_mask = self.data['img_mask'][id]
-        n_imgs = torch.sum(img_mask[start_id:start_id + input_motion_length])
+        n_imgs = torch.sum(img_mask[start_id:start_id + input_motion_length:self.skip_frames])
         
         if n_imgs > 0:
             # taking the average
@@ -83,7 +87,7 @@ class TrainDataset(Dataset):
             
         # Normalization 
         if not self.no_normalization:    
-            lmk_3d_normed = ((lmk_3d_normed.reshape(-1, 3) - self.mean['lmk_3d_normed']) / (self.std['lmk_3d_normed'] + 1e-8)).reshape(input_motion_length, -1, 3)
+            lmk_3d_normed = ((lmk_3d_normed.reshape(-1, 3) - self.mean['lmk_3d_normed']) / (self.std['lmk_3d_normed'] + 1e-8)).reshape(motion_len_downsampled, -1, 3)
             target = (target - self.mean['target']) / (self.std['target'] + 1e-8)
             mica_shape_avg = (mica_shape_avg - self.mean['target'][:100]) / (self.std['target'][:100] + 1e-8)
         
@@ -287,13 +291,23 @@ def get_face_motion(motion_paths, n_shape):
         nframes = motion['target'].shape[0]
         if nframes < 50:
             continue
-        motion_list['motion_id'].append(os.path.split(motion_path)[-1].split(".")[0])
+        motion_id = os.path.split(motion_path)[-1].split(".")[0]
+        motion_list['motion_id'].append(motion_id)
         motion_list['target'].append(motion['target'])
         motion_list['lmk_3d_normed'].append(motion['lmk_3d_normed'])
         motion_list['lmk_2d'].append(motion['lmk_2d'])
         motion_list['verts_2d'].append(motion['verts_2d_cropped'])
         motion_list['mica_shape'].append(motion['mica_shape'][:,:n_shape])
         motion_list['img_mask'].append(motion['img_mask'])    
+        
+        if 'head_rotation' in motion_id: # augment the rotation data sequence
+            motion_list['motion_id'].append(motion_id)
+            motion_list['target'].append(motion['target'])
+            motion_list['lmk_3d_normed'].append(motion['lmk_3d_normed'])
+            motion_list['lmk_2d'].append(motion['lmk_2d'])
+            motion_list['verts_2d'].append(motion['verts_2d_cropped'])
+            motion_list['mica_shape'].append(motion['mica_shape'][:,:n_shape])
+            motion_list['img_mask'].append(motion['img_mask'])    
         assert torch.sum(motion['img_mask']) ==  motion['mica_shape'].shape[0], f"{motion_path} mica prediciton not aligned with frames!"
        
     return motion_list

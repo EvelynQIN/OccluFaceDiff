@@ -14,6 +14,8 @@ overwrite: True
 no_normalization: False
 train_dataset_repeat_times: 128
 occlusion_mask_prb: 0.5
+mixed_occlusion_prob: 0.3
+fps: 30
 # resume_checkpoint: "checkpoints/Transformer_128d_nomask_1l/model_140.pt"
 
 # flame_params
@@ -28,22 +30,22 @@ save_interval: 1
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_68_512d_1l_4h_occ" 
+arch: "diffusion_Transformer_68_256d_1l_4h_occ" 
 target_nfeat: 183
 lmk3d_dim: 204  # 68x3
 lmk2d_dim: 136  # 68x2
 
-latent_dim: 512
+latent_dim: 256
 dropout: 0.1
 use_mask: True  # use alibi mask
 
 # unusable for gru
-ff_size: 1024
-num_enc_layers: 1
+ff_size: 512
+num_enc_layers: 2
 num_heads: 4
 
 # unusable for transformer encoder 
-num_dec_layers: 1
+num_dec_layers: 2
 
 # unusable for warmup cosine scheduler
 # lr_anneal_steps: 225000 

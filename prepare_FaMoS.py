@@ -145,7 +145,7 @@ def get_training_data(motion, flame, calib_fname, cam_model, mean_target, std_ta
     cam_t_pred = cam_model(
         lmk_2d_cropped.reshape(n_frames, -1).to(device), 
         cam_target.to(device)).to('cpu')
-    cam_t = cam_t + trans_offset    # (n, 3)
+    cam_t = cam_t_pred + trans_offset    # (n, 3)
     
     target = torch.cat([target, cam_t], dim=-1)
     

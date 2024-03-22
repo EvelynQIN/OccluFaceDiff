@@ -297,7 +297,9 @@ def add_data_options(parser):
         "--n_trans", default=3, type=int, help="number of flame params."
     )
 
-    
+    group.add_argument(
+        "--fps", default=30, type=int, help="fps of the motion sequence."
+    )
     
 
 def add_training_options(parser):
@@ -390,11 +392,19 @@ def add_training_options(parser):
     )
 
     group.add_argument(
-        "--occlusion_mask_prb",
+        "--occlusion_mask_prob",
         default=0,
         type=float,
         help="Probability for adding random occlusion mask.",
     )
+
+    group.add_argument(
+        "--mixed_occlusion_prob",
+        default=0,
+        type=float,
+        help="Probability for adding mixed random occlusion mask.",
+    )
+    
 
 def add_sampling_options(parser):
     group = parser.add_argument_group("sampling")

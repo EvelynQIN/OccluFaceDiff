@@ -6,7 +6,7 @@ import numpy as np
 
 import torch
 
-from data_loaders.dataloader import get_dataloader, load_data, TrainDataset
+from data_loaders.dataloader_from_path import get_dataloader, load_data, TrainDataset
 from model.FLAME import FLAME
 from model.networks import PureMLP
 # from runner.train_mlp import train_step, val_step
@@ -100,7 +100,9 @@ def main():
         None,
         args.train_dataset_repeat_times,
         args.no_normalization,
-        args.occlusion_mask_prb
+        args.occlusion_mask_prob,
+        args.mixed_occlusion_prob,
+        args.fps
     )
     
 
@@ -124,7 +126,9 @@ def main():
         None,
         1,
         args.no_normalization,
-        args.occlusion_mask_prb
+        args.occlusion_mask_prob,
+        args.mixed_occlusion_prob,
+        args.fps
     )
     
     val_loader = get_dataloader(
