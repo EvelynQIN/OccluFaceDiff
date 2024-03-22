@@ -20,7 +20,7 @@ from utils.model_util import create_model_and_diffusion, load_model_wo_clip
 from utils.parser_util import sample_args
 from utils.famos_camera import batch_cam_to_img_project
 from configs.config import get_cfg_defaults
-
+from loguru import logger
 device = torch.device("cuda")
 
 IMAGE_SIZE = 224
@@ -301,11 +301,11 @@ def evaluate_prediction(
             .numpy()
         )
     
-    # Create visualization
+    # TODO
     if args.vis:
         subject_id = motion_id[:11] 
         motion_name = motion_id[12:]
-        if (split == "val" and subject_id == "subject_001") or (split == "test" and subject_id == "subject_071"):
+        if (split != "val" and subject_id == "subject_001") or (split == "test" and subject_id == "subject_071"):
             video_dir = os.path.join(args.output_dir, args.arch, subject_id)
             if not os.path.exists(video_dir):
                 os.makedirs(video_dir)
@@ -327,20 +327,19 @@ def evaluate_prediction(
     return eval_log
 
 
-def load_diffusion_model_from_ckpt(args, pretrained_args):
-    print("Creating model and diffusion...")
+def load_diffusion_model_from_ckpt(args):
+    
     args.arch = args.arch[len("diffusion_") :]
-    cam_model, denoise_model, diffusion = create_model_and_diffusion(args, pretrained_args)
+    logger.info(f"Creating model and diffusion [{args.arch}].")
+    denoise_model, diffusion = create_model_and_diffusion(args)
 
-    print(f"Loading checkpoints from [{args.model_path}]...")
+    logger.info(f"Loading checkpoints from [{args.model_path}].")
     state_dict = torch.load(args.model_path, map_location="cpu")
     load_model_wo_clip(denoise_model, state_dict)
 
-    cam_model.to(args.device)
-    cam_model.eval()
     denoise_model.to(args.device)  # dist_util.dev())
     denoise_model.eval()  # disable random masking
-    return cam_model, denoise_model, diffusion
+    return denoise_model, diffusion
 
 
 def main():
@@ -353,19 +352,25 @@ def main():
     torch.manual_seed(args.seed)
 
     fps = args.fps 
+    output_folder = os.path.join(args.output_dir, args.arch)
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    logger.add(os.path.join(output_folder, 'eval.log'))
 
     flame = FLAME(args.flame_model_path, args.flame_lmk_embedding_path, n_shape=args.n_shape, n_exp=args.n_exp)
-    print("Loading dataset...")
 
     split = args.split
     device = 'cuda:0'
     # load data from given split
-    print("creating val data loader...")
+    logger.info(f"Eval [{split}] data with occlusion prob {args.occlusion_mask_prob} and mixed occlusion prob {args.mixed_occlusion_prob}.")
+    
     motion_data, norm_dict = load_data(
+        args,
         args.dataset,
         args.dataset_path,
         split,
-        subject_id='080'
+        subject_id=None,
+        repeat_head_rotation=False
     )
     
     dataset = TestDataset(
@@ -373,7 +378,9 @@ def main():
         norm_dict,
         motion_data,
         args.no_normalization,
-        occlusion_mask_prob=0.1
+        occlusion_mask_prob=args.occlusion_mask_prob,
+        mixed_occlusion_prob=args.mixed_occlusion_prob,
+        fps = args.fps
     )
 
     log = {}
@@ -385,33 +392,25 @@ def main():
     
     flame_vmask_path = "flame_2020/FLAME_masks.pkl"
     with open(flame_vmask_path, 'rb') as f:
+        
         flame_v_mask = pickle.load(f, encoding="latin1")
 
     for k, v in flame_v_mask.items():
         flame_v_mask[k] = torch.from_numpy(v)
     
-    cam_model, denoise_model, diffusion = load_diffusion_model_from_ckpt(args, pretrained_args)
+    denoise_model, diffusion = load_diffusion_model_from_ckpt(args)
     sample_fn = diffusion.p_sample_loop
             
     for sample_index in tqdm(range(len(dataset))):
         with torch.no_grad():
-            flame_params, lmk_2d, lmk_3d_normed, img_arr, occlusion_mask, motion_id = dataset[sample_index]
-            motion_length = flame_params.shape[0]
-            flame_params = flame_params.unsqueeze(0).to(device)
-            lmk_2d = lmk_2d.unsqueeze(0).to(device)
-            occlusion_mask = occlusion_mask.unsqueeze(0).to(device)
-
-            bs, n = lmk_2d.shape[:2]
-            occlusion = (1-occlusion_mask).unsqueeze(-1)
-            lmk_2d_occ = (lmk_2d * occlusion).reshape(bs, n, -1)
-            trans_cam = cam_model(lmk_2d_occ, flame_params[:, :, :100])
-
-            target = torch.cat([flame_params, trans_cam], dim=-1)
+            target, lmk_2d, lmk_3d_normed, mica_shape, occlusion_mask, motion_id = dataset[sample_index]
+            motion_length = target.shape[0]
+            
             model_kwargs = {
-                "lmk_2d": lmk_2d,
-                "lmk_3d": lmk_3d_normed.unsqueeze(0).to(device),
-                "img_arr": img_arr.unsqueeze(0).to(device),
-                "occlusion_mask": occlusion_mask,
+                    "lmk_2d": lmk_2d.unsqueeze(0).to(device),
+                    "lmk_3d": lmk_3d_normed.unsqueeze(0).to(device),
+                    "mica_shape": mica_shape.unsqueeze(0).to(device),
+                    "occlusion_mask": occlusion_mask.unsqueeze(0).to(device),
             }
 
             if args.fix_noise:
@@ -434,10 +433,9 @@ def main():
                 const_noise=False,
             )
             output_sample = output_sample.cpu().float().squeeze(0)
-            target = target.cpu().float().squeeze(0)
             if not args.no_normalization:
-                output_sample[:,:-3] = dataset.inv_transform(output_sample[:,:-3])
-                target[:,:-3] = dataset.inv_transform(target[:,:-3])
+                output_sample = dataset.inv_transform(output_sample)
+                target = dataset.inv_transform(target)
             
             lmk_2d_gt = (lmk_2d + 1) * IMAGE_SIZE / 2
 
@@ -447,7 +445,7 @@ def main():
                 output_sample,
                 flame,
                 target, 
-                lmk_2d_gt.reshape(motion_length, -1, 2).to('cpu'),
+                lmk_2d_gt.reshape(motion_length, -1, 2),
                 fps,
                 motion_id,
                 flame_v_mask,
@@ -459,22 +457,16 @@ def main():
             torch.cuda.empty_cache()
 
     # Print the value for all the metrics
-    print("Metrics for the predictions")
+    logger.info("Metrics for the predictions:")
     output = {}
     for metric in pred_metrics:
         output[metric] = log[metric] / len(dataset)
-        print(f"{metric} : {output[metric]}")
+        logger.info(f"{metric} : {output[metric]}")
 
-    print("Metrics for the ground truth")
+    logger.info("Metrics for the ground truth:")
     for metric in gt_metrics:
         output[metric] = log[metric] / len(dataset)
-        print(f"{metric} : {output[metric]}")
-    
-    output_folder = os.path.join(args.output_dir, args.arch)
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-    with open(os.path.join(output_folder, f"metrics_{split}.json"), 'w') as fp:
-        json.dump(output, fp)
+        logger.info(f"{metric} : {output[metric]}")
     
     # visualize the heatmap for full vertex error
     mesh_path = "flame_2020/template.ply"

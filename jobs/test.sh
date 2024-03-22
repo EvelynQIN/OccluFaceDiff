@@ -1,2 +1,1 @@
-python3 test.py --model_path checkpoints/DiffMLP_PE_176lmk_2b_45l_64dP_256dE_50res/model_200.pt --fps 60 --output_dir vis_result --vis >&test.log & # --overlapping_test --sld_wind_size 70
-python3 test.py --model_path checkpoints/e2e/Transformer_68_256d_2l_4h_occ/opt_4.pt --fps 60 --split test --output_dir vis_result
+python3 test.py --model_path checkpoints/e2e1/Transformer_68_512d_1l_4h_occ/model_1.pt --split val --output_dir vis_result --occlusion_mask_prob 0 --mixed_occlusion_prob 0

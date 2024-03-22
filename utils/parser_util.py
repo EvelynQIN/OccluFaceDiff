@@ -418,24 +418,15 @@ def add_sampling_options(parser):
     group.add_argument(
         "--vis",
         action="store_true",
-        help="visualize the output",
+        help="visualize the output during evaluation",
     )
-    group.add_argument(
-        "--gt_video",
-        action="store_true",
-        help="whether or not to record the gt videos",
-    )
+
     group.add_argument(
         "--fix_noise",
         action="store_true",
         help="fix init noise for the output",
     )
-    group.add_argument(
-        "--fps",
-        default=60,
-        type=int,
-        help="FPS",
-    )
+
     group.add_argument(
         "--model_path",
         type=str,
@@ -446,6 +437,20 @@ def add_sampling_options(parser):
         default="",
         type=str,
         help="path to the folder to store the rendered video"
+    )
+    
+    group.add_argument(
+        "--occlusion_mask_prob",
+        default=0,
+        type=float,
+        help="Probability for adding random occlusion mask.",
+    )
+
+    group.add_argument(
+        "--mixed_occlusion_prob",
+        default=0,
+        type=float,
+        help="Probability for adding mixed random occlusion mask.",
     )
 
 def add_predict_options(parser):
