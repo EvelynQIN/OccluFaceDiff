@@ -279,6 +279,12 @@ class FaceTransformer(nn.Module):
             nn.LayerNorm(self.latent_dim),
             nn.LeakyReLU(0.2, inplace=True)
         )
+
+        self.cond_process = nn.Sequential(
+            nn.Linear(self.latent_dim * 3, self.latent_dim),
+            nn.LayerNorm(self.latent_dim),
+            nn.LeakyReLU(0.2, inplace=True)
+        )
         
         self.input_process = InputProcess(self.input_feats, self.latent_dim)
         
@@ -355,8 +361,11 @@ class FaceTransformer(nn.Module):
         shape_mica_emb = self.mica_process(
             self.mask_cond_lmk(mica_shape, force_mask=force_mask)
         )
+
+        cond_emb = self.cond_process(
+            torch.cat([lmk3d_emb, lmk2d_emb, shape_mica_emb[None,:,:].repeat(n, 1, 1)], dim=-1))
         
-        cond_emb = lmk3d_emb + lmk2d_emb + shape_mica_emb[None,:, :]
+        # cond_emb = lmk3d_emb + lmk2d_emb + shape_mica_emb[None,:, :]
         
         condseq = self.sequence_pos_encoder(cond_emb)  # [seqlen, bs, d]
         

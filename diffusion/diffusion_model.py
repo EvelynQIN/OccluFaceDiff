@@ -166,9 +166,9 @@ class DiffusionModel(GaussianDiffusion):
             -1)    # (b, v)
         verts2d_loss = torch.mean(torch.matmul(verts_2d_diff, v_weights))
             
-        loss = 1.0 * shape_loss + 50.0 * pose_loss + 30.0 * expr_loss + 50 * trans_loss \
+        loss = 0.01 * shape_loss + 1.0 * pose_loss + 1.0 * expr_loss + 1 * trans_loss \
                 + 1.0 * mouth_closure_loss + 1.0 * eye_closure_loss \
-                + 1.0 * verts3d_loss + 0.1 * lmk2d_loss  + 1.0 * verts2d_loss + \
+                + 2.0 * verts3d_loss + 0.1 * lmk2d_loss  + 2.0 * verts2d_loss + \
                 + 0.0 * pose_jitter + 0.0 * exp_jitter
 
         loss_dict = {
