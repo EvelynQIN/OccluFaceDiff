@@ -248,7 +248,7 @@ def concat_videos_to_gif(video_list, output_path, fps):
 
 def video_to_frames(video_path, fps=60):
     video_name = os.path.split(video_path)[1].split( '.')[0]
-    os.system(f'ffmpeg -y -framerate {fps} -pattern_type glob -i \'output/{video_name}/frames/*.jpg\' -c:v libx264 {video_path}')
+    os.system(f'ffmpeg -y -framerate {fps} -pattern_type glob -i \'outputs/{video_name}/frames/*.jpg\' -c:v libx264 {video_path}')
 
 def merge_views(views):
     grid = []

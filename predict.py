@@ -22,6 +22,7 @@ from utils.famos_camera import batch_cam_to_img_project
 from configs.config import get_cfg_defaults
 from test import evaluate_prediction
 from prepare_FaMoS import prepare_one_motion_for_test
+from prepare_video import  VideoProcessor
 import os.path
 from enum import Enum
 from glob import glob
@@ -80,12 +81,15 @@ class View(Enum):
 
 class MotionTracker:
     
-    def __init__(self, config, pretrained_args, test_seq, device='cuda'):
+    def __init__(self, config, pretrained_args, device='cuda'):
+        
         self.config = config
         self.device = device
-        
         # IO setups
-        self.motion_id = config.motion_id # name of the tested motion sequence
+        self.motion_id = f'{config.subject_id}_{config.motion_id}' if config.test_mode != 'in_the_wild' \
+                        else os.path.split(config.video_path)[-1].split('.')[0]
+                        
+        # name of the tested motion sequence
         self.save_folder = self.config.save_folder
         self.output_folder = os.path.join(self.save_folder, self.config.arch)
         self.motion_name = f'{self.motion_id}_{self.config.exp_name}'
@@ -95,15 +99,15 @@ class MotionTracker:
         logger.info(f"Predict motion [{self.motion_id}] for Exp [{self.config.exp_name}].")
 
         # fixed camera params
-        self.focal_length = torch.FloatTensor([FOCAL_LEN, FOCAL_LEN]).unsqueeze(0).to(self.device)
-        self.principal_point = torch.FloatTensor([PRINCIPAL_POINT_OFFSET, PRINCIPAL_POINT_OFFSET]).unsqueeze(0).to(self.device)
+        self.focal_length = torch.FloatTensor([config.focal_length, config.focal_length]).unsqueeze(0).to(self.device)
+        self.principal_point = torch.FloatTensor([config.principal_point, config.principal_point]).unsqueeze(0).to(self.device)
         self.R = torch.eye(3).unsqueeze(0).to(self.device)
-        self.image_size = torch.tensor([[IMAGE_SIZE, IMAGE_SIZE]]).to(self.device)
+        self.image_size = torch.tensor([[config.image_size, config.image_size]]).to(self.device)
 
         # visualization settings
         self.colormap = cm.get_cmap('jet')
         self.vis_views = [
-            [View.GROUND_TRUTH, View.MESH_GT, View.MESH_OVERLAY, View.HEATMAP]   # View.GROUND_TRUTH, View.MESH_GT, View.MESH_PRED, View.LANDMARKS
+            [View.GROUND_TRUTH, View.MESH_GT, View.MESH_OVERLAY, View.LANDMARKS]   # View.GROUND_TRUTH, View.MESH_GT, View.MESH_PRED, View.LANDMARKS
         ]
         self.min_error = 0.
         self.max_error = 8.
@@ -121,13 +125,7 @@ class MotionTracker:
         norm_dict_path = 'processed_data/FaMoS_norm_dict.pt'
         norm_dict = torch.load(norm_dict_path)
         self.mean = norm_dict['mean']
-        self.std = norm_dict['std']
-
-        # test data
-        self.test_seq = test_seq
-        self.motion_len = test_seq['target'].shape[0]
-        self.generate_random_occlusion_mask()
-        
+        self.std = norm_dict['std']    
         
         self.setup_renderer()
         self.setup_flame()
@@ -172,6 +170,31 @@ class MotionTracker:
             shader=SoftPhongShader(device=self.device, lights=self.lights)
         )
     
+    def load_test_motion(self):
+        # load test motion sequence
+        if self.config.test_mode == "in_the_wild":
+            if self.config.video_path is None:
+                logger.error('Please provide video path!')
+                exit(1)
+            video_processor = VideoProcessor(self.config)
+            self.test_seq = video_processor.run(self.config.video_path)
+        else:
+            self.test_seq = prepare_one_motion_for_test(
+                self.config.dataset, 
+                self.config.split,
+                self.config.subject_id, 
+                self.config.motion_id, 
+                flame_model_path=self.config.flame_model_path, 
+                flame_lmk_embedding_path=self.config.flame_lmk_embedding_path,
+                n_shape=self.config.n_shape, 
+                n_exp=self.config.n_exp,
+                fps=self.config.fps)
+
+        self.motion_len = self.test_seq['lmk_2d'].shape[0]
+        
+        if 'occlusion_mask' not in self.test_seq:
+            self.generate_random_occlusion_mask()
+        
     def load_diffusion_model_from_ckpt(self, args):
         logger.info("Creating model and diffusion...")
         args.arch = args.arch[len("diffusion_") :]
@@ -247,29 +270,25 @@ class MotionTracker:
         lmk_2d_pred = vis_data['lmk_2d_pred']
         verts_pred = vis_data['verts_pred']
         trans_pred = vis_data['trans_pred']
-        trans_gt = vis_data['trans_gt']
         occlusion_mask = vis_data['occlusion_mask']
         
         verts_gt = vis_data.get('verts_gt', None)
+        trans_gt = vis_data.get('trans_gt', None)
         verts_error = vis_data.get('verts_error', None)
-
-        # input_image = util.to_image(batch['image'].clone()[0].cpu().numpy())
 
         savefolder = os.path.join(self.output_folder, self.motion_name)
         Path(savefolder).mkdir(parents=True, exist_ok=True)
 
         self.renderer.rasterizer.raster_settings.image_size = self.get_image_size()
-
-        # lmk68 = self.cameras.transform_points_screen(lmk68, image_size=self.image_size)
-        # shape_mask = ((ops['alpha_images'] * ops['mask_images_mesh']) > 0.).int()[0]
         
-        cameras_gt = PerspectiveCameras(
-                        device=self.device,
-                        principal_point=self.principal_point, 
-                        focal_length=-self.focal_length, # TODO dark megic for pytorch3d's ndc coord sys
-                        R=self.R, T=trans_gt,
-                        image_size=self.image_size,
-                        in_ndc=False)
+        if trans_gt is not None:
+            cameras_gt = PerspectiveCameras(
+                            device=self.device,
+                            principal_point=self.principal_point, 
+                            focal_length=-self.focal_length, # TODO dark megic for pytorch3d's ndc coord sys
+                            R=self.R, T=trans_gt,
+                            image_size=self.image_size,
+                            in_ndc=False)
         
 
         cameras_pred = PerspectiveCameras(
@@ -447,38 +466,33 @@ class MotionTracker:
         num_frames = sum(img_mask)
         
         lmk_2d_gt = self.test_seq['lmk_2d'][img_mask]
-        diffusion_target = self.test_seq['target'][img_mask]
         diffusion_pred = self.diffusion_output[img_mask]
-        
-        shape_gt, expr_gt, pose_gt, trans_gt = self.parse_model_target(diffusion_target)
         shape_pred, expr_pred, pose_pred, trans_pred = self.parse_model_target(diffusion_pred)
-        
-        # pose 6d to aa
-        pose_aa_gt = utils_transform.sixd2aa(pose_gt.reshape(-1, 6)).reshape(num_frames, -1)
         pose_aa_pred = utils_transform.sixd2aa(pose_pred.reshape(-1, 6)).reshape(num_frames, -1)
-        
-        
-        # flame regress
-        verts_gt, lmk_3d_gt = self.flame(shape_gt, expr_gt, pose_aa_gt)   
-        verts_pred, lmk_3d_pred = self.flame(shape_pred, expr_pred, pose_aa_pred)         
-        
+        verts_pred, lmk_3d_pred = self.flame(shape_pred, expr_pred, pose_aa_pred) 
         # 2d reprojection
         lmk_2d_pred = batch_cam_to_img_project(lmk_3d_pred, trans_pred) 
         
-        # vertex error
-        verts_error = torch.norm(verts_pred-verts_gt, p=2, dim=-1) * 1000.0 # converts from m to mm
-        
         vis_dict = {
-            'verts_gt': verts_gt,
             'verts_pred': verts_pred,
-            'trans_gt': trans_gt, 
             'trans_pred': trans_pred,
             'lmk_2d_gt': lmk_2d_gt,
             'lmk_2d_pred': lmk_2d_pred,
             'occlusion_mask': self.test_seq['occlusion_mask'][img_mask],
             'frame_id': self.test_seq['frame_id'][img_mask],
-            "verts_error": verts_error
         }
+        
+        # gt information
+        if 'target' in self.test_seq:
+            diffusion_target = self.test_seq['target'][img_mask]
+            shape_gt, expr_gt, pose_gt, trans_gt = self.parse_model_target(diffusion_target)
+            pose_aa_gt = utils_transform.sixd2aa(pose_gt.reshape(-1, 6)).reshape(num_frames, -1)
+            verts_gt, lmk_3d_gt = self.flame(shape_gt, expr_gt, pose_aa_gt)   
+        
+            verts_error = torch.norm(verts_pred-verts_gt, p=2, dim=-1) * 1000.0 # converts from m to mm
+            vis_dict['verts_gt'] = verts_gt
+            vis_dict['trans_gt'] = trans_gt 
+            vis_dict['verts_error'] = verts_error
         
         if with_image:
             vis_dict['image'] = image
@@ -486,6 +500,7 @@ class MotionTracker:
         return vis_dict
 
     def eval_motion(self):
+            
         log = evaluate_prediction(
             self.config,
             all_metrics,
@@ -504,6 +519,15 @@ class MotionTracker:
         logger.info("Metrics for the ground truth")
         for metric in gt_metrics:
             logger.info(f"{metric} : {log[metric]}")
+    
+    def track(self):
+        
+        self.load_test_motion()
+        self.sample_motion()
+        if 'target' in self.test_seq:
+            self.eval_motion()
+        self.vis_all_frames()
+            
 
 def main():
     args = predict_args()
@@ -514,25 +538,9 @@ def main():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     
-    test_seq = prepare_one_motion_for_test(
-        args.dataset, 
-        args.split,
-        args.subject_id, 
-        args.motion_id, 
-        flame_model_path=args.flame_model_path, 
-        flame_lmk_embedding_path=args.flame_lmk_embedding_path,
-        n_shape=args.n_shape, 
-        n_exp=args.n_exp,
-        fps=args.fps)
+    motion_tracker = MotionTracker(args, pretrained_args, 'cuda')
     
-    args.motion_id = f'{args.subject_id}_{args.motion_id}'
-    motion_tracker = MotionTracker(args, pretrained_args, test_seq, 'cuda')
-    
-    motion_tracker.sample_motion()
-    
-    motion_tracker.eval_motion()
-    
-    motion_tracker.vis_all_frames()
+    motion_tracker.track()
 
 if __name__ == "__main__":
     main()

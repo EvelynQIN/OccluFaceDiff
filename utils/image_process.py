@@ -38,6 +38,15 @@ def norm_crop(img, landmark, image_size=112, mode='arcface'):
 
 
 def get_arcface_input(lmk, img):
+    """get the arcface norm_cropped image input
+
+    Args:
+        lmk: 5 2d landmarks, (5, 2)
+        img: BGR image input
+
+    Returns:
+        arcface_input: [3, 112, 112]
+    """
     aimg = norm_crop(img, landmark=lmk)
     blob = cv2.dnn.blobFromImages([aimg], 1.0 / input_std, (112, 112), (input_mean, input_mean, input_mean), swapRB=True)
     return blob[0]

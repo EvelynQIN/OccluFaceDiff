@@ -509,6 +509,19 @@ def add_predict_options(parser):
         help="name of the experiment.",
     )
 
+    group.add_argument(
+        "--test_mode",
+        type=str,
+        default="in_the_wild",
+        help="test in_the_wild video or given datasets",
+    )
+    
+    group.add_argument(
+        "--video_path",
+        type=str,
+        help="video to track, must provide with in_the_wild test_mode.",
+    )
+    
 def add_evaluation_options(parser):
     group = parser.add_argument_group("eval")
     group.add_argument(
