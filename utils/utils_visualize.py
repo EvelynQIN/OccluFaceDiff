@@ -313,7 +313,7 @@ def tensor_vis_landmarks(images, landmarks, color, occlusion_masks=None):
         vis_landmarks[:, :, :, [2, 1, 0]].transpose(0, 3, 1, 2)) / 255.  # , dtype=torch.float32) # bgr
     return vis_landmarks
 
-def images_to_video(path, fps=25, src='video', video_format='DIVX'):
+def images_to_video(path, fps=30, src='video', video_format='mp4v'):
     img_array = []
     for filename in tqdm(sorted(glob.glob(f'{path}/{src}/*.jpg'))):
         img = cv2.imread(filename)
@@ -322,7 +322,7 @@ def images_to_video(path, fps=25, src='video', video_format='DIVX'):
         img_array.append(img)
 
     if len(img_array) > 0:
-        out = cv2.VideoWriter(f'{path}/video.avi', cv2.VideoWriter_fourcc(*video_format), fps, size)
+        out = cv2.VideoWriter(f'{path}/{src}.mp4', cv2.VideoWriter_fourcc(*video_format), fps, size)
         for i in range(len(img_array)):
             out.write(img_array[i])
         out.release()

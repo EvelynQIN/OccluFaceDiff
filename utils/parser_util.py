@@ -470,13 +470,6 @@ def add_predict_options(parser):
     )
     
     group.add_argument(
-        "--fps",
-        default=60,
-        type=int,
-        help="FPS",
-    )
-    
-    group.add_argument(
         "--motion_id",
         default="",
         type=str,
@@ -488,6 +481,13 @@ def add_predict_options(parser):
         default="",
         type=str,
         help="name of the subject.",
+    )
+    
+    group.add_argument(
+        "--split",
+        default="",
+        type=str,
+        help="split of the test sequence if using given dataset.",
     )
     
     group.add_argument(

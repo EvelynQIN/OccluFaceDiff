@@ -1,1 +1,1 @@
-python3 predict.py --model_path checkpoints/e2e/Transformer_68_256d_2l_4h_occ/model_4.pt --motion_id high_smile --subject_id FaMoS_subject_080 --save_folder vis_result --exp_name img_frame
+python3 predict.py --model_path checkpoints/e2e1/Transformer_68_512d_1l_4h_occ/model_1.pt --motion_id high_smile --subject_id FaMoS_subject_007 --save_folder vis_result --exp_name non_occ

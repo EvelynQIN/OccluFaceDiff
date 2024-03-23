@@ -6,9 +6,10 @@ import numpy as np
 import trimesh
 import torch
 
-from data_loaders.dataloader import load_data, TestDataset
+from data_loaders.dataloader_from_path import load_data, TestDataset
 
 from model.FLAME import FLAME
+from model.mica import MICA
 
 from model.networks import PureMLP
 from tqdm import tqdm
@@ -39,13 +40,13 @@ from pytorch3d.transforms import matrix_to_rotation_6d, rotation_6d_to_matrix
 from pytorch3d.utils import opencv_from_cameras_projection
 from tqdm import tqdm
 from time import time
+from matplotlib import cm
 
 os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
 
 IMAGE_SIZE = 224
 FOCAL_LEN = 1000.0
 PRINCIPAL_POINT_OFFSET = 112.0
-MEAN_TRANS = torch.FloatTensor([0.004, 0.222, 1.200])   # guessing from training 
 
 pred_metrics = [
     "pred_jitter",
@@ -86,31 +87,39 @@ class MotionTracker:
         # IO setups
         self.motion_id = config.motion_id # name of the tested motion sequence
         self.save_folder = self.config.save_folder
-        self.output_folder = os.path.join(self.save_folder, self.config.arch, self.motion_id, self.config.exp_name)
+        self.output_folder = os.path.join(self.save_folder, self.config.arch)
+        self.motion_name = f'{self.motion_id}_{self.config.exp_name}'
         
         logger.add(os.path.join(self.output_folder, 'predict.log'))
         logger.info(f"Using device {self.device}.")
-        logger.info(f"Predict motion {self.motion_id}.")
+        logger.info(f"Predict motion [{self.motion_id}] for Exp [{self.config.exp_name}].")
 
         # fixed camera params
         self.focal_length = torch.FloatTensor([FOCAL_LEN, FOCAL_LEN]).unsqueeze(0).to(self.device)
         self.principal_point = torch.FloatTensor([PRINCIPAL_POINT_OFFSET, PRINCIPAL_POINT_OFFSET]).unsqueeze(0).to(self.device)
         self.R = torch.eye(3).unsqueeze(0).to(self.device)
         self.image_size = torch.tensor([[IMAGE_SIZE, IMAGE_SIZE]]).to(self.device)
-        
+
+        # visualization settings
+        self.colormap = cm.get_cmap('jet')
+        self.vis_views = [
+            [View.GROUND_TRUTH, View.MESH_GT, View.MESH_OVERLAY, View.HEATMAP]   # View.GROUND_TRUTH, View.MESH_GT, View.MESH_PRED, View.LANDMARKS
+        ]
+        self.min_error = 0.
+        self.max_error = 8.
 
         # diffusion models
-        self.cam_model, self.denoise_model, self.diffusion = self.load_diffusion_model_from_ckpt(config, pretrained_args)
+        self.denoise_model, self.diffusion = self.load_diffusion_model_from_ckpt(config)
+        
+        # mica shape predictor
+        self.mica = MICA(pretrained_args.mica)
+        self.mica.load_model('cpu')
+        self.mica.to(self.device)
+        self.mica.eval()
 
         # load norm dict
         norm_dict_path = 'processed_data/FaMoS_norm_dict.pt'
         norm_dict = torch.load(norm_dict_path)
-        mean_target = norm_dict['mean']['target']
-        std_target = norm_dict['std']['target']
-        norm_dict['mean']['target'] = torch.cat(
-            [mean_target[:config.n_shape], mean_target[300:300+config.n_exp], mean_target[400:]])
-        norm_dict['std']['target'] = torch.cat(
-            [std_target[:config.n_shape], std_target[300:300+config.n_exp], std_target[400:]])
         self.mean = norm_dict['mean']
         self.std = norm_dict['std']
 
@@ -163,35 +172,21 @@ class MotionTracker:
             shader=SoftPhongShader(device=self.device, lights=self.lights)
         )
     
-    def load_diffusion_model_from_ckpt(self, args, pretrained_args):
+    def load_diffusion_model_from_ckpt(self, args):
         logger.info("Creating model and diffusion...")
         args.arch = args.arch[len("diffusion_") :]
-        cam_model, denoise_model, diffusion = create_model_and_diffusion(args, pretrained_args)
+        denoise_model, diffusion = create_model_and_diffusion(args)
 
         logger.info(f"Loading checkpoints from [{args.model_path}]...")
         state_dict = torch.load(args.model_path, map_location="cpu")
         load_model_wo_clip(denoise_model, state_dict)
 
-        cam_model.to(args.device)
-        cam_model.eval()
         denoise_model.to(args.device)  # dist_util.dev())
         denoise_model.eval()  # disable random masking
-        return cam_model, denoise_model, diffusion
+        return denoise_model, diffusion
     
     def get_image_size(self):
         return self.image_size[0][0].item(), self.image_size[0][1].item()
-    
-    def get_verts_error_heatmap(self, raster_output, verts_error):
-        # TODO
-        pass
-        # l2 = tensor2im(values)
-        # l2 = cv2.cvtColor(l2, cv2.COLOR_RGB2BGR)
-        # l2 = cv2.normalize(l2, None, 0, 255, cv2.NORM_MINMAX)
-        # heatmap = cv2.applyColorMap(l2, cv2.COLORMAP_JET)
-        # heatmap = cv2.cvtColor(cv2.addWeighted(heatmap, 0.75, l2, 0.25, 0).astype(np.uint8), cv2.COLOR_BGR2RGB) / 255.
-        # heatmap = torch.from_numpy(heatmap).permute(2, 0, 1)
-
-        # return heatmap
     
     def render_mesh(self, vertices, cameras, faces=None, white=True):
         """
@@ -216,15 +211,37 @@ class MotionTracker:
         rendering = rendering.permute(0, 3, 1, 2).detach()
         return fragments, rendering[:, 0:3, :, :]
     
+    def vertex_error_heatmap(self, vertices, cameras, vertex_error, faces=None):
+        """
+        Args:
+            vertices: flame mesh verts, [B, V, 3]
+            vertex_error: per vertex error [B, V]
+        """
+        B = vertices.shape[0]
+        if faces is None:
+            faces = self.faces.verts_idx.cuda()[None].repeat(B, 1, 1)
+        vertex_error = vertex_error.to('cpu').numpy()
+        vertex_color_code = ((vertex_error - self.min_error) / (self.max_error - self.min_error)) * 255.
+        verts_rgb = self.colormap(vertex_color_code.astype(int))[:,:,:3]    # (B, V, 3)
+        textures = TexturesVertex(verts_features=torch.from_numpy(verts_rgb).float().cuda())
+        meshes_world = Meshes(verts=[vertices[i] for i in range(B)], faces=[faces[i] for i in range(B)], textures=textures)
+
+        blend = BlendParams(background_color=(1.0, 1.0, 1.0))
+        
+        fragments = self.mesh_rasterizer(meshes_world, cameras=cameras)
+        rendering = self.renderer.shader(fragments, meshes_world, cameras=cameras, blend_params=blend)
+        rendering = rendering.permute(0, 3, 1, 2).detach()
+        return rendering[:, 0:3, :, :]
+    
     def vis_one_frame(
             self, 
             frame_id,
             vis_data, # dict
-            visualizations, 
-            frame_dst='video'
+            visualizations
         ):
         # images, landmarks, landmarks_dense, _, _ = self.parse_batch(batch)
 
+        
         image = vis_data['image']
         lmk_2d_gt = vis_data['lmk_2d_gt']
         lmk_2d_pred = vis_data['lmk_2d_pred']
@@ -238,23 +255,32 @@ class MotionTracker:
 
         # input_image = util.to_image(batch['image'].clone()[0].cpu().numpy())
 
-        savefolder = os.path.join(self.output_folder, frame_dst)
+        savefolder = os.path.join(self.output_folder, self.motion_name)
         Path(savefolder).mkdir(parents=True, exist_ok=True)
-
-        cameras = PerspectiveCameras(
-            device=self.device,
-            principal_point=self.principal_point, 
-            focal_length=-self.focal_length, # TODO dark megic for pytorch3d's ndc coord sys
-            R=self.R, T=trans_pred,
-            image_size=self.image_size,
-            in_ndc=False)
-        
 
         self.renderer.rasterizer.raster_settings.image_size = self.get_image_size()
 
         # lmk68 = self.cameras.transform_points_screen(lmk68, image_size=self.image_size)
         # shape_mask = ((ops['alpha_images'] * ops['mask_images_mesh']) > 0.).int()[0]
+        
+        cameras_gt = PerspectiveCameras(
+                        device=self.device,
+                        principal_point=self.principal_point, 
+                        focal_length=-self.focal_length, # TODO dark megic for pytorch3d's ndc coord sys
+                        R=self.R, T=trans_gt,
+                        image_size=self.image_size,
+                        in_ndc=False)
+        
 
+        cameras_pred = PerspectiveCameras(
+                        device=self.device,
+                        principal_point=self.principal_point, 
+                        focal_length=-self.focal_length, # TODO dark megic for pytorch3d's ndc coord sys
+                        R=self.R, T=trans_pred,
+                        image_size=self.image_size,
+                        in_ndc=False)
+        
+        
         final_views = []
 
         for views in visualizations:
@@ -263,11 +289,11 @@ class MotionTracker:
                 if view == View.GROUND_TRUTH:
                     row.append(image[0].cpu().numpy())
                 if view == View.MESH_GT and verts_gt is not None:
-                    raster_gt, mesh_gt = self.render_mesh(verts_gt, cameras, white=False)
+                    raster_gt, mesh_gt = self.render_mesh(verts_gt, cameras_gt, white=False)
                     mesh_gt = mesh_gt[0].cpu().numpy()
                     row.append(mesh_gt)
                 if view == View.MESH_PRED:
-                    raster_pred, mesh_pred = self.render_mesh(verts_pred, cameras, white=False)
+                    raster_pred, mesh_pred = self.render_mesh(verts_pred, cameras_pred, white=False)
                     mesh_pred = mesh_pred[0].cpu().numpy()
                     row.append(mesh_pred)
                 if view == View.LANDMARKS:
@@ -275,38 +301,39 @@ class MotionTracker:
                     gt_lmks = utils_visualize.tensor_vis_landmarks(gt_lmks, lmk_2d_gt, 'g', occlusion_mask)
                     gt_lmks = utils_visualize.tensor_vis_landmarks(gt_lmks, lmk_2d_pred, 'r')
                     row.append(gt_lmks[0].cpu().numpy())
-                # if view == View.SHAPE_OVERLAY: TODO
-                #     shape = self.render_shape(vertices, white=False)[0] * shape_mask
-                #     blend = images[0] * (1 - shape_mask) + images[0] * shape_mask * 0.3 + shape * 0.7 * shape_mask
-                #     row.append(blend.cpu().numpy())
-                if view == View.HEATMAP and verts_error is not None: # TODO
-                    heatmap = self.get_heatmap(raster_pred, verts_error)
+                if view == View.MESH_OVERLAY: 
+                    back_image = image[0] # (3, h, w)
+                    raster_pred, mesh_pred = self.render_mesh(verts_pred, cameras_pred, white=False)
+                    mesh_mask = (raster_pred.pix_to_face[0].permute(2, 0, 1) > -1).long()   # (1, h, w)
+                    blend = back_image * (1 - mesh_mask) + back_image * mesh_mask * 0.3 + mesh_pred[0] * 0.7 * mesh_mask
+                    row.append(blend.cpu().numpy())
+                if view == View.HEATMAP and verts_error is not None: 
+                    heatmap = self.vertex_error_heatmap(verts_pred, cameras_pred, verts_error)
+                    heatmap = heatmap[0].cpu().numpy()
                     row.append(heatmap)
             final_views.append(row)
 
             # VIDEO
             final_views = utils_visualize.merge_views(final_views)
             frame_id = str(frame_id).zfill(5)
+            
             cv2.imwrite(f'{savefolder}/{frame_id}.jpg', final_views)
             
     def vis_all_frames(self):
         vis_data = self.prepare_vis_dict(with_image=True)
 
         frame_ids = vis_data['frame_id'].numpy().tolist()
-        vis_views = [
-            [View.GROUND_TRUTH, View.MESH_GT, View.MESH_PRED, View.LANDMARKS]   # View.GROUND_TRUTH, View.MESH_GT, View.MESH_PRED, View.LANDMARKS
-        ]
         
         for i, fid in tqdm(enumerate(frame_ids)):
             frame_data = dict()
             for k in (vis_data.keys() - {'frame_id'}):
                 frame_data[k] = vis_data[k][i].unsqueeze(0).to(self.device)
-            self.vis_one_frame(fid, frame_data, visualizations=vis_views)
+            self.vis_one_frame(fid, frame_data, visualizations=self.vis_views)
         
-        self.output_video(fps=25)
+        self.output_video(fps=30)
     
-    def output_video(self, fps=25):
-        utils_visualize.images_to_video(self.output_folder, fps)
+    def output_video(self, fps=30):
+        utils_visualize.images_to_video(self.output_folder, fps, self.motion_name)
     
     def inv_transform(self, target):
         
@@ -335,43 +362,42 @@ class MotionTracker:
             
     def prepare_diffusion_input(self):
         # prepare input data
-        flame_params = self.test_seq['target']
         lmk_2d = self.test_seq['lmk_2d']
         lmk_3d_normed = self.test_seq['lmk_3d_normed']
-        img_arr = self.test_seq['arcface_imgs'][:4] # TODO
-        input_motion_length = flame_params.shape[0]
+        arcface_input = self.test_seq['arcface_input']
+        input_motion_length = lmk_2d.shape[0]
         occlusion_mask = self.test_seq['occlusion_mask']
         
+        # use mica to predict the mica shape code per frame
+        mica_shapes = self.mica.predict_per_frame_shape(
+            arcface_input.to(self.device)).to('cpu')[:,:self.config.n_shape]
+        
+        # TODO:agg mica_shape robust to anomalous frames
+        mica_shape = torch.median(mica_shapes, dim=0).values
+        
         # normalization
+        if not self.config.no_normalization:
+            
+            lmk_2d = lmk_2d / self.config.image_size[0] * 2 - 1
+            lmk_3d_normed = ((lmk_3d_normed.reshape(-1, 3) - self.mean['lmk_3d_normed']) / (self.std['lmk_3d_normed'] + 1e-8)).reshape(input_motion_length, -1, 3)
+            mica_shape = (mica_shape - self.mean['target'][:self.config.n_shape]) / (self.std['target'][:self.config.n_shape] + 1e-8)
         
-        lmk_2d = lmk_2d / self.config.image_size[0] * 2 - 1
-        lmk_3d_normed = ((lmk_3d_normed.reshape(-1, 3) - self.mean['lmk_3d_normed']) / (self.std['lmk_3d_normed'] + 1e-8)).reshape(input_motion_length, -1, 3)
-        flame_params = (flame_params - self.mean['target']) / (self.std['target'] + 1e-8)
-        
-        return flame_params, lmk_2d, lmk_3d_normed, img_arr, occlusion_mask
+        return lmk_2d, lmk_3d_normed, mica_shape, occlusion_mask
     
     def sample_motion(self):
+        
         sample_fn = self.diffusion.p_sample_loop
         
-        flame_params, lmk_2d, lmk_3d_normed, img_arr, occlusion_mask = self.prepare_diffusion_input()
+        lmk_2d, lmk_3d_normed, mica_shape, occlusion_mask = self.prepare_diffusion_input()
         
         with torch.no_grad():
-            motion_length = flame_params.shape[0]
-            flame_params = flame_params.unsqueeze(0).to(self.device)
-            lmk_2d = lmk_2d.unsqueeze(0).to(self.device)
-            occlusion_mask = occlusion_mask.unsqueeze(0).to(self.device)
+            motion_length = lmk_2d.shape[0]
 
-            bs, n = lmk_2d.shape[:2]
-            occlusion = (1-occlusion_mask).unsqueeze(-1)
-            lmk_2d_occ = (lmk_2d * occlusion).reshape(bs, n, -1)
-            trans_cam = self.cam_model(lmk_2d_occ, flame_params[:, :, :self.config.n_shape])
-
-            target = torch.cat([flame_params, trans_cam], dim=-1)
             model_kwargs = {
-                "lmk_2d": lmk_2d,
+                "lmk_2d": lmk_2d.unsqueeze(0).to(self.device),
                 "lmk_3d": lmk_3d_normed.unsqueeze(0).to(self.device),
-                "img_arr": img_arr.unsqueeze(0).to(self.device),
-                "occlusion_mask": occlusion_mask,
+                "mica_shape": mica_shape.unsqueeze(0).to(self.device),
+                "occlusion_mask": occlusion_mask.unsqueeze(0).to(self.device),
             }
 
             if self.config.fix_noise:
@@ -397,23 +423,15 @@ class MotionTracker:
             time_used = time() - start_time
             logger.info(f'DDPM sample {self.motion_len} frames used: {time_used} seconds.')
             output_sample = output_sample.cpu().float().squeeze(0)
-            target = target.cpu().float().squeeze(0)
             if not self.config.no_normalization:
-                output_sample[:,:-3] = self.inv_transform(output_sample[:,:-3])
-                target[:,:-3] = self.inv_transform(target[:,:-3])
+                output_sample = self.inv_transform(output_sample)
         
-        self.diffusion_output = {
-            'pred': output_sample,
-            'target': target
-        }
-        
-        return output_sample, target
+        self.diffusion_output = output_sample
     
     def parse_model_target(self, target):
-        nshape = 100
-        nexp = 50 
-        npose = 5*6 
-        ntrans = 3 
+        nshape = self.config.n_shape
+        nexp = self.config.n_exp
+        ntrans = self.config.n_trans
         shape = target[:, :nshape]
         exp = target[:, nshape:nshape+nexp]
         pose = target[:, nshape+nexp:-ntrans]
@@ -429,8 +447,8 @@ class MotionTracker:
         num_frames = sum(img_mask)
         
         lmk_2d_gt = self.test_seq['lmk_2d'][img_mask]
-        diffusion_target = self.diffusion_output['target'][img_mask]
-        diffusion_pred = self.diffusion_output['pred'][img_mask]
+        diffusion_target = self.test_seq['target'][img_mask]
+        diffusion_pred = self.diffusion_output[img_mask]
         
         shape_gt, expr_gt, pose_gt, trans_gt = self.parse_model_target(diffusion_target)
         shape_pred, expr_pred, pose_pred, trans_pred = self.parse_model_target(diffusion_pred)
@@ -447,15 +465,19 @@ class MotionTracker:
         # 2d reprojection
         lmk_2d_pred = batch_cam_to_img_project(lmk_3d_pred, trans_pred) 
         
+        # vertex error
+        verts_error = torch.norm(verts_pred-verts_gt, p=2, dim=-1) * 1000.0 # converts from m to mm
+        
         vis_dict = {
             'verts_gt': verts_gt,
             'verts_pred': verts_pred,
-            'trans_gt': trans_gt + MEAN_TRANS, 
-            'trans_pred': trans_pred + MEAN_TRANS,
+            'trans_gt': trans_gt, 
+            'trans_pred': trans_pred,
             'lmk_2d_gt': lmk_2d_gt,
             'lmk_2d_pred': lmk_2d_pred,
             'occlusion_mask': self.test_seq['occlusion_mask'][img_mask],
-            'frame_id': self.test_seq['frame_id'][img_mask]
+            'frame_id': self.test_seq['frame_id'][img_mask],
+            "verts_error": verts_error
         }
         
         if with_image:
@@ -467,9 +489,9 @@ class MotionTracker:
         log = evaluate_prediction(
             self.config,
             all_metrics,
-            self.diffusion_output['pred'].squeeze(0),
+            self.diffusion_output,
             self.flame,
-            self.diffusion_output['target'].squeeze(0), 
+            self.test_seq['target'].to('cpu'), 
             self.test_seq['lmk_2d'].reshape(self.motion_len, -1, 2).to('cpu'),
             self.config.fps,
             self.motion_id,
@@ -482,9 +504,6 @@ class MotionTracker:
         logger.info("Metrics for the ground truth")
         for metric in gt_metrics:
             logger.info(f"{metric} : {log[metric]}")
-        
-
-
 
 def main():
     args = predict_args()
@@ -497,12 +516,14 @@ def main():
     
     test_seq = prepare_one_motion_for_test(
         args.dataset, 
+        args.split,
         args.subject_id, 
         args.motion_id, 
         flame_model_path=args.flame_model_path, 
         flame_lmk_embedding_path=args.flame_lmk_embedding_path,
         n_shape=args.n_shape, 
-        n_exp=args.n_exp)
+        n_exp=args.n_exp,
+        fps=args.fps)
     
     args.motion_id = f'{args.subject_id}_{args.motion_id}'
     motion_tracker = MotionTracker(args, pretrained_args, test_seq, 'cuda')

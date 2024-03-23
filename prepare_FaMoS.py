@@ -159,8 +159,9 @@ def get_training_data(motion, flame, calib_fname, cam_model, mean_target, std_ta
     return output, lmk_2d
 
 def prepare_one_motion_for_test(
-        dataset, subject_id, motion_id, flame_model_path, flame_lmk_embedding_path,
-        n_shape=100, n_exp=50):
+        dataset, split, subject_id, motion_id, flame_model_path, flame_lmk_embedding_path,
+        n_shape=100, n_exp=50, fps=30):
+    skip_frames = 2 if fps == 30 else 1
     flame_params_folder = os.path.join('dataset', dataset, "flame_params")
     camera_calibration_folder = os.path.join('dataset', dataset, "calibrations")
     camera_name = "26_C" # name of the selected camera view
@@ -172,11 +173,11 @@ def prepare_one_motion_for_test(
 
     calibration = load_mpi_camera(calib_fname, resize_factor=4)
 
-    shape = torch.Tensor(motion["flame_shape"])
-    expression = torch.Tensor(motion["flame_expr"])
-    rot_aa = torch.Tensor(motion["flame_pose"]) # full poses exluding eye poses (root, neck, jaw, left_eyeball, right_eyeball)
-    trans = torch.Tensor(motion['flame_trans'])
-    frame_id = torch.LongTensor(motion['frame_id'])
+    shape = torch.Tensor(motion["flame_shape"][::skip_frames])
+    expression = torch.Tensor(motion["flame_expr"][::skip_frames])
+    rot_aa = torch.Tensor(motion["flame_pose"][::skip_frames]) # full poses exluding eye poses (root, neck, jaw, left_eyeball, right_eyeball)
+    trans = torch.Tensor(motion['flame_trans'][::skip_frames])
+    frame_id = torch.LongTensor(motion['frame_id'][::skip_frames])
     
     n_frames = expression.shape[0]
 
@@ -202,14 +203,18 @@ def prepare_one_motion_for_test(
     
     # get 6d pose representation
     rot_6d = utils_transform.aa2sixd(rot_aa.reshape(-1, 3)).reshape(n_frames, -1) # (nframes, 5*6)
-    target = torch.cat([shape[:,:n_shape], expression[:, :n_exp], rot_6d], dim=1)
+    
+    # get the camT from saved files
+    motion_processed = torch.load(os.path.join('processed_data', dataset, split, f'{subject_id[len(dataset)+1:]}_{motion_id}.pt'))
+    camT = motion_processed['target'][::skip_frames, -3:]
+    target = torch.cat([shape[:,:n_shape], expression[:, :n_exp], rot_6d, camT], dim=1)
     output = {
         "lmk_2d": cropped_lmk_2d, # (n, 68, 2)
         "lmk_3d_normed": lmk_3d_normed, # (n, 68, 3)
         "target": target,  # (n, 180)
         "frame_id": frame_id, # (n)
         "img_mask": img_mask,   # (n)
-        "arcface_imgs": arcface_imgs, # (n_imgs, 3, 112, 112)
+        "arcface_input": arcface_imgs, # (n_imgs, 3, 112, 112)
         "cropped_imgs": cropped_imgs,   # (n_imgs, 3, 224, 224)
     }
     
