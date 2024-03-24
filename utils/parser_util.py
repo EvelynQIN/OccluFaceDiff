@@ -405,6 +405,71 @@ def add_training_options(parser):
         help="Probability for adding mixed random occlusion mask.",
     )
     
+    group.add_argument(
+        "--shape_loss_w",
+        default=1.0,
+        type=float
+    )
+    
+    group.add_argument(
+        "--pose_loss_w",
+        default=1.0,
+        type=float
+    )
+    
+    group.add_argument(
+        "--expr_loss_w",
+        default=1.0,
+        type=float
+    )
+    
+    group.add_argument(
+        "--trans_loss_w",
+        default=1.0,
+        type=float
+    )
+    
+    group.add_argument(
+        "--mouth_closure_loss_w",
+        default=1.0,
+        type=float
+    )
+    
+    group.add_argument(
+        "--eye_closure_loss_w",
+        default=1.0,
+        type=float
+    )
+    
+    group.add_argument(
+        "--verts3d_loss_w",
+        default=1.0,
+        type=float
+    )
+    
+    group.add_argument(
+        "--lmk2d_loss_w",
+        default=1.0,
+        type=float
+    )
+    
+    group.add_argument(
+        "--verts2d_loss_w",
+        default=1.0,
+        type=float
+    )
+    
+    group.add_argument(
+        "--pose_jitter_w",
+        default=1.0,
+        type=float
+    )
+    
+    group.add_argument(
+        "--exp_jitter_w",
+        default=1.0,
+        type=float
+    )
 
 def add_sampling_options(parser):
     group = parser.add_argument_group("sampling")

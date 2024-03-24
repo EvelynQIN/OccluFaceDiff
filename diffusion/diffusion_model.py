@@ -34,7 +34,7 @@ def mouth_closure_lmk_loss(pred_lmks, target_lmks):
     diff_pred = pred_lmks[:, upper_mouth_lmk_ids, :] - pred_lmks[:, lower_mouth_lmk_ids, :]
     diff_target = target_lmks[:, upper_mouth_lmk_ids, :] - target_lmks[:, lower_mouth_lmk_ids, :]
     diff = torch.mean(
-        torch.norm(diff_pred - diff_target, p=2, dim=-1)
+        torch.norm(diff_pred - diff_target, 2, -1)
     )
     return diff
 
@@ -44,7 +44,7 @@ def eye_closure_lmk_loss(pred_lmks, target_lmks):
     diff_pred = pred_lmks[:, upper_eyelid_lmk_ids, :] - pred_lmks[:, lower_eyelid_lmk_ids, :]
     diff_target = target_lmks[:, upper_eyelid_lmk_ids, :] - target_lmks[:, lower_eyelid_lmk_ids, :]
     diff = torch.mean(
-        torch.norm(diff_pred - diff_target, p=2, dim=-1)
+        torch.norm(diff_pred - diff_target, 2, -1)
     )
     return diff
 
@@ -165,11 +165,16 @@ class DiffusionModel(GaussianDiffusion):
             2, 
             -1)    # (b, v)
         verts2d_loss = torch.mean(torch.matmul(verts_2d_diff, v_weights))
-            
-        loss = 0.01 * shape_loss + 1.0 * pose_loss + 1.0 * expr_loss + 1 * trans_loss \
-                + 1.0 * mouth_closure_loss + 1.0 * eye_closure_loss \
-                + 2.0 * verts3d_loss + 0.1 * lmk2d_loss  + 2.0 * verts2d_loss + \
-                + 0.0 * pose_jitter + 0.0 * exp_jitter
+        
+        
+        loss_weights = model_kwargs['loss_weights']
+        
+        loss = loss_weights['shape_loss_w'] * shape_loss + loss_weights['pose_loss_w'] * pose_loss \
+                + loss_weights['expr_loss_w'] * expr_loss + loss_weights['trans_loss_w'] * trans_loss \
+                + loss_weights['mouth_closure_loss_w'] * mouth_closure_loss + loss_weights['eye_closure_loss_w'] * eye_closure_loss \
+                + loss_weights['verts3d_loss_w'] * verts3d_loss + loss_weights['lmk2d_loss_w'] * lmk2d_loss \
+                + loss_weights['verts2d_loss_w'] * verts2d_loss + \
+                + loss_weights['pose_jitter_w'] * pose_jitter + loss_weights['exp_jitter_w'] * exp_jitter
 
         loss_dict = {
             "loss": loss,
@@ -179,6 +184,7 @@ class DiffusionModel(GaussianDiffusion):
             "trans_loss": trans_loss,
             "lmk2d_norm_loss": lmk2d_loss,
             "verts3d_loss": verts3d_loss,
+            
             "expt_jitter": exp_jitter,
             "pose_jitter": pose_jitter,
             "verts_2d_loss": verts2d_loss,

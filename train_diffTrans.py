@@ -69,7 +69,7 @@ def main():
     # init wandb log
     if args.wandb_log:
         wandb.init(
-            project="face_motion_animation_occlusion",
+            project="face_animation_occlusion_powloss",
             name=args.arch,
             config=args,
             settings=wandb.Settings(start_method="fork"),

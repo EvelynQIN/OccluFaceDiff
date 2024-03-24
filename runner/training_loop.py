@@ -103,6 +103,20 @@ class TrainLoop:
             self.std[k] = std[k].to(self.device)
 
         self.loss_keys = None
+        
+        self.loss_weights = {
+            'shape_loss_w': args.shape_loss_w,
+            'pose_loss_w': args.pose_loss_w, 
+            'expr_loss_w': args.expr_loss_w,
+            'trans_loss_w': args.trans_loss_w,
+            'mouth_closure_loss_w': args.mouth_closure_loss_w,
+            'eye_closure_loss_w': args.eye_closure_loss_w,
+            'verts3d_loss_w': args.verts3d_loss_w,
+            'lmk2d_loss_w': args.lmk2d_loss_w,
+            'verts2d_loss_w': args.verts2d_loss_w,
+            'pose_jitter_w': args.pose_jitter_w,
+            'exp_jitter_w': args.exp_jitter_w
+        }
 
     def _load_and_sync_parameters(self):
         resume_checkpoint = self.resume_checkpoint
@@ -149,7 +163,8 @@ class TrainLoop:
                     "verts_2d":verts_2d.to(self.device),
                     "occlusion_mask": occlusion_mask,
                     "mean": self.mean,
-                    "std": self.std
+                    "std": self.std,
+                    "loss_weights": self.loss_weights
                 }
                 grad_update = True if self.step % self.gradient_accumulation_steps == 0 else False 
                 self.run_step(flame_params, grad_update, **model_kwargs)
@@ -223,7 +238,8 @@ class TrainLoop:
                     "verts_2d":verts_2d.to(self.device),
                     "occlusion_mask": occlusion_mask,
                     "mean": self.mean,
-                    "std": self.std
+                    "std": self.std,
+                    "loss_weights": self.loss_weights
                 }
                 compute_losses = functools.partial(
                     self.diffusion.training_losses,

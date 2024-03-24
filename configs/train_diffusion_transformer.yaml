@@ -1,8 +1,8 @@
-save_dir: "./checkpoints/e2e1" 
+save_dir: "./checkpoints/powloss" 
 num_epoch: 30
 dataset: "FaMoS" 
 dataset_path: "./processed_data"
-weight_decay: 0.01
+weight_decay: 0.001
 batch_size: 1 
 gradient_accumulation_steps: 128
 lr: 0.0003 
@@ -12,7 +12,7 @@ num_workers: 8
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
-train_dataset_repeat_times: 128
+train_dataset_repeat_times: 32
 occlusion_mask_prb: 0.5
 mixed_occlusion_prob: 0.3
 fps: 30
@@ -30,13 +30,14 @@ save_interval: 1
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_68_256d_1l_4h_occ" 
+arch: "diffusion_Transformer_256d_1l_4h_loss0" 
 target_nfeat: 183
 lmk3d_dim: 204  # 68x3
 lmk2d_dim: 136  # 68x2
 
 latent_dim: 256
-dropout: 0.1
+dropout: 0.2
+
 use_mask: True  # use alibi mask
 
 # unusable for gru
@@ -47,9 +48,19 @@ num_heads: 4
 # unusable for transformer encoder 
 num_dec_layers: 1
 
-# unusable for warmup cosine scheduler
-# lr_anneal_steps: 225000 
-
 # for flame
 flame_model_path: "flame_2020/generic_model.pkl"
 flame_lmk_embedding_path: "flame_2020/dense_lmk_embedding.npy"
+
+# training losses
+shape_loss_w: 0.01
+pose_loss_w: 5.0
+expr_loss_w: 5.0
+trans_loss_w: 5.0
+mouth_closure_loss_w: 1.0
+eye_closure_loss_w: 1.0
+verts3d_loss_w: 1000.0
+lmk2d_loss_w: 0.1
+verts2d_loss_w: 100.0
+pose_jitter_w: 0.1
+exp_jitter_w: 0.1
