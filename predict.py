@@ -107,10 +107,11 @@ class MotionTracker:
         # visualization settings
         self.colormap = cm.get_cmap('jet')
         self.vis_views = [
-            [View.GROUND_TRUTH, View.MESH_GT, View.MESH_OVERLAY, View.LANDMARKS]   # View.GROUND_TRUTH, View.MESH_GT, View.MESH_PRED, View.LANDMARKS
+            [View.MESH_GT, View.MESH_PRED, View.LANDMARKS, View.HEATMAP]   # View.GROUND_TRUTH, View.MESH_GT, View.MESH_PRED, View.LANDMARKS
         ]
         self.min_error = 0.
-        self.max_error = 8.
+        self.max_error = 30.
+        self.with_image = False
 
         # diffusion models
         self.denoise_model, self.diffusion = self.load_diffusion_model_from_ckpt(config)
@@ -265,7 +266,7 @@ class MotionTracker:
         # images, landmarks, landmarks_dense, _, _ = self.parse_batch(batch)
 
         
-        image = vis_data['image']
+        image = vis_data.get('image', None)
         lmk_2d_gt = vis_data['lmk_2d_gt']
         lmk_2d_pred = vis_data['lmk_2d_pred']
         verts_pred = vis_data['verts_pred']
@@ -305,7 +306,7 @@ class MotionTracker:
         for views in visualizations:
             row = []
             for view in views:
-                if view == View.GROUND_TRUTH:
+                if view == View.GROUND_TRUTH and image is not None:
                     row.append(image[0].cpu().numpy())
                 if view == View.MESH_GT and verts_gt is not None:
                     raster_gt, mesh_gt = self.render_mesh(verts_gt, cameras_gt, white=False)
@@ -316,7 +317,7 @@ class MotionTracker:
                     mesh_pred = mesh_pred[0].cpu().numpy()
                     row.append(mesh_pred)
                 if view == View.LANDMARKS:
-                    gt_lmks = image.clone()
+                    gt_lmks = image.clone() if image is not None else torch.zeros((1, 3, 224, 224)).float()
                     gt_lmks = utils_visualize.tensor_vis_landmarks(gt_lmks, lmk_2d_gt, 'g', occlusion_mask)
                     gt_lmks = utils_visualize.tensor_vis_landmarks(gt_lmks, lmk_2d_pred, 'r')
                     row.append(gt_lmks[0].cpu().numpy())
@@ -339,7 +340,7 @@ class MotionTracker:
             cv2.imwrite(f'{savefolder}/{frame_id}.jpg', final_views)
             
     def vis_all_frames(self):
-        vis_data = self.prepare_vis_dict(with_image=True)
+        vis_data = self.prepare_vis_dict(self.with_image)
 
         frame_ids = vis_data['frame_id'].numpy().tolist()
         

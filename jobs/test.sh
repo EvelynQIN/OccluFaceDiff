@@ -1,1 +1,1 @@
-python3 test.py --model_path checkpoints/e2e1/Transformer_68_512d_1l_4h_occ/model_1.pt --split val --output_dir vis_result --occlusion_mask_prob 0 --mixed_occlusion_prob 0
+python3 test.py --model_path checkpoints/e2e1/Transformer_68_256d_1l_4h_concat/model_11.pt --split test --output_dir vis_result --occlusion_mask_prob 0 --mixed_occlusion_prob 0
