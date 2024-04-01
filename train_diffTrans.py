@@ -6,7 +6,7 @@ import numpy as np
 
 import torch
 
-from data_loaders.dataloader_from_path import get_dataloader, load_data, TrainDataset
+from data_loaders.dataloader import get_dataloader, load_data, TrainDataset
 from model.FLAME import FLAME
 from model.networks import PureMLP
 # from runner.train_mlp import train_step, val_step
@@ -21,32 +21,19 @@ import wandb
 from tqdm import tqdm
 from configs.config import get_cfg_defaults
 
-def train_diffusion_model(args, train_dataloader, val_dataloader, norm_dict):
+def train_diffusion_model(args, model_cfg, train_dataloader, val_dataloader):
     print("creating model and diffusion...")
 
-    num_gpus = torch.cuda.device_count()
-    args.num_workers = args.num_workers * num_gpus
-
-    denoise_model, diffusion = create_model_and_diffusion(args) # the denoising MLP & spaced diffusion
-
-    if num_gpus > 1:
-        print("Let's use", torch.cuda.device_count(), "GPUs!")
-        dist_util.setup_dist()
-        denoise_model = torch.nn.DataParallel(denoise_model).cuda()
-        print(
-            "Total trainable params: %.2fM"
-            % (sum(p.numel() for p in denoise_model.module.parameters() if p.requires_grad) / 1000000.0)
-        )
-    else:
-        dist_util.setup_dist(args.device)
-        denoise_model.to(dist_util.dev())
-        print(
-            "Total trainable params: %.2fM"
-            % (sum(p.numel() for p in denoise_model.parameters() if p.requires_grad) / 1000000.0)
-        )
+    dist_util.setup_dist(args.device)
+    denoise_model, diffusion = create_model_and_diffusion(args, model_cfg, dist_util.dev()) # the denoising MLP & spaced diffusion
+    denoise_model.to(dist_util.dev())
+    print(
+        "Total trainable params: %.2fM"
+        % (sum(p.numel() for p in denoise_model.parameters() if p.requires_grad) / 1000000.0)
+    )
 
     print("Training...")
-    TrainLoop(args, denoise_model, diffusion, train_dataloader, val_dataloader, norm_dict).run_loop()
+    TrainLoop(args, model_cfg, denoise_model, diffusion, train_dataloader, val_dataloader).run_loop()
     print("Done.")
 
 def set_deterministic(seed):
@@ -61,6 +48,8 @@ def main():
     cfg_path = args.config_path
     args = Config(default_cfg_path=cfg_path, **kwargs)
 
+    default_cfg = get_cfg_defaults()
+    
     set_deterministic(args.seed)
 
     model_type = args.arch.split('_')[0]
@@ -69,11 +58,11 @@ def main():
     # init wandb log
     if args.wandb_log:
         wandb.init(
-            project="face_animation_occlusion_powloss",
+            project="face_animation_from_image",
             name=args.arch,
             config=args,
             settings=wandb.Settings(start_method="fork"),
-            dir="./wandb"
+            dir="./"
         )
     
     if args.save_dir is None:
@@ -87,16 +76,15 @@ def main():
         json.dump(dict(args), fw, indent=4, sort_keys=True) 
     
     print("creating training data loader...")    
-    train_motions, norm_dict = load_data(
-        args,
+    train_image_path, train_processed_path = load_data(
         args.dataset,
         args.dataset_path,
         "train",
     )
     train_dataset = TrainDataset(
         args.dataset,
-        norm_dict,
-        train_motions,
+        train_image_path,
+        train_processed_path,
         None,
         args.train_dataset_repeat_times,
         args.no_normalization,
@@ -112,8 +100,7 @@ def main():
     
     # val data loader
     print("creating val data loader...")
-    val_motions, _ = load_data(
-        args,
+    val_image_path, val_processed_path = load_data(
         args.dataset,
         args.dataset_path,
         "test",
@@ -121,8 +108,8 @@ def main():
     
     val_dataset = TrainDataset(
         args.dataset,
-        norm_dict,
-        val_motions,
+        val_image_path, 
+        val_processed_path,
         None,
         1,
         args.no_normalization,
@@ -135,7 +122,7 @@ def main():
         val_dataset, "val", batch_size=args.batch_size, num_workers=args.num_workers
     )
 
-    train_diffusion_model(args, train_loader, val_loader, norm_dict)
+    train_diffusion_model(args, default_cfg.model, train_loader, val_loader)
 
 if __name__ == "__main__":
     main()

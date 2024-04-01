@@ -23,7 +23,6 @@ import torch
 import torch as th
 
 from diffusion.losses import discretized_gaussian_log_likelihood, normal_kl
-from model.FLAME import FLAME
 import pickle
 
 def mean_flat(tensor):
@@ -137,6 +136,8 @@ class GaussianDiffusion:
         self,
         *,
         dataset,
+        model_cfg,
+        device,
         betas,
         model_mean_type,
         model_var_type,
@@ -150,12 +151,12 @@ class GaussianDiffusion:
         data_rep="rot",
         lambda_root_vel=0.0,
         lambda_vel_rcxyz=0.0,
-        lambda_fc=0.0,
-        flame_model_path=None,
-        flame_lmk_embedding_path=None,
-        
+        lambda_fc=0.0, 
     ):
         self.dataset = dataset
+        self.model_cfg = model_cfg 
+        self.device = device
+        
         self.model_mean_type = model_mean_type
         self.model_var_type = model_var_type
         self.loss_type = loss_type
@@ -226,18 +227,6 @@ class GaussianDiffusion:
             * np.sqrt(alphas)
             / (1.0 - self.alphas_cumprod)
         )
-        
-        self.flame=FLAME(flame_model_path, flame_lmk_embedding_path, n_shape=100, n_exp=50)
-
-        flame_vmask_path = "flame_2020/FLAME_masks.pkl"
-        with open(flame_vmask_path, 'rb') as f:
-            flame_v_mask = pickle.load(f, encoding="latin1")
-        self.flame_v_mask = flame_v_mask
-        flame_verts_weight = torch.ones(self.flame.v_template.shape[0])
-        flame_verts_weight[self.flame_v_mask['face']] = 3.0
-        flame_verts_weight[self.flame_v_mask['eye_region']] = 5.0
-        flame_verts_weight[self.flame_v_mask['lips']] = 5.0
-        self.flame_verts_weight = flame_verts_weight / torch.sum(flame_verts_weight)
         
     def masked_l2(self, a, b):
         pass

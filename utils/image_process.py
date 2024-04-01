@@ -6,7 +6,7 @@ import torch
 import tqdm 
 import os 
 from glob import glob
-
+import torch.nn.functional as F
 input_mean = 127.5
 input_std = 127.5
 
@@ -136,3 +136,100 @@ def batch_normalize_lmk_3d(lmk_3d):
     lmk_3d_normed = torch.divide(lmk_3d_normed, nose_len.reshape(-1, 1, 1).expand(-1, num_lmk, 3))
     return lmk_3d_normed
 
+
+## from deca
+def batch_orth_proj(X, camera):
+    ''' orthgraphic projection
+        X:  3d vertices, [bz, n_point, 3]
+        camera: scale and translation, [bz, 3], [scale, tx, ty]
+    '''
+    camera = camera.clone().view(-1, 1, 3)
+    X_trans = X[:, :, :2] + camera[:, :, 1:]
+    X_trans = torch.cat([X_trans, X[:,:,2:]], 2)
+    Xn = (camera[:, :, 0:1] * X_trans)
+    return Xn
+
+def dict2obj(d):
+    # if isinstance(d, list):
+    #     d = [dict2obj(x) for x in d]
+    if not isinstance(d, dict):
+        return d
+    class C(object):
+        pass
+    o = C()
+    for k in d:
+        o.__dict__[k] = dict2obj(d[k])
+    return o
+
+# process/generate vertices, normals, faces, borrowed from https://github.com/filby89/spectre/blob/master/src/utils/util.py
+def generate_triangles(h, w, margin_x=2, margin_y=5, mask = None):
+    # quad layout:
+    # 0 1 ... w-1
+    # w w+1
+    #.
+    # w*h
+    triangles = []
+    for x in range(margin_x, w-1-margin_x):
+        for y in range(margin_y, h-1-margin_y):
+            triangle0 = [y*w + x, y*w + x + 1, (y+1)*w + x]
+            triangle1 = [y*w + x + 1, (y+1)*w + x + 1, (y+1)*w + x]
+            triangles.append(triangle0)
+            triangles.append(triangle1)
+    triangles = np.array(triangles)
+    triangles = triangles[:,[0,2,1]]
+    return triangles
+
+# borrowed from https://github.com/daniilidis-group/neural_renderer/blob/master/neural_renderer/vertices_to_faces.py
+def face_vertices(vertices, faces):
+    """ 
+    :param vertices: [batch size, number of vertices, 3]
+    :param faces: [batch size, number of faces, 3]
+    :return: [batch size, number of faces, 3, 3]
+    """
+    assert (vertices.ndimension() == 3)
+    assert (faces.ndimension() == 3)
+    assert (vertices.shape[0] == faces.shape[0])
+    assert (vertices.shape[2] == 3)
+    assert (faces.shape[2] == 3)
+
+    bs, nv = vertices.shape[:2]
+    bs, nf = faces.shape[:2]
+    device = vertices.device
+    faces = faces + (torch.arange(bs, dtype=torch.int32).to(device) * nv)[:, None, None]
+    vertices = vertices.reshape((bs * nv, 3))
+    # pytorch only supports long and byte tensors for indexing
+    return vertices[faces.long()]
+
+def vertex_normals(vertices, faces):
+    """
+    :param vertices: [batch size, number of vertices, 3]
+    :param faces: [batch size, number of faces, 3]
+    :return: [batch size, number of vertices, 3]
+    """
+    assert (vertices.ndimension() == 3)
+    assert (faces.ndimension() == 3)
+    assert (vertices.shape[0] == faces.shape[0])
+    assert (vertices.shape[2] == 3)
+    assert (faces.shape[2] == 3)
+    bs, nv = vertices.shape[:2]
+    bs, nf = faces.shape[:2]
+    device = vertices.device
+    normals = torch.zeros(bs * nv, 3).to(device)
+
+    faces = faces + (torch.arange(bs, dtype=torch.int32).to(device) * nv)[:, None, None] # expanded faces
+    vertices_faces = vertices.reshape((bs * nv, 3))[faces.long()]
+
+    faces = faces.reshape(-1, 3)
+    vertices_faces = vertices_faces.reshape(-1, 3, 3)
+
+    normals.index_add_(0, faces[:, 1].long(), 
+                       torch.cross(vertices_faces[:, 2] - vertices_faces[:, 1], vertices_faces[:, 0] - vertices_faces[:, 1]))
+    normals.index_add_(0, faces[:, 2].long(), 
+                       torch.cross(vertices_faces[:, 0] - vertices_faces[:, 2], vertices_faces[:, 1] - vertices_faces[:, 2]))
+    normals.index_add_(0, faces[:, 0].long(),
+                       torch.cross(vertices_faces[:, 1] - vertices_faces[:, 0], vertices_faces[:, 2] - vertices_faces[:, 0]))
+
+    normals = F.normalize(normals, eps=1e-6, dim=1)
+    normals = normals.reshape((bs, nv, 3))
+    # pytorch only supports long and byte tensors for indexing
+    return normals

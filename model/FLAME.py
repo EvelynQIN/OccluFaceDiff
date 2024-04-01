@@ -19,7 +19,7 @@ import numpy as np
 import pickle
 import torch.nn.functional as F
 
-from .lbs import lbs, batch_rodrigues, vertices2landmarks, rot_mat_to_euler, get_joints_location
+from .lbs import lbs, batch_rodrigues, vertices2landmarks, rot_mat_to_euler
 
 def to_tensor(array, dtype=torch.float32):
     if 'torch.tensor' not in str(type(array)):
@@ -40,10 +40,10 @@ class FLAME(nn.Module):
     Given flame parameters this class generates a differentiable FLAME function
     which outputs the a mesh and 2D/3D facial landmarks
     """
-    def __init__(self, flame_model_path, flame_lmk_embedding_path, n_shape=300, n_exp=100):
+    def __init__(self, config):
         super(FLAME, self).__init__()
-        print("creating the FLAME Decoder")
-        with open(flame_model_path, 'rb') as f:
+        # print("creating the FLAME Decoder")
+        with open(config.flame_model_path, 'rb') as f:
             ss = pickle.load(f, encoding='latin1')
             flame_model = Struct(**ss)
 
@@ -53,8 +53,7 @@ class FLAME(nn.Module):
         self.register_buffer('v_template', to_tensor(to_np(flame_model.v_template), dtype=self.dtype))
         # The shape components and expression
         shapedirs = to_tensor(to_np(flame_model.shapedirs), dtype=self.dtype)
-
-        shapedirs = torch.cat([shapedirs[:,:,:n_shape], shapedirs[:,:,300:300+n_exp]], 2)
+        shapedirs = torch.cat([shapedirs[:,:,:config.n_shape], shapedirs[:,:,300:300+config.n_exp]], 2)
         self.register_buffer('shapedirs', shapedirs)
         # The pose components
         num_pose_basis = flame_model.posedirs.shape[-1]
@@ -66,16 +65,16 @@ class FLAME(nn.Module):
         self.register_buffer('parents', parents)
         self.register_buffer('lbs_weights', to_tensor(to_np(flame_model.weights), dtype=self.dtype))
 
-        # # Fixing Eyeball and neck rotation
-        # default_eyball_pose = torch.zeros([1, 6], dtype=self.dtype, requires_grad=False)
-        # self.register_parameter('eye_pose', nn.Parameter(default_eyball_pose,
-        #                                                  requires_grad=False))
-        # default_neck_pose = torch.zeros([1, 3], dtype=self.dtype, requires_grad=False)
-        # self.register_parameter('neck_pose', nn.Parameter(default_neck_pose,
-        #                                                   requires_grad=False))
+        # Fixing Eyeball and neck rotation
+        default_eyball_pose = torch.zeros([1, 6], dtype=self.dtype, requires_grad=False)
+        self.register_parameter('eye_pose', nn.Parameter(default_eyball_pose,
+                                                         requires_grad=False))
+        default_neck_pose = torch.zeros([1, 3], dtype=self.dtype, requires_grad=False)
+        self.register_parameter('neck_pose', nn.Parameter(default_neck_pose,
+                                                          requires_grad=False))
 
         # Static and Dynamic Landmark embeddings for FLAME
-        lmk_embeddings = np.load(flame_lmk_embedding_path, allow_pickle=True, encoding='latin1')
+        lmk_embeddings = np.load(config.flame_lmk_embedding_path, allow_pickle=True, encoding='latin1')
         lmk_embeddings = lmk_embeddings[()]
         self.register_buffer('lmk_faces_idx', torch.from_numpy(lmk_embeddings['static_lmk_faces_idx']).long())
         self.register_buffer('lmk_bary_coords', torch.from_numpy(lmk_embeddings['static_lmk_bary_coords']).to(self.dtype))
@@ -83,11 +82,7 @@ class FLAME(nn.Module):
         self.register_buffer('dynamic_lmk_bary_coords', lmk_embeddings['dynamic_lmk_bary_coords'].to(self.dtype))
         self.register_buffer('full_lmk_faces_idx', torch.from_numpy(lmk_embeddings['full_lmk_faces_idx']).long())
         self.register_buffer('full_lmk_bary_coords', torch.from_numpy(lmk_embeddings['full_lmk_bary_coords']).to(self.dtype))
-        self.register_buffer('full_lmk_bary_coords', torch.from_numpy(lmk_embeddings['full_lmk_bary_coords']).to(self.dtype))
 
-        # zeros the eye pose for now
-        self.register_buffer('eye_pose', torch.zeros((3*2)).to(self.dtype))
-        
         neck_kin_chain = []; NECK_IDX=1
         curr_idx = torch.tensor(NECK_IDX, dtype=torch.long)
         while curr_idx != -1:
@@ -139,19 +134,6 @@ class FLAME(nn.Module):
                                               0, y_rot_angle)
         return dyn_lmk_faces_idx, dyn_lmk_b_coords
 
-    def get_root_location(self, shape_params, expression_params):
-        batch_size = shape_params.shape[0]
-        device = shape_params.device
-        betas = torch.cat([shape_params, expression_params], dim=1)
-        template_vertices = self.v_template.unsqueeze(0).expand(batch_size, -1, -1)
-        pos = get_joints_location(
-            self.J_regressor.to(device),
-            template_vertices.to(device),
-            betas,
-            self.shapedirs.to(device)
-        )
-        return pos[:, 0, :] 
-    
     def _vertices2landmarks(self, vertices, faces, lmk_faces_idx, lmk_bary_coords):
         """
             Calculates landmarks by barycentric interpolation
@@ -173,7 +155,7 @@ class FLAME(nn.Module):
         """
         # Extract the indices of the vertices for each face
         # NxLx3
-        batch_size, num_verts = vertices.shape[:2]
+        batch_size, num_verts = vertices.shape[:dd2]
         lmk_faces = torch.index_select(faces, 0, lmk_faces_idx.view(-1)).view(
             1, -1, 3).view(batch_size, lmk_faces_idx.shape[1], -1)
 
@@ -184,65 +166,54 @@ class FLAME(nn.Module):
         landmarks = torch.einsum('blfi,blf->bli', [lmk_vertices, lmk_bary_coords])
         return landmarks
 
-    def select_3d_landmarks(self, vertices):
-        bs = vertices.shape[0]
-        device = vertices.device
-        lmk_3d_from_embedding = vertices2landmarks(vertices, self.faces_tensor.to(device),
-                                       self.full_lmk_faces_idx.repeat(bs, 1).to(device),
-                                       self.full_lmk_bary_coords.repeat(bs, 1, 1).to(device))
-        # lmk_3d_picked_by_idx = torch.index_select(vertices, 1, self.dense_lmk_verts_idx.to(device).view(-1))
-        # lmk_3d = torch.concat((lmk_3d_from_embedding, lmk_3d_picked_by_idx), dim=1)
-        return lmk_3d_from_embedding
+    def seletec_3d68(self, vertices):
+        landmarks3d = vertices2landmarks(vertices, self.faces_tensor,
+                                       self.full_lmk_faces_idx.repeat(vertices.shape[0], 1),
+                                       self.full_lmk_bary_coords.repeat(vertices.shape[0], 1, 1))
+        return landmarks3d
 
-    def forward(self, shape_params, expression_params, full_pose, trans=None):
+    def forward(self, shape_params=None, expression_params=None, pose_params=None, eye_pose_params=None):
         """
             Input:
                 shape_params: N X number of shape parameters
                 expression_params: N X number of expression parameters
-                full_pose: N X number of pose parameters (5x3)
-                trans: N X 3
+                pose_params: N X number of pose parameters (6)
             return:d
                 vertices: N X V X 3
                 landmarks: N X number of landmarks X 3
         """
         batch_size = shape_params.shape[0]
-        device = shape_params.device
+        if pose_params is None:
+            pose_params = self.eye_pose.expand(batch_size, -1)
+        if eye_pose_params is None:
+            eye_pose_params = self.eye_pose.expand(batch_size, -1)
         betas = torch.cat([shape_params, expression_params], dim=1)
-        
-        # eye_poses = self.eye_pose.expand(batch_size, -1).to(device)
-        # full_pose = torch.cat([pose, eye_poses], dim=1)
+        full_pose = torch.cat([pose_params[:, :3], self.neck_pose.expand(batch_size, -1), pose_params[:, 3:], eye_pose_params], dim=1)
         template_vertices = self.v_template.unsqueeze(0).expand(batch_size, -1, -1)
 
-        vertices, _ = lbs(betas, full_pose, template_vertices.to(device),
-                          self.shapedirs.to(device), self.posedirs.to(device),
-                          self.J_regressor.to(device), self.parents.to(device),
-                          self.lbs_weights.to(device), dtype=self.dtype)
+        vertices, _ = lbs(betas, full_pose, template_vertices,
+                          self.shapedirs, self.posedirs,
+                          self.J_regressor, self.parents,
+                          self.lbs_weights, dtype=self.dtype)
 
-        # lmk_faces_idx = self.lmk_faces_idx.unsqueeze(dim=0).expand(batch_size, -1)
-        # lmk_bary_coords = self.lmk_bary_coords.unsqueeze(dim=0).expand(batch_size, -1, -1)
+        lmk_faces_idx = self.lmk_faces_idx.unsqueeze(dim=0).expand(batch_size, -1)
+        lmk_bary_coords = self.lmk_bary_coords.unsqueeze(dim=0).expand(batch_size, -1, -1)
         
-        # dyn_lmk_faces_idx, dyn_lmk_bary_coords = self._find_dynamic_lmk_idx_and_bcoords(
-        #     full_pose, self.dynamic_lmk_faces_idx,
-        #     self.dynamic_lmk_bary_coords,
-        #     self.neck_kin_chain, dtype=self.dtype)
-        # lmk_faces_idx = torch.cat([dyn_lmk_faces_idx, lmk_faces_idx], 1)
-        # lmk_bary_coords = torch.cat([dyn_lmk_bary_coords, lmk_bary_coords], 1)
+        dyn_lmk_faces_idx, dyn_lmk_bary_coords = self._find_dynamic_lmk_idx_and_bcoords(
+            full_pose, self.dynamic_lmk_faces_idx,
+            self.dynamic_lmk_bary_coords,
+            self.neck_kin_chain, dtype=self.dtype)
+        lmk_faces_idx = torch.cat([dyn_lmk_faces_idx, lmk_faces_idx], 1)
+        lmk_bary_coords = torch.cat([dyn_lmk_bary_coords, lmk_bary_coords], 1)
 
-        # landmarks2d = vertices2landmarks(vertices, self.faces_tensor,
-        #                                lmk_faces_idx,
-        #                                lmk_bary_coords)
-        # bz = vertices.shape[0]
-        # landmarks3d = vertices2landmarks(vertices, self.faces_tensor.to(device),
-        #                                self.full_lmk_faces_idx.repeat(bz, 1).to(device),
-        #                                self.full_lmk_bary_coords.repeat(bz, 1, 1).to(device))
-        landmarks3d = self.select_3d_landmarks(vertices)
-
-        if trans is not None:
-            trans = trans.unsqueeze(1)
-            vertices += trans   
-            landmarks3d += trans
-
-        return vertices, landmarks3d
+        landmarks2d = vertices2landmarks(vertices, self.faces_tensor,
+                                       lmk_faces_idx,
+                                       lmk_bary_coords)
+        bz = vertices.shape[0]
+        landmarks3d = vertices2landmarks(vertices, self.faces_tensor,
+                                       self.full_lmk_faces_idx.repeat(bz, 1),
+                                       self.full_lmk_bary_coords.repeat(bz, 1, 1))
+        return vertices, landmarks2d, landmarks3d
 
 class FLAMETex(nn.Module):
     """
@@ -281,13 +252,21 @@ class FLAMETex(nn.Module):
         self.register_buffer('texture_mean', texture_mean)
         self.register_buffer('texture_basis', texture_basis)
 
+
     def forward(self, texcode):
         '''
         texcode: [batchsize, n_tex]
         texture: [bz, 3, 256, 256], range: 0-1
         '''
+
+        bs = texcode.shape[0]
+        texcode = texcode[:1]
+
+        # we use the same (first frame) texture for all frames
+
         texture = self.texture_mean + (self.texture_basis*texcode[:,None,:]).sum(-1)
+
         texture = texture.reshape(texcode.shape[0], 512, 512, 3).permute(0,3,1,2)
         texture = F.interpolate(texture, [256, 256])
-        texture = texture[:,[2,1,0], :,:]
+        texture = texture[:,[2,1,0], :,:].repeat(bs,1,1,1)
         return texture

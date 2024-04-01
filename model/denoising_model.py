@@ -47,186 +47,10 @@ def neighborhood_mask(target_size, num_heads, bias_step, symm=False):
     alibi = mask + alibi
     return alibi    # (num_heads, target_size, target_size)
 
-class SingleBranchDecoder(nn.Module):
-    def __init__(
-        self, 
-        arch,
-        input_nfeats,
-        output_nfeats,
-        latent_dim=256, 
-        ff_size=1024, 
-        num_dec_layers=2,
-        num_heads=4, 
-        dropout=0.1,
-        activation="gelu", 
-        dataset='FaMoS',
-        **kargs):
-        super().__init__()
-
-        self.input_feats = input_nfeats
-        self.output_feats = output_nfeats
-        self.dataset = dataset
-
-        self.latent_dim = latent_dim
-
-        self.ff_size = ff_size
-        self.num_dec_layers = num_dec_layers
-        self.num_heads = num_heads
-        self.dropout = dropout
-        self.activation = activation
-
-        self.cond_mask_prob = kargs.get('cond_mask_prob', 0.)
-        self.arch = arch
-        self.sequence_pos_encoder = PositionalEncoding(self.latent_dim, self.dropout)
-        
-        seqTransDecoderLayer = nn.TransformerDecoderLayer(
-            d_model=self.latent_dim,
-            nhead=self.num_heads,
-            dim_feedforward=self.ff_size,
-            dropout=self.dropout,
-            activation=activation)
-        
-        self.seqTransDecoder = nn.TransformerDecoder(
-            seqTransDecoderLayer,
-            num_layers=self.num_dec_layers)
-
-        self.output_process = OutputProcess(self.output_feats, self.latent_dim)
-
-    def forward(self, x, lmk_emb, **kwargs):
-        """
-        x: [batch_size, nframes, latent_dim] 
-        timesteps: [batch_size] (int)
-        sparse_emb: [batch_size, nframes, sparse_dim]
-        """
-
-        # cross attention of the sparse cond & motion_output
-        xseq = self.sequence_pos_encoder(x)
-        decoder_output = self.seqTransDecoder(tgt=xseq, memory=lmk_emb) # [seqlen, bs, d] 
-
-        output = self.output_process(decoder_output)  # [bs, nframes, nfeats]
-        return output
-
-class MultiBranchTransformer(nn.Module):
-    def __init__(
-        self,
-        arch,
-        nfeats,
-        sparse_dim=68*3,
-        latent_dim=256, 
-        ff_size=1024, 
-        num_enc_layers=2, 
-        num_dec_layers=2,
-        num_heads=4, 
-        dropout=0.1,
-        activation="gelu", 
-        dataset='FaMoS',
-        **kargs):
-        super().__init__()
-
-        self.input_feats = nfeats
-        self.lmk_dim = sparse_dim
-        self.dataset = dataset
-
-        self.latent_dim = latent_dim
-
-        self.ff_size = ff_size
-        self.num_enc_layers = num_enc_layers
-        self.num_dec_layers = num_dec_layers
-        self.num_heads = num_heads
-        self.dropout = dropout
-        self.activation = activation
-
-        self.cond_mask_prob = kargs.get('cond_mask_prob', 0.)
-        self.arch = arch
-        self.lmk_process = Lmk3dProcess(self.lmk_dim, self.latent_dim)
-        self.input_process = InputProcess(self.input_feats, self.latent_dim)
-        self.sequence_pos_encoder = PositionalEncoding(self.latent_dim, self.dropout)
-        
-        seqTransEncoderLayer = nn.TransformerEncoderLayer(
-            d_model=self.latent_dim,
-            nhead=self.num_heads,
-            dim_feedforward=self.ff_size,
-            dropout=self.dropout,
-            activation=self.activation)
-
-        self.seqTransEncoder = nn.TransformerEncoder(
-            encoder_layer=seqTransEncoderLayer,
-            num_layers=self.num_enc_layers)
-
-        self.embed_timestep = TimestepEmbedder(self.latent_dim, self.sequence_pos_encoder)
-
-        self.decoder_pose6d = SingleBranchDecoder(
-            arch=self.arch,
-            input_nfeats=self.input_feats,
-            output_nfeats=4*6,
-            latent_dim=self.latent_dim, 
-            ff_size=self.ff_size, 
-            num_dec_layers=self.num_dec_layers,
-            num_heads=self.num_heads, 
-            dropout=self.dropout,
-            activation=self.activation, 
-            dataset=self.dataset,
-        )
-
-        self.decoder_expr = SingleBranchDecoder(
-            arch=self.arch,
-            input_nfeats=self.input_feats,
-            output_nfeats=100,
-            latent_dim=self.latent_dim, 
-            ff_size=self.ff_size, 
-            num_dec_layers=self.num_dec_layers,
-            num_heads=self.num_heads, 
-            dropout=self.dropout,
-            activation=self.activation, 
-            dataset=self.dataset,
-        )
-
-    def mask_cond_lmk(self, cond, force_mask=False):
-        bs, n, c = cond.shape
-        if force_mask:
-            return torch.zeros_like(cond)
-        elif self.training and self.cond_mask_prob > 0.0:
-            mask = torch.bernoulli(
-                torch.ones(bs, device=cond.device) * self.cond_mask_prob
-            ).view(
-                bs, 1, 1
-            )  # 1-> use null_cond, 0-> use real cond
-            return cond * (1.0 - mask)
-        else:
-            return cond
-
-
-    def forward(self, x, timesteps, sparse_emb, force_mask=False, **kwargs):
-        """
-        x: [batch_size, nframes, nfeats] 
-        timesteps: [batch_size] (int)
-        sparse_emb: [batch_size, nframes, sparse_dim]
-        """
-        ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
-        lmk_emb = self.lmk_process(
-            self.mask_cond_lmk(sparse_emb, force_mask=force_mask)
-        ) # [seqlen, 1, d]
-        
-        # put ts_emb & lmk_emb to transformer encoder layer for self attention
-        lmkseq = self.sequence_pos_encoder(lmk_emb)  # [seqlen, bs, d]
-        lmk_encoding = self.seqTransEncoder(lmkseq)  # [seqlen, bs, d]
-
-        # cross attention of the sparse cond & motion_output
-        x = self.input_process(x)
-        x = x + ts_emb
-        x_pose6d = self.decoder_pose6d(x, lmk_encoding)
-        x_expr = self.decoder_expr(x, lmk_encoding)
-
-        output = torch.cat([x_pose6d, x_expr], dim=-1)  # [bs, nframes, nfeats]
-        return output
-
 class FaceTransformer(nn.Module):
     def __init__(
         self,
         arch,
-        nfeats,
-        lmk3d_dim=68*3,
-        lmk2d_dim=68*2,
         latent_dim=256, 
         ff_size=1024, 
         num_enc_layers=2, 
@@ -236,18 +60,15 @@ class FaceTransformer(nn.Module):
         activation="gelu", 
         dataset='FaMoS',
         use_mask=True,
-        load_mica=False,
-        n_shape = 100,
         n_exp = 50,
-        n_pose = 5 * 6,
-        n_trans = 3,
+        n_pose = 6,
         **kwargs):
         super().__init__()
 
         self.tag = 'FaceTransformer'
-        self.input_feats = nfeats
-        self.lmk3d_dim = lmk3d_dim
-        self.lmk2d_dim = lmk2d_dim 
+        self.nexp = n_exp
+        self.npose = n_pose
+        self.input_feats = n_exp + n_pose
         self.dataset = dataset
         self.use_mask = use_mask
         if self.use_mask:
@@ -264,27 +85,10 @@ class FaceTransformer(nn.Module):
         self.cond_mask_prob = kwargs.get('cond_mask_prob', 0.)
         self.arch = arch
         
-        self.nshape = n_shape
-        self.nexp = n_exp
-        self.npose = n_pose
-        self.ntrans = n_trans
-        
         ### layers
-        
-        # process the condition 
-        self.lmk3d_process = InputProcess(self.lmk3d_dim, self.latent_dim)
-        self.lmk2d_process = InputProcess(self.lmk2d_dim, self.latent_dim)
-        self.mica_process = nn.Sequential(
-            nn.Linear(self.nshape, self.latent_dim),
-            nn.LayerNorm(self.latent_dim),
-            nn.LeakyReLU(0.2, inplace=True)
-        )
-
-        self.cond_process = nn.Sequential(
-            nn.Linear(self.latent_dim * 3, self.latent_dim),
-            nn.LayerNorm(self.latent_dim),
-            nn.LeakyReLU(0.2, inplace=True)
-        )
+        self.image_encoder = torch.hub.load('pytorch/vision:v0.8.1', 'mobilenet_v2', pretrained=True)
+        image_feature_dim = 1280
+        self.cond_process = InputProcess(image_feature_dim, self.latent_dim)
         
         self.input_process = InputProcess(self.input_feats, self.latent_dim)
         
@@ -292,11 +96,6 @@ class FaceTransformer(nn.Module):
         self.embed_timestep = TimestepEmbedder(self.latent_dim, self.sequence_pos_encoder)
         target_mask = neighborhood_mask(target_size=2000, num_heads = self.num_heads, bias_step=20)
         self.register_buffer('tgt_mask', target_mask)
-        
-        # load pretrained mica model
-        if load_mica:
-            assert "mica" in kwargs, "Pretrained MICA not passed into the kwargs!"
-            self.mica = kwargs['mica']
         
         print(f"[{self.tag}] Using transformer as backbone.")
         self.transformer = nn.Transformer(
@@ -310,10 +109,9 @@ class FaceTransformer(nn.Module):
             norm_first=False
         )
         
-        self.outputprocess_shape = ShapeOutput()
         self.outputprocess_motion = MotionOutput(output_feats=self.input_feats, latent_dim=self.latent_dim)
 
-    def mask_cond_lmk(self, cond, force_mask=False):
+    def mask_cond(self, cond, force_mask=False):
         bs = cond.shape[0]
         ndim = len(cond.shape)
         if force_mask:
@@ -322,8 +120,8 @@ class FaceTransformer(nn.Module):
             mask = torch.bernoulli(
                 torch.ones(bs, device=cond.device) * self.cond_mask_prob
             )
-            if ndim == 3:
-                mask = mask.view(bs, 1, 1)
+            if ndim == 5:
+                mask = mask.view(bs, 1, 1, 1, 1)
             elif ndim == 2:
                 mask = mask.view(bs, 1)
             else: 
@@ -333,39 +131,18 @@ class FaceTransformer(nn.Module):
         else:
             return cond
     
-    def forward(self, x, timesteps, lmk_3d, lmk_2d, mica_shape, occlusion_mask, force_mask=False, **kwargs):
+    def forward(self, x, timesteps, image, force_mask=False, **kwargs):
         """
-        x: [batch_size, nframes, nfeats] 
-        timesteps: [batch_size] (int)
-        sparse_emb: [batch_size, nframes, nlmks, 2/3]
-        occlusion_mask: [batch_size, nframes, nlmks]
+        x: [bs, nframes, nfeats] 
+        timesteps: [bs] (int)
+        images: [bs, nframes, 3, 224, 224]
         """
-        bs, n = lmk_3d.shape[:2]
+        bs, n = x.shape[:2]
         ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
-
-        # mask the occluded lmk to be 0
-        # print(lmk_3d.shape)
-        # print(occlusion_mask.shape)
-        occlusion = (1-occlusion_mask).unsqueeze(-1)
-        lmk_3d = (lmk_3d * occlusion).reshape(bs, n, -1)
-        lmk_2d = (lmk_2d * occlusion).reshape(bs, n, -1)
-
-        lmk3d_emb = self.lmk3d_process(
-            self.mask_cond_lmk(lmk_3d, force_mask=force_mask)
-        ) # [seqlen, bs, d]
-        
-        lmk2d_emb = self.lmk2d_process(
-            self.mask_cond_lmk(lmk_2d, force_mask=force_mask)
-        ) # [seqlen, bs, d]
-        
-        shape_mica_emb = self.mica_process(
-            self.mask_cond_lmk(mica_shape, force_mask=force_mask)
-        )
-
+        image_features = self.image_encoder.features(image.view(bs*n, *image.shape[2:]))
+        image_features = nn.functional.adaptive_avg_pool2d(image_features, (1, 1)).squeeze(-1).squeeze(-1).view(bs, n, -1) # [bs, n, image_feature_dim]
         cond_emb = self.cond_process(
-            torch.cat([lmk3d_emb, lmk2d_emb, shape_mica_emb[None,:,:].repeat(n, 1, 1)], dim=-1))
-        
-        # cond_emb = lmk3d_emb + lmk2d_emb + shape_mica_emb[None,:, :]
+            self.mask_cond(image_features, force_mask=force_mask)) # [seqlen, bs, d]
         
         condseq = self.sequence_pos_encoder(cond_emb)  # [seqlen, bs, d]
         
@@ -381,62 +158,6 @@ class FaceTransformer(nn.Module):
         
         decoder_output = self.transformer(condseq, xseq, tgt_mask=tgt_mask) # [seqlen, bs, d]
         output = self.outputprocess_motion(decoder_output)  # [bs, seqlen, input_nfeats]
-        shape_seq = output[:, :, :self.nshape]
-        shape_agg = self.outputprocess_shape(shape_seq).unsqueeze(1).repeat(1, output.shape[1], 1)
-        output = torch.cat([shape_agg, output[:, :, self.nshape:]],dim=-1)
-        return output
-
-    def predict(self, x, timesteps, lmk_3d, lmk_2d, img_arr, occlusion_mask, force_mask=False, return_mica=False, **kwargs):
-        """
-        x: [batch_size, nframes, nfeats] 
-        timesteps: [batch_size] (int)
-        sparse_emb: [batch_size, nframes, nlmks, 2/3]
-        occlusion_mask: [batch_size, nframes, nlmks]
-        """
-        bs, n = lmk_3d.shape[:2]
-        ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
-
-        # mask the occluded lmk to be 0
-        # print(lmk_3d.shape)
-        # print(occlusion_mask.shape)
-        occlusion = (1-occlusion_mask).unsqueeze(-1)
-        lmk_3d = (lmk_3d * occlusion).reshape(bs, n, -1)
-        lmk_2d = (lmk_2d * occlusion).reshape(bs, n, -1)
-
-        lmk3d_emb = self.lmk3d_process(
-            self.mask_cond_lmk(lmk_3d, force_mask=force_mask)
-        ) # [seqlen, bs, d]
-        
-        lmk2d_emb = self.lmk2d_process(
-            self.mask_cond_lmk(lmk_2d, force_mask=force_mask)
-        ) # [seqlen, bs, d]
-        
-        shape_mica = self.mica(img_arr)[:, :self.nshape] # [bs, nshape]
-        shape_mica_emb = self.mica_process(
-            self.mask_cond_lmk(shape_mica, force_mask=force_mask)
-        )
-        
-        cond_emb = lmk3d_emb + lmk2d_emb + shape_mica_emb[None,:, :]
-        
-        condseq = self.sequence_pos_encoder(cond_emb)  # [seqlen, bs, d]
-        
-        tgt_mask=None
-        if self.use_mask:
-            T = x.shape[1]
-            tgt_mask = self.tgt_mask[:, :T, :T].clone().detach().to(device=x.device)    # (num_heads, seqlen, seqlen)
-
-        # cross attention of the sparse cond & motion_output
-        x = self.input_process(x)
-        x = x + ts_emb   # broadcast add, [seqlen, bs, d]
-        xseq = self.sequence_pos_encoder(x)
-        
-        decoder_output = self.transformer(condseq, xseq, tgt_mask=tgt_mask) # [seqlen, bs, d]
-        output = self.outputprocess_motion(decoder_output)  # [bs, seqlen, input_nfeats]
-        shape_seq = output[:, :, :self.nshape]
-        shape_agg = self.outputprocess_shape(shape_seq).unsqueeze(1).repeat(1, output.shape[1], 1)
-        output = torch.cat([shape_agg, output[:, :, self.nshape:]],dim=-1)
-        if return_mica:
-            return output, shape_mica
         return output
 
 class TransformerEncoder(nn.Module):
@@ -533,195 +254,7 @@ class TransformerEncoder(nn.Module):
         output_pose = self.outputprocess_pose(encoder_output[:, :, :self.pose_latent_dim])  # [bs, seqlen,  4*6]
         output_expr = self.outputprocess_expr(encoder_output[:, :, self.pose_latent_dim:])   # [bs, seqlen, 100]
         output = torch.cat([output_pose, output_expr], dim=-1)  # [bs, seqlen, input_nfeats]
-        return output
-
-    
-class TransformerEncoder_TS(nn.Module):
-    """Inject diffusion timestep to each attention layer
-    """
-    def __init__(
-        self,
-        arch,
-        nfeats,
-        sparse_dim=68*3,
-        latent_dim=256, 
-        ff_size=1024, 
-        num_enc_layers=2, 
-        num_heads=4, 
-        dropout=0.1,
-        activation="gelu", 
-        dataset='FaMoS',
-        **kargs):
-        super().__init__()
-
-        self.input_feats = nfeats
-        self.lmk_dim = sparse_dim
-        self.dataset = dataset
-
-        self.latent_dim = latent_dim
-
-        self.ff_size = ff_size
-        self.num_enc_layers = num_enc_layers
-        self.num_heads = num_heads
-        self.dropout = dropout
-        self.activation = activation
-        
-        category_mask = torch.cat(
-                    [torch.ones(4*6), torch.ones(100) * -1]
-                )
-        self.register_buffer('input_category_mask', category_mask)
-        self.cond_mask_prob = kargs.get('cond_mask_prob', 0.)
-        self.arch = arch
-        self.lmk_process = Lmk3dProcess(self.lmk_dim, self.latent_dim)
-        self.input_process = InputProcess(self.input_category_mask, self.input_feats, self.latent_dim, dist_util.dev())
-        self.merge_input_with_cond = nn.Linear(self.latent_dim*2, self.latent_dim)
-        self.sequence_pos_encoder = PositionalEncoding(self.latent_dim, self.dropout)
-        self.pose_latent_dim = (self.latent_dim // self.num_heads) * 2 
-        self.expr_latent_dim = self.latent_dim - self.pose_latent_dim 
-        
-        self.TransEncoder = MultiEncoderLayers_TS(
-            latent_dim=self.latent_dim, 
-            ff_size=self.ff_size, 
-            num_heads=self.num_heads, 
-            dropout=self.dropout,
-            activation=self.activation,
-            num_layers=self.num_enc_layers
-        )
-
-        self.embed_timestep = TimestepEmbedder(self.latent_dim, self.sequence_pos_encoder)
-        self.outputprocess_pose = OutputProcess(input_feats=4*6, latent_dim=self.pose_latent_dim)
-        self.outputprocess_expr = OutputProcess(input_feats=100, latent_dim=self.expr_latent_dim)
-
-    def mask_cond_lmk(self, cond, force_mask=False):
-        bs, n, c = cond.shape
-        if force_mask:
-            return torch.zeros_like(cond)
-        elif self.training and self.cond_mask_prob > 0.0:
-            mask = torch.bernoulli(
-                torch.ones(bs, device=cond.device) * self.cond_mask_prob
-            ).view(
-                bs, 1, 1
-            )  # 1-> use null_cond, 0-> use real cond
-            return cond * (1.0 - mask)
-        else:
-            return cond
-
-
-    def forward(self, x, timesteps, sparse_emb, force_mask=False, **kwargs):
-        """
-        x: [batch_size, nframes, nfeats] 
-        timesteps: [batch_size] (int)
-        sparse_emb: [batch_size, nframes, sparse_dim]
-        """
-        ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
-        lmk_emb = self.lmk_process(
-            self.mask_cond_lmk(sparse_emb, force_mask=force_mask)
-        ) # [seqlen, bs, d]
-        
-        # self attention of the sparse cond & motion_output
-        x = self.input_process(x)
-        x = torch.cat([lmk_emb, x], dim=-1)  # [seqlen, bs, 2d]
-        x = self.merge_input_with_cond(x)   # [seqlen, bs, d]
-        x_seq = self.sequence_pos_encoder(x)
-        x = [x_seq, ts_emb]
-        encoder_output = self.TransEncoder(x)    # [seqlen, bs, d]
-        output_pose = self.outputprocess_pose(encoder_output[:, :, :self.pose_latent_dim])  # [bs, seqlen,  4*6]
-        output_expr = self.outputprocess_expr(encoder_output[:, :, self.pose_latent_dim:])   # [bs, seqlen, 100]
-        output = torch.cat([output_pose, output_expr], dim=-1)  # [bs, seqlen, input_nfeats]
-        return output
-
-class GRUDecoder(nn.Module):
-    def __init__(
-        self,
-        arch,
-        nfeats,
-        sparse_dim=68*3,
-        latent_dim=256, 
-        dropout=0.1,
-        activation="gelu", 
-        dataset='FaMoS',
-        **kargs):
-        super().__init__()
-
-        self.input_feats = nfeats
-        self.lmk_dim = sparse_dim
-        self.dataset = dataset
-
-        self.latent_dim = latent_dim
-
-        self.dropout = dropout
-        self.activation = activation
-        
-        # category_mask = torch.cat(
-        #             [torch.ones(4*6), torch.ones(100) * -1]
-        #         )
-        # self.register_buffer('input_category_mask', category_mask)
-        self.cond_mask_prob = kargs.get('cond_mask_prob', 0.)
-        self.arch = arch
-        self.lmk_process = Lmk3dProcess(self.lmk_dim, self.latent_dim)
-        self.input_process = InputProcess(self.input_feats, self.latent_dim)
-        self.merge_input_with_cond = nn.Sequential(
-            nn.Linear(self.latent_dim*3, self.latent_dim*2),
-            nn.ReLU(),
-            nn.Linear(self.latent_dim*2, self.latent_dim)
-        )
-        self.sequence_pos_encoder = PositionalEncoding(self.latent_dim, self.dropout)
-        
-        self.pose_latent_dim = 64
-        self.expr_latent_dim = 256
-        self.num_layers = 4
-        
-        print("Using GRU as backbone...")
-        
-        self.gru_pose = nn.GRU(self.latent_dim, self.pose_latent_dim, num_layers=self.num_layers, dropout=self.dropout)
-        self.gru_expr = nn.GRU(self.latent_dim, self.expr_latent_dim, num_layers=self.num_layers*2, dropout=self.dropout)
-        
-        self.embed_timestep = TimestepEmbedder(self.latent_dim, self.sequence_pos_encoder)
-        self.outputprocess_pose = OutputProcess(input_feats=4*6, latent_dim=self.pose_latent_dim)
-        self.outputprocess_expr = OutputProcess(input_feats=100, latent_dim=self.expr_latent_dim)
-
-    def mask_cond_lmk(self, cond, force_mask=False):
-        bs, n, c = cond.shape
-        if force_mask:
-            return torch.zeros_like(cond)
-        elif self.training and self.cond_mask_prob > 0.0:
-            mask = torch.bernoulli(
-                torch.ones(bs, device=cond.device) * self.cond_mask_prob
-            ).view(
-                bs, 1, 1
-            )  # 1-> use null_cond, 0-> use real cond
-            return cond * (1.0 - mask)
-        else:
-            return cond
-
-
-    def forward(self, x, timesteps, sparse_emb, force_mask=False, **kwargs):
-        """
-        x: [batch_size, nframes, nfeats] 
-        timesteps: [batch_size] (int)
-        sparse_emb: [batch_size, nframes, sparse_dim]
-        """
-        bs, nframes, nfeats = x.shape
-        ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
-        ts_gru = ts_emb.repeat(nframes, 1, 1)   # [seqlen, bs, d]
-        
-        lmk_emb = self.lmk_process(
-            self.mask_cond_lmk(sparse_emb, force_mask=force_mask)
-        ) # [seqlen, 1, d]
-        
-        # self attention of the sparse cond & motion_output
-        x = self.input_process(x)
-        x = torch.cat([ts_gru, lmk_emb, x], dim=-1)  # [seqlen, bs, 3d]
-        x = self.merge_input_with_cond(x)   # [seqlen, bs, d]
-    
-        x_seq = self.sequence_pos_encoder(x)
-        gru_pose, _ = self.gru_pose(x_seq)    # [seqlen, bs, d]
-        gru_expr, _ = self.gru_expr(x_seq)
-        output_pose = self.outputprocess_pose(gru_pose)  # [bs, seqlen,  4*6]
-        output_expr = self.outputprocess_expr(gru_expr)   # [bs, seqlen, 100]
-        output = torch.cat([output_pose, output_expr], dim=-1)  # [bs, seqlen, input_nfeats]
-        return output
-   
+        return output   
     
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout=0.1, max_len=5000):
@@ -783,10 +316,10 @@ class MotionOutput(nn.Module):
         self.output_feats = output_feats
         self.latent_dim = latent_dim
         self.fc = nn.Sequential(
-            nn.Linear(self.latent_dim, self.latent_dim),
-            nn.LayerNorm(self.latent_dim),
+            nn.Linear(self.latent_dim, self.latent_dim // 2),
+            nn.LayerNorm(self.latent_dim // 2),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(self.latent_dim, self.output_feats)
+            nn.Linear(self.latent_dim // 2, self.output_feats)
         )
         
 
@@ -794,22 +327,3 @@ class MotionOutput(nn.Module):
         output = self.fc(output)  # [nframes, bs, nfeats]
         output = output.permute(1, 0, 2)  # [bs, nframes, nfeats]
         return output
-
-class ShapeOutput(nn.Module):
-    def __init__(self):
-        super().__init__()
-        
-        self.avg_pool = nn.AdaptiveAvgPool1d(1) # agg over the the frames
-
-    def forward(self, shape_seq):
-        """
-
-        Args:
-            shape_seq: (bs, n, n_shape)
-
-        Returns:
-            shape_agg: (bs, n_shape)
-        """
-        shape_seq = shape_seq.transpose(1, 2) # [bs, nshape, n]
-        shape_agg = self.avg_pool(shape_seq).squeeze(2)    # [bs, nshape]
-        return shape_agg

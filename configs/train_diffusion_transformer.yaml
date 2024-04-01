@@ -1,10 +1,10 @@
-save_dir: "./checkpoints/powloss" 
+save_dir: "./checkpoints" 
 num_epoch: 30
-dataset: "FaMoS" 
-dataset_path: "./processed_data"
+dataset: "multiface" 
+dataset_path: "./dataset"
 weight_decay: 0.001
 batch_size: 1 
-gradient_accumulation_steps: 128
+gradient_accumulation_steps: 32
 lr: 0.0003 
 cosine_scheduler: True
 device: 0
@@ -12,17 +12,16 @@ num_workers: 8
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
-train_dataset_repeat_times: 32
+train_dataset_repeat_times: 10
 occlusion_mask_prb: 0.5
 mixed_occlusion_prob: 0.3
 fps: 30
 # resume_checkpoint: "checkpoints/Transformer_128d_nomask_1l/model_140.pt"
 
 # flame_params
-n_shape: 100
 n_exp: 50 
-n_pose: 30 
-n_trans: 3
+n_pose: 6 # jaw pose in 6d
+
 
 # log
 wandb_log: True
@@ -30,15 +29,11 @@ save_interval: 1
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_256d_1l_4h_loss0" 
-target_nfeat: 183
-lmk3d_dim: 204  # 68x3
-lmk2d_dim: 136  # 68x2
-
+arch: "diffusion_Transformer_256d_1l_4h" 
 latent_dim: 256
 dropout: 0.2
 
-use_mask: True  # use alibi mask
+use_mask: False  # use alibi mask
 
 # unusable for gru
 ff_size: 512
@@ -49,8 +44,8 @@ num_heads: 4
 num_dec_layers: 1
 
 # for flame
-flame_model_path: "flame_2020/generic_model.pkl"
-flame_lmk_embedding_path: "flame_2020/dense_lmk_embedding.npy"
+# flame_model_path: "flame_2020/generic_model.pkl"
+# flame_lmk_embedding_path: "flame_2020/dense_lmk_embedding.npy"
 
 # training losses
 shape_loss_w: 0.01

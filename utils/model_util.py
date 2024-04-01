@@ -44,27 +44,22 @@ def load_model_wo_clip(model, state_dict):
     assert len(unexpected_keys) == 0
     assert all([k.startswith("clip_model.") for k in missing_keys])
 
-def create_model_and_diffusion(args):
+def create_model_and_diffusion(args, model_cfg, device):
     arch = args.arch  
     if "Enc" in arch:
         denoise_model = denoising_model.TransformerEncoder(**get_transformer_args(args))
     elif "Trans" in arch:
         denoise_model = denoising_model.FaceTransformer(**get_transformer_args(args))
-    elif "GRU" in arch:
-        denoise_model = denoising_model.GRUDecoder(**get_transformer_args(args))
     elif "MLP" in arch:
         denoise_model = MultiBranchMLP(**get_mlp_args(args))
     else:
         raise  ValueError("Invalid architecture name!")
-    diffusion = create_gaussian_diffusion(args)
+    diffusion = create_gaussian_diffusion(args, model_cfg, device)
     return denoise_model, diffusion
 
 def get_transformer_args(args):
     return {
         "arch": args.arch,
-        "nfeats": args.target_nfeat,
-        "lmk3d_dim": args.lmk3d_dim,
-        "lmk2d_dim": args.lmk2d_dim,
         "latent_dim": args.latent_dim,
         "ff_size": args.ff_size,
         "num_enc_layers": args. num_enc_layers,
@@ -74,10 +69,9 @@ def get_transformer_args(args):
         "dataset": args.dataset,
         "use_mask": args.use_mask,
         "cond_mask_prob": args.cond_mask_prob,
-        "n_shape": args.n_shape,
         "n_exp": args.n_exp,
         "n_pose": args.n_pose,
-        "n_trans": args.n_trans
+        
    }
 
 def get_cam_args(args):
@@ -110,7 +104,7 @@ def get_mlp_args(args, mica_args):
     }
 
 
-def create_gaussian_diffusion(args):
+def create_gaussian_diffusion(args, model_cfg, device):
     predict_xstart = True
     steps = args.diffusion_steps  # 1000
     scale_beta = 1.0
@@ -126,8 +120,8 @@ def create_gaussian_diffusion(args):
 
     return SpacedDiffusion(
         dataset=args.dataset,
-        flame_model_path = args.flame_model_path,
-        flame_lmk_embedding_path = args.flame_lmk_embedding_path,
+        model_cfg = model_cfg,
+        device = device,
         use_timesteps=space_timesteps(steps, timestep_respacing),
         betas=betas,
         model_mean_type=(

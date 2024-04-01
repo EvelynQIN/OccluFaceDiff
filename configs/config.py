@@ -10,32 +10,31 @@ from yacs.config import CfgNode as CN
 cfg = CN()
 
 # ---------------------------------------------------------------------------- #
-# Defaults for MICA
+# Defaults for DECA
 # ---------------------------------------------------------------------------- #
-cfg.mica = CN()
-cfg.mica.name = 'mica'
-cfg.mica.n_shape = 300
-cfg.mica.layers = 8
-cfg.mica.hidden_layers_size = 256
-cfg.mica.mapping_layers = 3
-cfg.mica.use_pretrained = True
-cfg.mica.pretrained_model_path = './pretrained/mica.tar'
-
-cfg.mica.lr = 0.0001
-cfg.mica.arcface_lr = 0.001
-# ---------------------------------------------------------------------------- #
-# Defaults for Cam_Calib 
-# ---------------------------------------------------------------------------- #
-cfg.cam = CN()
-cfg.cam.model_name = "camT_prediction"
-cfg.cam.lmk2d_dim = 136 # input feature dim 68 x 2
-cfg.cam.n_target = 180
-cfg.cam.output_nfeat = 3 # number of cam params (one set per frame)
-cfg.cam.latent_dim = 32
-cfg.cam.focal_length = 1000.0
-cfg.cam.principal_point = 112.0
-cfg.cam.trans_offset = [0.004, 0.222, 1.200]
-cfg.cam.ckpt_path = "pretrained/cam_pred_32d.pth"
+cfg.model = CN()
+cfg.model.ckpt_path = 'pretrained/deca_model.tar'
+cfg.model.expression_net_path = 'pretrained/ResNet50/checkpoints/deca-epoch=01-val_loss_total/dataloader_idx_0=1.27607644.ckpt'
+cfg.model.topology_path = os.path.join('flame_2020' , 'head_template_mesh.obj')
+# texture data original from http://files.is.tue.mpg.de/tbolkart/FLAME/FLAME_texture_data.zip
+cfg.model.dense_template_path = os.path.join('flame_2020', 'texture_data_256.npy')
+cfg.model.flame_model_path = os.path.join('flame_2020', 'generic_model.pkl')
+cfg.model.flame_lmk_embedding_path = os.path.join('flame_2020', 'landmark_embedding.npy')
+cfg.model.face_mask_path = os.path.join('flame_2020', 'uv_face_mask.png')
+cfg.model.face_eye_mask_path = os.path.join('flame_2020', 'uv_face_eye_mask.png')
+cfg.model.mean_tex_path = os.path.join('flame_2020', 'mean_texture.jpg')
+cfg.model.tex_path = os.path.join('flame_2020', 'FLAME_albedo_from_BFM.npz')
+cfg.model.tex_type = 'BFM' # BFM, FLAME, albedoMM
+cfg.model.uv_size = 256
+cfg.model.param_list = ['shape', 'tex', 'exp', 'pose', 'cam', 'light']
+cfg.model.n_shape = 100
+cfg.model.n_tex = 50
+cfg.model.n_exp = 50
+cfg.model.n_cam = 3
+cfg.model.n_pose = 6    # aa representation of neck + jaw
+cfg.model.n_light = 27
+cfg.model.jaw_type = 'aa' # default use axis angle, another option: euler. Note that: aa is not stable in the beginning
+cfg.model.image_size = 224
 
 def get_cfg_defaults():
     return cfg.clone()
