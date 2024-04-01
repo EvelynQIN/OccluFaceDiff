@@ -13,7 +13,7 @@ Docstrings have been added, as well as DDIM sampling and a new collection of bet
 import torch
 import torch.nn.functional as F
 from utils import utils_transform
-from utils.image_process import batch_orth_proj
+from utils.data_util import batch_orth_proj
 from model.FLAME import FLAME, FLAMETex
 from model.deca import ExpressionLossNet
 import numpy as np 

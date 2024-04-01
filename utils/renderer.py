@@ -17,7 +17,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import image_process
+from utils import data_util
 # global Meshes, load_obj, rasterize_meshes
 from pytorch3d.structures import Meshes
 from pytorch3d.io import load_obj
@@ -44,7 +44,7 @@ class Pytorch3dRasterizer(nn.Module):
             'max_faces_per_bin':  None,
             'perspective_correct': False,
         }
-        raster_settings = image_process.dict2obj(raster_settings)
+        raster_settings = data_util.dict2obj(raster_settings)
         self.raster_settings = raster_settings
 
     def forward(self, vertices, faces, attributes=None, h=None, w=None):
@@ -101,7 +101,7 @@ class SRenderY(nn.Module):
         faces = faces.verts_idx[None,...]
 
         # faces
-        dense_triangles = image_process.generate_triangles(uv_size, uv_size)
+        dense_triangles = data_util.generate_triangles(uv_size, uv_size)
         self.register_buffer('dense_faces', torch.from_numpy(dense_triangles).long()[None,:,:])
         self.register_buffer('faces', faces)
         self.register_buffer('raw_uvcoords', uvcoords)
@@ -109,14 +109,14 @@ class SRenderY(nn.Module):
         # uv coords
         uvcoords = torch.cat([uvcoords, uvcoords[:,:,0:1]*0.+1.], -1) #[bz, ntv, 3]
         uvcoords = uvcoords*2 - 1; uvcoords[...,1] = -uvcoords[...,1]
-        face_uvcoords = image_process.face_vertices(uvcoords, uvfaces)
+        face_uvcoords = data_util.face_vertices(uvcoords, uvfaces)
         self.register_buffer('uvcoords', uvcoords)
         self.register_buffer('uvfaces', uvfaces)
         self.register_buffer('face_uvcoords', face_uvcoords)
 
         # shape colors, for rendering shape overlay
         colors = torch.tensor([180, 180, 180])[None, None, :].repeat(1, faces.max()+1, 1).float()/255.
-        face_colors = image_process.face_vertices(colors, faces)
+        face_colors = data_util.face_vertices(colors, faces)
         self.register_buffer('face_colors', face_colors)
 
         ## SH factors for lighting
@@ -142,11 +142,11 @@ class SRenderY(nn.Module):
         ## rasterizer near 0 far 100. move mesh so minz larger than 0
         transformed_vertices[:,:,2] = transformed_vertices[:,:,2] + 10
         # attributes
-        face_vertices = image_process.face_vertices(vertices, self.faces.expand(batch_size, -1, -1))
-        normals = image_process.vertex_normals(vertices, self.faces.expand(batch_size, -1, -1))
-        face_normals = image_process.face_vertices(normals, self.faces.expand(batch_size, -1, -1))
-        transformed_normals = image_process.vertex_normals(transformed_vertices, self.faces.expand(batch_size, -1, -1))
-        transformed_face_normals = image_process.face_vertices(transformed_normals, self.faces.expand(batch_size, -1, -1))
+        face_vertices = data_util.face_vertices(vertices, self.faces.expand(batch_size, -1, -1))
+        normals = data_util.vertex_normals(vertices, self.faces.expand(batch_size, -1, -1))
+        face_normals = data_util.face_vertices(normals, self.faces.expand(batch_size, -1, -1))
+        transformed_normals = data_util.vertex_normals(transformed_vertices, self.faces.expand(batch_size, -1, -1))
+        transformed_face_normals = data_util.face_vertices(transformed_normals, self.faces.expand(batch_size, -1, -1))
         
         attributes = torch.cat([self.face_uvcoords.expand(batch_size, -1, -1, -1), 
                                 transformed_face_normals.detach(), 
@@ -288,11 +288,11 @@ class SRenderY(nn.Module):
         transformed_vertices[:,:,2] = transformed_vertices[:,:,2] + 10
 
         # Attributes
-        face_vertices = image_process.face_vertices(vertices, self.faces.expand(batch_size, -1, -1))
-        normals = image_process.vertex_normals(vertices, self.faces.expand(batch_size, -1, -1))
-        face_normals = image_process.face_vertices(normals, self.faces.expand(batch_size, -1, -1))
-        transformed_normals = image_process.vertex_normals(transformed_vertices, self.faces.expand(batch_size, -1, -1))
-        transformed_face_normals = image_process.face_vertices(transformed_normals, self.faces.expand(batch_size, -1, -1))
+        face_vertices = data_util.face_vertices(vertices, self.faces.expand(batch_size, -1, -1))
+        normals = data_util.vertex_normals(vertices, self.faces.expand(batch_size, -1, -1))
+        face_normals = data_util.face_vertices(normals, self.faces.expand(batch_size, -1, -1))
+        transformed_normals = data_util.vertex_normals(transformed_vertices, self.faces.expand(batch_size, -1, -1))
+        transformed_face_normals = data_util.face_vertices(transformed_normals, self.faces.expand(batch_size, -1, -1))
         if colors is None:
             colors = self.face_colors.expand(batch_size, -1, -1, -1)
         attributes = torch.cat([colors, 
@@ -353,6 +353,6 @@ class SRenderY(nn.Module):
         uv_vertices: [bz, 3, h, w]
         '''
         batch_size = vertices.shape[0]
-        face_vertices = image_process.face_vertices(vertices, self.faces.expand(batch_size, -1, -1))
+        face_vertices = data_util.face_vertices(vertices, self.faces.expand(batch_size, -1, -1))
         uv_vertices = self.uv_rasterizer(self.uvcoords.expand(batch_size, -1, -1), self.uvfaces.expand(batch_size, -1, -1), face_vertices)[:, :3]
         return uv_vertices

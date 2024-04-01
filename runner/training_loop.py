@@ -15,16 +15,14 @@ import os
 import torch
 
 from diffusion.fp16_util import MixedPrecisionTrainer
-from diffusion.resample import create_named_schedule_sampler, LossAwareSampler
-from model.FLAME import FLAME, FLAMETex
+from diffusion.resample import create_named_schedule_sampler
 from torch.optim import AdamW
 from utils.scheduler import WarmupCosineSchedule
 from tqdm import tqdm
 from utils import dist_util
 import wandb
-from model.deca import PerceptualEncoder, ResnetEncoder
+from model.deca import ResnetEncoder
 from utils import utils_transform
-from skimage.io import imread
 
 # training loop for the diffusion given "model" as the denoising model
 class TrainLoop:

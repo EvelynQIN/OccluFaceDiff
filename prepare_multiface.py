@@ -4,7 +4,8 @@ import numpy as np
 import face_alignment 
 import cv2 
 from tqdm import tqdm
-from mmseg.apis import inference_model, init_model
+from utils.data_util import landmarks_interpolate
+from loguru import logger
 
 # corresponding to lmk68 [49, 50, 51, 52, 53, 61, 62, 63]
 upper_mouth_lmk_ids = [293, 1065, 3996, 4002, 4106, 1069, 4053, 4059] 
@@ -22,12 +23,13 @@ scale_facter = 1 / 1000.0 # convert mm to m
 
 
 # compute the landmarks and the distance between two points for each image 
-def create_processed_data(path_to_dataset):
+def create_processed_data(path_to_dataset, device):
     
     # init face alignment detector
-    face_detector = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, device='cuda')
+    face_detector = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, device=device)
     subjects = [x.path for x in os.scandir(path_to_dataset) if x.is_dir()]
-
+    logger.add('multiface_lmk_detection.log')
+    
     for sbj in subjects:
         print("Processing {}".format(sbj))
         to_folder = os.path.join(sbj, "processed_data")
@@ -49,13 +51,15 @@ def create_processed_data(path_to_dataset):
                 lmks = face_detector.get_landmarks_from_image(
                     img_rgb, return_bboxes=False, return_landmark_score=False)
                 if lmks is None or len(lmks) == 0:
-                    lmk_frame = np.zeros((68, 2))
+                    lmk_frame = None
                     null_face_cnt += 1
                 else: 
                     lmk_frame = lmks[0]
                 lmk68.append(lmk_frame)
-                frame_id = int(os.path.split(image_path)[-1][:-4])
-                frame_ids.append(frame_id)
+                frame_ids.append(int(os.path.split(image_path)[-1][:-4]))
+            
+            # linear interpolate the missing landmarks
+            lmk68 = landmarks_interpolate(lmk68)
             lmk68 = np.stack(lmk68)
             frame_ids = np.stack(frame_ids)
             
@@ -78,10 +82,11 @@ def create_processed_data(path_to_dataset):
                 'eye_closure_3d': eye_closure_3d,   # (n, 4)
                 'frame_id': frame_ids   # (n,)
             }
-            print(f"Motion: {motion.name} has {null_face_cnt} / {len(frame_ids)} null faces.")
+            logger.info(f"Motion: {motion.name} has {null_face_cnt} / {len(frame_ids)} null faces.")
             
             np.save(out_fname, processed)
 
 if __name__ == '__main__':
     path_to_dataset = 'dataset/multiface'
-    create_processed_data(path_to_dataset)
+    device = 'cuda'
+    create_processed_data(path_to_dataset, device)
