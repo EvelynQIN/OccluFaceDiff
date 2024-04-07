@@ -8,7 +8,6 @@ from diffusion import gaussian_diffusion as gd
 from diffusion.respace import space_timesteps, SpacedDiffusion
 from model.meta_model import MultiBranchMLP
 from model import denoising_model
-from model.calibration_layer import Cam_Calibration
 import importlib
 
 def find_model_using_name(model_dir, model_name):
@@ -83,24 +82,21 @@ def get_cam_args(args):
         "ckpt_path": args.ckpt_path,
     }
 
-def get_mlp_args(args, mica_args):
+def get_mlp_args(args):
 
     return {
-        "mica_args": mica_args,
-        "nfeats": args.target_nfeat,
-        "lmk3d_dim": args.lmk3d_dim,
         "lmk2d_dim": args.lmk2d_dim,
         "cond_latent_dim": args.cond_latent_dim,
-        "shape_num_layers": args.shape_num_layers,
-        "shape_latent_dim": args.shape_latent_dim,
-        "motion_latent_dim": args.motion_latent_dim,
-        "motion_num_layers": args.motion_num_layers,
-        "trans_num_layers": args.trans_num_layers,
-        "trans_latent_dim": args.trans_latent_dim,
+        "exp_num_layers": args.exp_num_layers,
+        "exp_latent_dim": args.exp_latent_dim,
+        "pose_latent_dim": args.pose_latent_dim,
+        "pose_num_layers": args.pose_num_layers,
         "dropout": args.dropout,
         "dataset": args.dataset,
         "cond_mask_prob": args.cond_mask_prob,
         "input_motion_length": args.input_motion_length,
+        "n_exp": args.n_exp,
+        "n_pose": args.n_pose,
     }
 
 

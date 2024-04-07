@@ -2,8 +2,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from model.networks import DiffMLP, DiffMLPSingleFrame
+from model.wav2vec import Wav2Vec2Model
 from utils import dist_util
-from model.mica import MICA
 
 class TimestepEmbeding(nn.Module):
     def __init__(self, d_model, max_len=5000):
@@ -21,53 +21,6 @@ class TimestepEmbeding(nn.Module):
 
     def forward(self, timesteps):
         return self.pe[timesteps]
-
-class ShapeBranchMLP(nn.Module):
-    def __init__(
-        self,
-        shape_dim=300, 
-        cond_dim=300,
-        latent_dim=256,
-        num_layers=8,
-        dropout=0.1,
-        dataset="FaMoS",
-        **kargs
-    ):
-        super().__init__()
-
-        self.dataset = dataset
-
-        self.shape_dim = shape_dim
-        self.latent_dim = latent_dim
-        self.cond_dim = cond_dim
-        self.num_layers = num_layers
-        self.dropout = dropout
-        
-        self.embed_timestep = TimestepEmbeding(self.latent_dim)
-        
-        self.mlp = DiffMLPSingleFrame(
-            self.cond_dim, self.latent_dim, num_layers=num_layers, dropout=self.dropout)
-
-        self.output_process = nn.Linear(self.latent_dim, self.shape_dim)
-
-    def forward(self, x, cond_emb, ts):
-        """
-        Args:
-            x: [batch_size, nfeats], denoted x_t 
-            cond_emb: [batch_size, cond_latent_dim]
-            ts: [batch_size,] 
-        """
-
-        # Pass the input to a FC
-        ts_emb = self.embed_timestep(ts).squeeze(1)
-
-        # Concat the sparse feature with the input
-        x = torch.cat((cond_emb, x), axis=-1) # [bs, 2 x latent_dim]
-        output = self.mlp(x, ts_emb)
-
-        # Pass the output to a FC and reshape the output
-        output = self.output_process(output)
-        return output
 
 class SequenceBranchMLP(nn.Module):
     def __init__(
@@ -126,76 +79,70 @@ class SequenceBranchMLP(nn.Module):
 class MultiBranchMLP(nn.Module):
     def __init__(
         self,
-        mica_args,
-        nfeats, # input feature dim
-        lmk3d_dim=68*3,
         lmk2d_dim=68*2,
         cond_latent_dim=256,
-        shape_num_layers=4,
-        shape_latent_dim=512,
-        motion_latent_dim=128,
-        motion_num_layers=1,
-        trans_num_layers=4,
-        trans_latent_dim=128,
+        pose_latent_dim=128,
+        pose_num_layers=1,
+        exp_num_layers=4,
+        exp_latent_dim=128,
         dropout=0.1,
         dataset="FaMoS",
+        n_exp = 50,
+        n_pose = 6,
         **kargs,
     ):
         super().__init__()
 
         self.dataset = dataset
-        self.mica_args = mica_args
-        self.shape_dim = 300
-        self.exp_dim = 100
-        self.pose_dim = 5 * 6
-        self.trans_dim = 3
-        self.n_feats = nfeats 
-
-        self.lmk3d_dim = lmk3d_dim
+        self.n_exp = n_exp 
+        self.n_pose = n_pose 
+        self.n_feats = self.n_pose + self.n_exp
         self.lmk2d_dim = lmk2d_dim
-        
         self.dropout = dropout  
         self.cond_latent_dim = cond_latent_dim
 
-        # self.shape_num_layers = shape_num_layers 
-        # self.shape_latent_dim = shape_latent_dim 
+        self.exp_num_layers = exp_num_layers
+        self.exp_latent_dim = exp_latent_dim
 
-        self.motion_num_layers = motion_num_layers 
-        self.motion_latent_dim = motion_latent_dim 
-
-        # self.trans_num_layers = trans_num_layers 
-        # self.trans_latent_dim = trans_latent_dim 
+        self.pose_num_layers = pose_num_layers 
+        self.pose_latent_dim = pose_latent_dim 
 
         self.input_motion_length = kargs.get("input_motion_length")
         self.cond_mask_prob = kargs.get("cond_mask_prob", 0.0)
 
         ### layers
-
-        # load pretrained mica model
-        self.mica = MICA(self.mica_args)
-        
-        # process condition
-        self.lmk3d_process = nn.Linear(self.lmk3d_dim, self.cond_latent_dim)
-        self.lmk2d_process = nn.Linear(self.lmk2d_dim, self.cond_latent_dim)
-        self.mica_shape_process = nn.Sequential(
-            nn.LayerNorm(self.shape_dim),
-            nn.Linear(self.shape_dim, self.cond_latent_dim)
+        self.image_encoder = torch.hub.load('pytorch/vision:v0.8.1', 'mobilenet_v2', pretrained=True)
+        image_feature_dim = 1280
+        self.image_process = nn.Sequential(
+            nn.Linear(image_feature_dim, self.cond_latent_dim)
         )
+        
+        self.lmk2d_process = nn.Linear(self.lmk2d_dim, self.cond_latent_dim)
+
+        self.audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
+        # wav2vec 2.0 weights initialization
+        self.audio_encoder.feature_extractor._freeze_parameters()
+        self.audio_feature_map = nn.Linear(768, self.cond_latent_dim)
+        
+        # get per_frame feature map
+        self.exp_branch = SequenceBranchMLP(
+            input_nfeats=self.n_feats, 
+            output_nfeats=self.n_exp, 
+            input_motion_length=self.input_motion_length,
+            cond_latent_dim=self.cond_latent_dim * 3,
+            latent_dim=self.exp_latent_dim, 
+            num_layers=self.exp_num_layers, 
+            dataset=self.dataset)
 
         # get per_frame feature map
-        self.motion_branch = SequenceBranchMLP(
+        self.pose_branch = SequenceBranchMLP(
             input_nfeats=self.n_feats, 
-            output_nfeats=self.n_feats, 
+            output_nfeats=self.n_pose, 
             input_motion_length=self.input_motion_length,
-            cond_latent_dim=self.cond_latent_dim,
-            latent_dim=self.motion_latent_dim, 
-            num_layers=self.motion_num_layers, 
+            cond_latent_dim=self.cond_latent_dim * 3,
+            latent_dim=self.pose_latent_dim, 
+            num_layers=self.pose_num_layers, 
             dataset=self.dataset)
-        
-        # aggrate shape prediction across all frames
-        self.avg_pool = nn.AdaptiveAvgPool1d(1)
-        self.shape_output_process = nn.Linear(self.shape_dim, self.shape_dim)
-        
 
     def mask_cond_sparse(self, cond, force_mask=True):  # mask the condition for classifier-free guidance
         bs = cond.shape[0]
@@ -221,73 +168,43 @@ class MultiBranchMLP(nn.Module):
         for _sub_module in module_list:
             vars_net.extend([var[1] for var in _sub_module.named_parameters()])
         return vars_net
-    
-    # def freeze_branch_params(self, branch_name):
-    #     if branch_name == "pose":
-    #         module_list = [self.pose6d_branch]
-    #     elif branch_name == "expr":
-    #         module_list == [self.expr_branch]
-    #     elif branch_name == "trans":
-    #         module_list = [self.trans_branch]
-    #     else:
-    #         raise ValueError('branch_name not supported: must be in [pose, expr, trans] !')
         
-    #     params = self.get_model_parameters(module_list)
-    #     for p in params:
-    #         p.requires_grad=False
 
-    # def unfreeze_branch_params(self, branch_name):
-    #     if branch_name == "pose":
-    #         module_list = [self.pose6d_branch]
-    #     elif branch_name == "expr":
-    #         module_list == [self.expr_branch]
-    #     elif branch_name == "trans":
-    #         module_list = [self.trans_branch]
-    #     else:
-    #         raise ValueError('branch_name not supported: must be in [pose, expr, trans] !')
-    #     params = self.get_model_parameters(module_list)
-    #     for p in params:
-    #         p.requires_grad = True
-
-    def forward(self, x, timesteps, lmk_3d, lmk_2d, img_arr, force_mask=False, return_mica=False, **kwargs):
+    def forward(self, x, timesteps, image, lmk_2d, audio, img_mask, lmk_mask, force_mask=False, **kwargs):
         """
         Args:
-            x: [batch_size, nfeats, nframes], denoted x_t in the paper
-            sparse: [batch_size, nframes, sparse_dim], the sparse features
+            x: (b, n, c)
+            image: (b, n, 3, 224, 224)
+            lmk2d: (b, n, 68, 3)
+            audio: (bs, l)
+            img_mask: (bs, n, 224, 224)
+            lmk_mask: (bs, n, 68)
             timesteps: [batch_size] (int)
         """
 
-        # mask the condition 
-        lmk3d_masked = self.mask_cond_sparse(lmk_3d, force_mask=force_mask)
-        lmk2d_masked = self.mask_cond_sparse(lmk_2d, force_mask=force_mask)
-        img_masked = self.mask_cond_sparse(img_arr, force_mask=force_mask)
+        # occlude corresponding visual input
+        image = image.clone() * (img_mask.unsqueeze(2))
+        lmk_2d = lmk_2d[...,:2].clone() * (lmk_mask.unsqueeze(-1))
 
-        # pred shape from cropped image using mica
-        shape_mica = self.mica(img_masked) # (bs,300)
-        assert not shape_mica.isnan().any()
+        bs, n = x.shape[:2]
+        image_features = self.image_encoder.features(image.view(bs*n, *image.shape[2:]))
+        image_features = nn.functional.adaptive_avg_pool2d(image_features, (1, 1)).squeeze(-1).squeeze(-1).view(bs, n, -1) # [bs, n, image_feature_dim]
+        image_cond = self.image_process(image_features)
 
-        # process the condition to the same cond latent dim space
-        shape_mica_emb = self.mica_shape_process(shape_mica).unsqueeze(1)
-        lmk3d_emb = self.lmk3d_process(lmk3d_masked)
-        lmk2d_emb = self.lmk2d_process(lmk2d_masked)
-        cond_emb = shape_mica_emb + lmk3d_emb + lmk2d_emb # (bs, n, cond_dim)
+        lmk_cond = self.lmk2d_process(lmk_2d.reshape(bs, n, -1))
+
+        audio_cond = self.audio_encoder(audio, frame_num=n).last_hidden_state
+        audio_cond = self.audio_feature_map(audio_cond)
+
+        cond = torch.cat([image_cond, lmk_cond, audio_cond], dim=-1) # (bs, n, 3 x cond_latent_dim)
         
-        # pred motion branch
-        output_motion = self.motion_branch(x, cond_emb, timesteps)
-        assert not output_motion.isnan().any()
+        cond_masked = self.mask_cond_sparse(cond, force_mask=force_mask)
 
-        # output process
-        shape_seq = output_motion[:, :, :self.shape_dim].transpose(1, 2) # (bs, 300, n)
-        shape_agg = self.avg_pool(shape_seq).squeeze(2) # (bs, 300)
-        output_shape = self.shape_output_process(shape_agg)
+        # exp branch
+        output_exp = self.exp_branch(x, cond_masked, timesteps)
+        output_pose = self.pose_branch(x, cond_masked, timesteps)
 
         # concat the output
-        output = torch.cat(
-            [output_shape.unsqueeze(1).repeat(1,output_motion.shape[1],1), output_motion[:,:,self.shape_dim:]], 
-            axis = -1
-        )
-
-        if return_mica:
-            return output, shape_mica
+        output = torch.cat([output_pose, output_exp], dim=-1)
         
         return output

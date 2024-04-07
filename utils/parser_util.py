@@ -169,13 +169,6 @@ def add_mlp_options(parser):
         type=str,
         help="Architecture types as reported in the paper.",
     )
-    group.add_argument(
-        "--target_nfeat", default=433, type=int, help="motion feature dimension"
-    )
-
-    group.add_argument(
-        "--lmk3d_dim", default=68*3, type=int, help="3d lmks signal feature dimension"
-    )
     
     group.add_argument(
         "--lmk2d_dim", default=68*2, type=int, help="2d lmks signal feature dimension"
@@ -186,29 +179,21 @@ def add_mlp_options(parser):
     )
     
     group.add_argument(
-        "--shape_num_layers", default=8, type=int, help="Number of layers of the shape branch."
+        "--pose_num_layers", default=8, type=int, help="Number of layers of the pose branch."
     )
     
     group.add_argument(
-        "--motion_num_layers", default=8, type=int, help="Number of layers of the motion branch."
+        "--exp_num_layers", default=8, type=int, help="Number of layers of the expression branch."
     )
     
     group.add_argument(
-        "--trans_num_layers", default=8, type=int, help="Number of layers of the translation branch."
+        "--pose_latent_dim", default=512, type=int, help="latent dimension of the pose branch."
     )
     
     group.add_argument(
-        "--shape_latent_dim", default=512, type=int, help="latent dimension of the shape branch."
+        "--exp_latent_dim", default=512, type=int, help="latent dimension of the expression branch."
     )
-    
-    group.add_argument(
-        "--motion_latent_dim", default=512, type=int, help="latent dimension of the motion branch."
-    )
-    
-    group.add_argument(
-        "--trans_latent_dim", default=512, type=int, help="latent dimension of the translation branch."
-    )
-    
+
     group.add_argument(
         "--dropout", default=0.1, type=float, help="dropout rate."
     )
@@ -232,14 +217,6 @@ def add_mlp_options(parser):
         "--no_normalization",
         action="store_true",
         help="no data normalisation for the 6d motions",
-    )
-
-    group.add_argument(
-        "--flame_model_path", default='flame_2020/generic_model.pkl', type=str, help="the path to the flame model"
-    )
-
-    group.add_argument(
-        "--flame_lmk_embedding_path", default='flame_2020/landmark_embedding.npy', type=str, help="the path to the flame landmark embeddings"
     )
 
 
@@ -271,14 +248,6 @@ def add_data_options(parser):
 
     group.add_argument(
         "--image_size", default=224, type=int, help="size of image to scrop."
-    )
-
-    group.add_argument(
-        "--focal_length", default=1000.0, type=float, help="the focal length."
-    )
-
-    group.add_argument(
-        "--principal_point", default=112, type=float, help="the principal point."
     )
     
     group.add_argument(
@@ -522,37 +491,23 @@ def add_predict_options(parser):
     group = parser.add_argument_group("predict")
 
     group.add_argument(
-        "--vis",
-        action="store_true",
-        help="visualize the output during evaluation",
-    )
-    
-
-    group.add_argument(
         "--fix_noise",
         action="store_true",
-        help="fix init noise for the output",
+        help="fix init noise for the output.",
+    )
+
+    group.add_argument(
+        "--input_motion_length",
+        default=20,
+        type=int,
+        help="motion length to chunk over the original sequence.",
     )
     
     group.add_argument(
-        "--motion_id",
-        default="",
-        type=str,
-        help="name of the motion sequence.",
-    )
-    
-    group.add_argument(
-        "--subject_id",
-        default="",
-        type=str,
-        help="name of the subject.",
-    )
-    
-    group.add_argument(
-        "--split",
-        default="",
-        type=str,
-        help="split of the test sequence if using given dataset.",
+        "--sld_wind_size",
+        default=15,
+        type=int,
+        help="slide window size.",
     )
     
     group.add_argument(
@@ -581,10 +536,33 @@ def add_predict_options(parser):
         help="test in_the_wild video or given datasets",
     )
     
+    # for in_the_wild mode #
     group.add_argument(
         "--video_path",
         type=str,
         help="video to track, must provide with in_the_wild test_mode.",
+    )
+   
+    ## for non-in-the-wild mode ##
+    group.add_argument(
+        "--motion_id",
+        default="",
+        type=str,
+        help="name of the motion sequence.",
+    )
+    
+    group.add_argument(
+        "--subject_id",
+        default="",
+        type=str,
+        help="name of the subject.",
+    )
+    
+    group.add_argument(
+        "--image_folder",
+        default="",
+        type=str,
+        help="path to the test image_folder.",
     )
     
 def add_evaluation_options(parser):

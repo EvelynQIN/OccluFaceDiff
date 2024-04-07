@@ -4,7 +4,7 @@ dataset: "multiface"
 dataset_path: "./dataset"
 weight_decay: 0.001
 batch_size: 1 
-gradient_accumulation_steps: 32
+gradient_accumulation_steps: 128
 lr: 0.0003 
 cosine_scheduler: True
 device: 0
@@ -13,7 +13,8 @@ diffusion_steps: 1000
 overwrite: True 
 no_normalization: False
 train_dataset_repeat_times: 10
-occlusion_mask_prb: 0.5
+input_motion_length: 20
+occlusion_mask_prb: 0.2
 mixed_occlusion_prob: 0.3
 fps: 30
 # resume_checkpoint: "checkpoints/Transformer_128d_nomask_1l/model_140.pt"

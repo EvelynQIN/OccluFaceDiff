@@ -126,7 +126,7 @@ class SRenderY(nn.Module):
                            (pi/4)*(3)*(np.sqrt(5/(12*pi))), (pi/4)*(3/2)*(np.sqrt(5/(12*pi))), (pi/4)*(1/2)*(np.sqrt(5/(4*pi)))]).float()
         self.register_buffer('constant_factor', constant_factor)
     
-    def forward(self, vertices, transformed_vertices, albedos, lights=None, light_type='point'):
+    def forward(self, vertices, transformed_vertices, albedos, lights=None, light_type='point', background=None):
         '''
         -- Texture Rendering
         vertices: [batch_size, V, 3], vertices in world space, for calculating normals, then shading
@@ -166,15 +166,13 @@ class SRenderY(nn.Module):
 
         # visible mask for pixels with positive normal direction
         transformed_normal_map = rendering[:, 3:6, :, :].detach()
-
         pos_mask = (transformed_normal_map[:, 2:, :, :] < -0.05).float()
 
         # rasterize with colors, and we get the pixels rgb
-        mouth_mask = rendering[:, 5:6, :, :]
-        # print(mouth_mask.min(), mouth_mask.max())
-        mouth_mask = 1-torch.where(mouth_mask < -0.05, torch.Tensor([0]).float().cuda(), mouth_mask)
+        # mouth_mask = rendering[:, 5:6, :, :]
+        # # print(mouth_mask.min(), mouth_mask.max())
+        # mouth_mask = 1-torch.where(mouth_mask < -0.05, torch.Tensor([0]).float().cuda(), mouth_mask)
         # print(mouth_mask.max(), mouth_mask.min())
-        # mouth_mask = (transformed_normal_map[:, 2:, :, :] < 0.15).float()
 
         # shading
         normal_images = rendering[:, 9:12, :, :]
@@ -196,10 +194,17 @@ class SRenderY(nn.Module):
         else:
             images = albedo_images
             shading_images = images.detach()*0.
+        
+        if background is not None:
+            images = images*alpha_images + background*(1.-alpha_images)
+            albedo_images = albedo_images*alpha_images + background*(1.-alpha_images)
+        else:
+            images = images*alpha_images 
+            albedo_images = albedo_images*alpha_images 
 
         outputs = {
-            'images': images*alpha_images,
-            'albedo_images': albedo_images*alpha_images,
+            'images': images,
+            'albedo_images': albedo_images,
             'alpha_images': alpha_images,
             'pos_mask': pos_mask,
             'shading_images': shading_images,
@@ -207,7 +212,7 @@ class SRenderY(nn.Module):
             'normals': normals,
             'normal_images': normal_images*alpha_images,
             'transformed_normals': transformed_normals,
-            'predicted_inner_mouth': mouth_mask
+            # 'predicted_inner_mouth': mouth_mask
         }
         
         return outputs

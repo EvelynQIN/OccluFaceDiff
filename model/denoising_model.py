@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  
 from utils import dist_util
-from model.mica import MICA 
 import math
+from model.wav2vec import Wav2Vec2Model
 
 def neighborhood_mask(target_size, num_heads, bias_step, symm=False):        
     """compute the target mask, decay the weight for longer steps on the left (casual mask)
@@ -88,7 +88,18 @@ class FaceTransformer(nn.Module):
         ### layers
         self.image_encoder = torch.hub.load('pytorch/vision:v0.8.1', 'mobilenet_v2', pretrained=True)
         image_feature_dim = 1280
-        self.cond_process = InputProcess(image_feature_dim, self.latent_dim)
+        self.image_cond_process = InputProcess(image_feature_dim, self.latent_dim)
+
+        self.lmk2d_dim = 68 * 2
+        self.lmk_cond_process = InputProcess(self.lmk2d_dim, self.latent_dim)
+
+        self.audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
+        # wav2vec 2.0 weights initialization
+        self.audio_encoder.feature_extractor._freeze_parameters()
+        self.audio_encoder.feature_projection._freeze_parameters()
+        self.audio_encoder.encoder._freeze_parameters()
+        audio_feature_dim = 768
+        self.audio_cond_process = InputProcess(audio_feature_dim, self.latent_dim)
         
         self.input_process = InputProcess(self.input_feats, self.latent_dim)
         
@@ -112,7 +123,7 @@ class FaceTransformer(nn.Module):
         self.outputprocess_motion = MotionOutput(output_feats=self.input_feats, latent_dim=self.latent_dim)
 
     def mask_cond(self, cond, force_mask=False):
-        bs = cond.shape[0]
+        bs = cond.shape[1]
         ndim = len(cond.shape)
         if force_mask:
             return torch.zeros_like(cond)
@@ -121,9 +132,9 @@ class FaceTransformer(nn.Module):
                 torch.ones(bs, device=cond.device) * self.cond_mask_prob
             )
             if ndim == 5:
-                mask = mask.view(bs, 1, 1, 1, 1)
-            elif ndim == 2:
-                mask = mask.view(bs, 1)
+                mask = mask.view(1, bs, 1, 1, 1)
+            elif ndim == 3:
+                mask = mask.view(1, bs, 1)
             else: 
                 raise ValueError( f"Invalid dimension for conditioning mask {cond.shape}")
               # 1-> use null_cond, 0-> use real cond
@@ -131,18 +142,27 @@ class FaceTransformer(nn.Module):
         else:
             return cond
     
-    def forward(self, x, timesteps, image, force_mask=False, **kwargs):
+    def forward(self, x, timesteps, image, lmk_2d, audio, img_mask, lmk_mask, force_mask=False, **kwargs):
         """
         x: [bs, nframes, nfeats] 
         timesteps: [bs] (int)
         images: [bs, nframes, 3, 224, 224]
         """
         bs, n = x.shape[:2]
+        image = image.clone() * (img_mask.unsqueeze(2))
+        lmk_2d = lmk_2d[...,:2].clone() * (lmk_mask.unsqueeze(-1))
+
         ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
-        image_features = self.image_encoder.features(image.view(bs*n, *image.shape[2:]))
-        image_features = nn.functional.adaptive_avg_pool2d(image_features, (1, 1)).squeeze(-1).squeeze(-1).view(bs, n, -1) # [bs, n, image_feature_dim]
-        cond_emb = self.cond_process(
-            self.mask_cond(image_features, force_mask=force_mask)) # [seqlen, bs, d]
+
+        # conditions feature extraction
+        image_cond = self.image_encoder.features(image.view(bs*n, *image.shape[2:]))
+        image_cond = nn.functional.adaptive_avg_pool2d(image_cond, (1, 1)).squeeze(-1).squeeze(-1).view(bs, n, -1) # [bs, n, image_feature_dim]
+        image_cond = self.image_cond_process(image_cond)
+        lmk_cond = self.lmk_cond_process(lmk_2d.reshape(bs, n, -1))
+        audio_cond = self.audio_encoder(audio, frame_num=n).last_hidden_state
+        audio_cond = self.audio_cond_process(audio_cond)
+        
+        cond_emb = self.mask_cond(image_cond + lmk_cond + audio_cond, force_mask=force_mask) # [seqlen, bs, d]
         
         condseq = self.sequence_pos_encoder(cond_emb)  # [seqlen, bs, d]
         

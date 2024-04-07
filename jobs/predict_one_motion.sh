@@ -1,3 +1,1 @@
-python3 predict.py --model_path checkpoints/e2e1/Transformer_68_256d_1l_4h_concat/model_11.pt --motion_id high_smile --subject_id FaMoS_subject_007 --save_folder vis_result --exp_name non_occ --split val --test_mode FaMoS
-
-python3 predict.py --model_path checkpoints/e2e1/Transformer_68_256d_1l_4h_concat/model_11.pt --save_folder vis_result --exp_name non --test_mode in_the_wild --video_path videos/justin.mp4
+python3 predict.py --model_path checkpoints/Transformer_256d_1l_4h/model_1.pt --save_folder vis_result --exp_name test_deca --test_mode multiface --motion_id Jaw_Drop_Brows_Up --subject_id 002539136 --image_folder dataset/multiface/002539136/images/E006_Jaw_Drop_Brows_Up/400015

@@ -1,5 +1,5 @@
 """
-copied from https://github.com/filby89/spectre/blob/master/src/models/resnet.py
+copied from EMOCA
 """
 
 import torch.nn as nn

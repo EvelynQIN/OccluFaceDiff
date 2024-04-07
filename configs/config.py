@@ -13,7 +13,7 @@ cfg = CN()
 # Defaults for DECA
 # ---------------------------------------------------------------------------- #
 cfg.model = CN()
-cfg.model.ckpt_path = 'pretrained/deca_model.tar'
+cfg.model.ckpt_path = 'pretrained/EMOCA/detail/checkpoints/deca-epoch=03-val_loss/dataloader_idx_0=9.44489288.ckpt' # 'pretrained/deca_model.tar'
 cfg.model.expression_net_path = 'pretrained/ResNet50/checkpoints/deca-epoch=01-val_loss_total/dataloader_idx_0=1.27607644.ckpt'
 cfg.model.topology_path = os.path.join('flame_2020' , 'head_template_mesh.obj')
 # texture data original from http://files.is.tue.mpg.de/tbolkart/FLAME/FLAME_texture_data.zip

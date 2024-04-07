@@ -7,7 +7,7 @@ import numpy as np
 
 import torch
 
-from data_loaders.dataloader import get_dataloader, load_data, TrainDataset, TestDataset
+from data_loaders.dataloader import get_dataloader, load_data, TrainDataset
 from model.FLAME import FLAME
 from model.networks import PureMLP
 # from runner.train_mlp import train_step, val_step
@@ -23,34 +23,19 @@ from tqdm import tqdm
 from configs.config import get_cfg_defaults
 
 
-def train_diffusion_model(args, pretrained_args, train_dataloader, val_dataloader, norm_dict):
+def train_diffusion_model(args, model_cfg, train_dataloader, val_dataloader):
     print("creating model and diffusion...")
 
-    num_gpus = torch.cuda.device_count()
-    args.num_workers = args.num_workers * num_gpus
-
-    cam_model, denoise_model, diffusion = create_model_and_diffusion(args, pretrained_args) # the denoising MLP & spaced diffusion
-
-    if num_gpus > 1:
-        print("Let's use", torch.cuda.device_count(), "GPUs!")
-        dist_util.setup_dist()
-        cam_model = torch.nn.DataParallel(cam_model).cuda()
-        denoise_model = torch.nn.DataParallel(denoise_model).cuda()
-        print(
-            "Total params: %.2fM"
-            % (sum(p.numel() for p in denoise_model.module.parameters()) / 1000000.0)
-        )
-    else:
-        dist_util.setup_dist(args.device)
-        cam_model.to(dist_util.dev())
-        denoise_model.to(dist_util.dev())
-        print(
-            "Total params: %.2fM"
-            % (sum(p.numel() for p in denoise_model.parameters()) / 1000000.0)
-        )
+    dist_util.setup_dist(args.device)
+    denoise_model, diffusion = create_model_and_diffusion(args, model_cfg, dist_util.dev()) # the denoising MLP & spaced diffusion
+    denoise_model.to(dist_util.dev())
+    print(
+        "Total trainable params: %.2fM"
+        % (sum(p.numel() for p in denoise_model.parameters() if p.requires_grad) / 1000000.0)
+    )
 
     print("Training...")
-    TrainLoop(args, cam_model, denoise_model, diffusion, train_dataloader, val_dataloader, norm_dict).run_loop()
+    TrainLoop(args, model_cfg, denoise_model, diffusion, train_dataloader, val_dataloader).run_loop()
     print("Done.")
 
 def set_deterministic(seed):
@@ -75,7 +60,7 @@ def main():
     # init wandb log
     if args.wandb_log:
         wandb.init(
-            project="face_motion_animation_from_image",
+            project="face_animation_from_image",
             name=args.arch,
             config=args,
             settings=wandb.Settings(start_method="fork"),
@@ -92,49 +77,52 @@ def main():
     with open(args_path, "w") as fw:
         json.dump(dict(args), fw, indent=4, sort_keys=True) 
     
-    print("creating training data loader...")    
-    train_motion_list, norm_dict = load_data(
-        args,
+    train_image_path, train_processed_path = load_data(
         args.dataset,
         args.dataset_path,
-        "train"
+        "train",
     )
-    dataset = TrainDataset(
+    train_dataset = TrainDataset(
         args.dataset,
-        norm_dict,
-        train_motion_list,
+        train_image_path,
+        train_processed_path,
         args.input_motion_length,
         args.train_dataset_repeat_times,
         args.no_normalization,
+        args.occlusion_mask_prob,
+        args.mixed_occlusion_prob,
+        args.fps
     )
-
-    trainloader = get_dataloader(
-        dataset, "train", batch_size=args.batch_size, num_workers=args.num_workers
+    
+    train_loader = get_dataloader(
+        train_dataset, "train", batch_size=args.batch_size, num_workers=args.num_workers
     )
     
     # val data loader
     print("creating val data loader...")
-    val_motion_list, _ = load_data(
-        args,
+    val_image_path, val_processed_path = load_data(
         args.dataset,
         args.dataset_path,
-        "val"
+        "test",
     )
     
     val_dataset = TrainDataset(
         args.dataset,
-        norm_dict,
-        val_motion_list,
+        val_image_path, 
+        val_processed_path,
         args.input_motion_length,
-        50,
+        5,
         args.no_normalization,
+        args.occlusion_mask_prob,
+        args.mixed_occlusion_prob,
+        args.fps
     )
     
     val_loader = get_dataloader(
         val_dataset, "val", batch_size=args.batch_size, num_workers=args.num_workers
     )
 
-    train_diffusion_model(args, pretrained_args, trainloader, val_loader, norm_dict)
+    train_diffusion_model(args, pretrained_args.model, train_loader, val_loader)
 
 if __name__ == "__main__":
     main()

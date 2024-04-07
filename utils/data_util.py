@@ -261,6 +261,7 @@ def landmarks_interpolate(landmarks):
         if valid_frames_idx[idx] - valid_frames_idx[idx - 1] == 1:
             continue
         else:
+            print(f'linear interpolate {idx}')
             landmarks = linear_interpolate(landmarks, valid_frames_idx[idx - 1], valid_frames_idx[idx])
     valid_frames_idx = [idx for idx, _ in enumerate(landmarks) if _ is not None]
     # -- Corner case: keep frames at the beginning or at the end failed to be detected.

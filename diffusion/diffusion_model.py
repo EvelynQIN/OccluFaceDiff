@@ -246,8 +246,8 @@ class DiffusionModel(GaussianDiffusion):
         expr_loss = F.mse_loss(expr_pred, expr_deca)
         
         # jitter loss for temporal smoothness
-        pose_jitter = F.mse_loss(jaw_pred[:,1:], jaw_pred[:,:-1])
-        expr_jitter = F.mse_loss(expr_pred[:,1:], expr_pred[:,:-1])
+        pose_jitter = torch.mean((jaw_pred[:,2:] + jaw_pred[:,:-2] - jaw_pred[:,1:-1]) ** 2)
+        expr_jitter = torch.mean((expr_pred[:,2:] + expr_pred[:,:-2] - expr_pred[:,1:-1]) ** 2)
         
         # batch the output
         images = model_kwargs['image'].reshape(bs*n, *model_kwargs['image'].shape[2:])
@@ -339,9 +339,9 @@ class DiffusionModel(GaussianDiffusion):
         # lipread_loss = 1-torch.mean(lr)
         lipread_loss = F.mse_loss(lip_features_gt, lip_features_pred)
         
-        loss = 10 * lmk2d_loss + 0.5 * lip2d_loss + 10 * mouth_closure3d_loss + 10 * eye_closure3d_loss \
+        loss = 10 * lmk2d_loss + 0.5 * lip2d_loss + 5.0 * mouth_closure3d_loss + 5.0 * eye_closure3d_loss \
             + 1.0 * photometric_loss + 2.0 * emotion_loss + 2.0 * lipread_loss \
-            + 1.0 * expr_loss + 1.0 * pose_loss + 0.0 * expr_jitter + 0.01 * pose_jitter
+            + 1.0 * expr_loss + 1.0 * pose_loss + 0.5 * expr_jitter + 0.5 * pose_jitter
         
         loss_dict = {
             'expr_loss': expr_loss,
