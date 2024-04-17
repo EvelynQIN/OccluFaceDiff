@@ -204,14 +204,14 @@ class SRenderY(nn.Module):
 
         outputs = {
             'images': images,
-            'albedo_images': albedo_images,
+            # 'albedo_images': albedo_images,
             'alpha_images': alpha_images,
-            'pos_mask': pos_mask,
-            'shading_images': shading_images,
+            # 'pos_mask': pos_mask,
+            # 'shading_images': shading_images,
             'grid': grid,
-            'normals': normals,
-            'normal_images': normal_images*alpha_images,
-            'transformed_normals': transformed_normals,
+            # 'normals': normals,
+            # 'normal_images': normal_images*alpha_images,
+            # 'transformed_normals': transformed_normals,
             # 'predicted_inner_mouth': mouth_mask
         }
         

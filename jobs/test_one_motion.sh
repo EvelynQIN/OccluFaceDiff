@@ -1,0 +1,1 @@
+python3 test_motion.py --model_path checkpoints/Transformer_512d_freeze_resume/model_57.pt --save_folder vis_result --exp_name random_occlusion --subject_id 002539136 --input_motion_length 20 --sld_wind_size 15 --occlusion_mask_prob 1

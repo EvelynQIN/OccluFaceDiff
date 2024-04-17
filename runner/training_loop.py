@@ -13,7 +13,7 @@ import functools
 import os
 
 import torch
-
+import gc
 from diffusion.fp16_util import MixedPrecisionTrainer
 from diffusion.resample import create_named_schedule_sampler
 from torch.optim import AdamW
@@ -21,8 +21,9 @@ from utils.scheduler import WarmupCosineSchedule
 from tqdm import tqdm
 from utils import dist_util
 import wandb
-from model.deca import EMOCA
-from utils import utils_transform
+# from model.deca import EMOCA
+# from utils import utils_transform
+from memory_profiler import profile
 
 # training loop for the diffusion given "model" as the denoising model
 class TrainLoop:
@@ -87,9 +88,9 @@ class TrainLoop:
         if torch.cuda.is_available() and dist_util.dev() != "cpu":
             self.device = torch.device(dist_util.dev())
         
-        # load pretrained model from EMOCA
-        self.emoca = EMOCA(self.model_cfg)
-        self.emoca.to(self.device)
+        # # load pretrained model from EMOCA
+        # self.emoca = EMOCA(self.model_cfg)
+        # self.emoca.to(self.device)
 
         self.schedule_sampler_type = "uniform"
         self.schedule_sampler = create_named_schedule_sampler(
@@ -114,80 +115,7 @@ class TrainLoop:
         #     'pose_jitter_w': args.pose_jitter_w,
         #     'exp_jitter_w': args.exp_jitter_w
         # }
-    
-    # def _create_pretrained_model(self, model_cfg):
-    #      # set up parameters
-    #     self.n_param = model_cfg.n_shape + model_cfg.n_tex + model_cfg.n_exp + model_cfg.n_pose + model_cfg.n_cam + model_cfg.n_light
-    #     self.n_cond = model_cfg.n_exp + 3  # exp + jaw pose
-    #     self.num_list = [model_cfg.n_shape, model_cfg.n_tex, model_cfg.n_exp, model_cfg.n_pose, model_cfg.n_cam, model_cfg.n_light]
-    #     self.param_dict = {i: model_cfg.get('n_' + i) for i in model_cfg.param_list}
-
-    #     # encoders
-    #     self.E_flame = ResnetEncoder(outsize=self.n_param).to(self.device)
-            
-    #     # resume model from ckpt path
-    #     model_path = model_cfg.ckpt_path
-    #     if os.path.exists(model_path):
-    #         print(f"[DECA] Pretrained model found at {model_path}.")
-    #         checkpoint = torch.load(model_path)
-
-    #         if 'state_dict' in checkpoint.keys():
-    #             checkpoint = checkpoint['state_dict']
-    #         else:
-    #             checkpoint = checkpoint
-            
-    #         if 'deca' in list(checkpoint.keys())[0]:
-    #             for key in checkpoint.keys():
-    #                 k = key.replace("deca.","")
-    #                 if "E_flame" in key:
-    #                     processed_checkpoint["E_flame"][k.replace("E_flame.","")] = checkpoint[key]
-    #                 else:
-    #                     pass
-    #         else:
-    #             processed_checkpoint = checkpoint
-    #         self.E_flame.load_state_dict(processed_checkpoint['E_flame'], strict=True) 
-    #     else:
-    #         raise(f'please check model path: {model_path}')
-
-    #     # eval mode to freeze deca throughout the process
-    #     self.E_flame.eval()
-    #     self.E_flame.requires_grad_(False)
-
-    # def decompose_deca_code(self, code, num_dict):
-    #     ''' Convert a flattened parameter vector to a dictionary of parameters
-    #     code_dict.keys() = ['shape', 'tex', 'exp', 'pose', 'cam', 'light']
-    #     '''
-    #     code_dict = {}
-    #     start = 0
-
-    #     for key in num_dict:
-    #         end = start + int(num_dict[key])
-    #         code_dict[key] = code[..., start:end]
-    #         start = end
-    #         if key == 'light':
-    #             dims_ = code_dict[key].ndim -1 # (to be able to handle batches of videos)
-    #             code_dict[key] = code_dict[key].reshape(*code_dict[key].shape[:dims_], 9, 3)
-    #     return code_dict
-
-    # def deca_encode(self, images):
-    #     with torch.no_grad():
-    #         parameters = self.E_flame(images)
-        
-    #     codedict = self.decompose_deca_code(parameters, self.param_dict)
-    #     deca_exp = codedict['exp'].clone()
-    #     deca_jaw = codedict['pose'][...,3:].clone()
-    #     deca_jaw_6d = utils_transform.aa2sixd(deca_jaw.reshape(-1, 3)).reshape(*images.shape[:2], -1)
-    #     diffusion_target = torch.cat([deca_jaw_6d, deca_exp], dim=-1)
-    #     return codedict, diffusion_target
-
-    def emoca_encode(self, images):
-        codedict = self.emoca(images)
-        deca_exp = codedict['exp'].clone()
-        deca_jaw = codedict['pose'][...,3:].clone()
-        deca_jaw_6d = utils_transform.aa2sixd(deca_jaw.reshape(-1, 3)).reshape(*images.shape[:2], -1)
-        diffusion_target = torch.cat([deca_jaw_6d, deca_exp], dim=-1)
-        return codedict, diffusion_target
-
+    @profile
     def _load_and_sync_parameters(self):
         resume_checkpoint = self.resume_checkpoint
 
@@ -201,7 +129,7 @@ class TrainLoop:
                     map_location=dist_util.dev(),
                 )
             )
-
+    # @profile
     def _load_optimizer_state(self):
         main_checkpoint = self.resume_checkpoint
         opt_checkpoint = os.path.join(
@@ -214,7 +142,8 @@ class TrainLoop:
             opt_checkpoint, map_location=dist_util.dev()
         )
         self.opt.load_state_dict(state_dict)
-
+    
+    @profile
     def run_loop(self):
         local_step = 0
         for epoch in range(self.resume_epoch+1, self.num_epochs+1):
@@ -223,21 +152,14 @@ class TrainLoop:
             self.epoch = epoch
             for batch in tqdm(self.train_loader):
                 local_step += 1
+                target = batch['target'].to(self.device)
                 model_kwargs = {}
                 for k in batch:
-                    model_kwargs[k] = batch[k].to(self.device)
-
-                deca_code_dict, diffusion_target = self.emoca_encode(model_kwargs['image'])
-                model_kwargs.update({
-                    "shape": deca_code_dict['shape'],
-                    "light": deca_code_dict['light'],
-                    "tex": deca_code_dict['tex'],
-                    "cam": deca_code_dict['cam'],
-                    "R": deca_code_dict['pose'][...,:3]
-                })
+                    if k != 'target':
+                        model_kwargs[k] = batch[k].to(self.device)
 
                 grad_update = True if local_step % self.gradient_accumulation_steps == 0 else False 
-                self.run_step(diffusion_target, grad_update, **model_kwargs)
+                self.run_step(target, grad_update, **model_kwargs)
             if epoch == self.num_epochs or epoch % self.save_interval == 0:
                 self.save()
             if epoch % self.log_interval == 0:
@@ -246,7 +168,8 @@ class TrainLoop:
         # Save the last checkpoint if it wasn't already saved.
         if (self.epoch) % self.save_interval != 0:
             self.save()
-
+    
+    # @profile
     def run_step(self, batch, grad_update, **model_kwargs):
         if grad_update:
             self.step += 1
@@ -258,13 +181,16 @@ class TrainLoop:
             else:
                 self._step_lr()
             self.mp_trainer.zero_grad()
-            torch.cuda.empty_cache()
         else:
             self.forward_backward(batch, log_loss=False, **model_kwargs)
+        # # free gpu memory
+        # torch.cuda.empty_cache()
+        # gc.collect()
 
+    # @profile
     def forward_backward(self, batch, log_loss=True, **model_kwargs):
 
-        t, weights = self.schedule_sampler.sample(batch.shape[0], dist_util.dev())
+        t, _ = self.schedule_sampler.sample(batch.shape[0], dist_util.dev())
 
         compute_losses = functools.partial(
             self.diffusion.training_losses,
@@ -274,18 +200,21 @@ class TrainLoop:
             model_kwargs
         )
 
-        losses = compute_losses()
+        loss_dict = compute_losses()
         if self.loss_keys is None:
-            self.loss_keys = losses.keys()
+            self.loss_keys = loss_dict.keys()
 
         # if isinstance(self.schedule_sampler, LossAwareSampler):
         #     self.schedule_sampler.update_with_local_losses(t, losses["loss"].detach())
 
         # normalize loss to account for batch accumulation
-        loss = losses["loss"]  / self.gradient_accumulation_steps
+        self.mp_trainer.backward(loss_dict['loss'] / self.gradient_accumulation_steps)
         if log_loss:
-            self.log_loss_dict(losses, "train")
-        self.mp_trainer.backward(loss)
+            loss_dict['loss'] = loss_dict['loss'].detach().item()
+            self.log_loss_dict(loss_dict, "train")
+        
+        del batch, model_kwargs, loss_dict
+        
     
     def validation(self):
         self.model.eval()
@@ -297,35 +226,32 @@ class TrainLoop:
         with torch.no_grad():
             for batch in tqdm(self.val_loader):
                 eval_steps += 1
+                target = batch['target'].to(self.device)
                 model_kwargs = {}
                 for k in batch:
-                    model_kwargs[k] = batch[k].to(self.device)
-
-                deca_code_dict, diffusion_target = self.emoca_encode(model_kwargs['image'])
-                model_kwargs.update({
-                    "shape": deca_code_dict['shape'],
-                    "light": deca_code_dict['light'],
-                    "tex": deca_code_dict['tex'],
-                    "cam": deca_code_dict['cam'],
-                    "R": deca_code_dict['pose'][...,:3]
-                })
-                t, weights = self.schedule_sampler.sample(diffusion_target.shape[0], dist_util.dev())
+                    if k != 'target':
+                        model_kwargs[k] = batch[k].to(self.device)
+                t, weights = self.schedule_sampler.sample(target.shape[0], dist_util.dev())
                 compute_losses = functools.partial(
                     self.diffusion.training_losses,
                     self.ddp_model,
-                    diffusion_target,
+                    target,
                     t,
                     model_kwargs
                 )
 
                 loss_dict = compute_losses()
+                loss_dict['loss'] = loss_dict['loss'].detach().item()
                 for k in val_loss:
-                    val_loss[k] +=  loss_dict[k].item()
-                    
+                    val_loss[k] +=  loss_dict[k]
+                del batch, model_kwargs, loss_dict
+                # torch.cuda.empty_cache()
+                
             for k in val_loss:
                 val_loss[k] /= eval_steps
             
             self.log_loss_dict(val_loss, phase="validation")
+            del val_loss
 
     def _anneal_lr(self):
         if not self.lr_anneal_steps:
@@ -351,7 +277,7 @@ class TrainLoop:
         loss_dict = {}
         for key, values in losses.items():
             kid = f"{phase}/{key}"
-            loss_dict[kid] = values.item() if phase == "train" else values
+            loss_dict[kid] = values
         loss_dict["epoch"] = self.epoch
         if phase == "train":
             loss_dict['lr'] = self.lr

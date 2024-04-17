@@ -47,6 +47,13 @@ def neighborhood_mask(target_size, num_heads, bias_step, symm=False):
     alibi = mask + alibi
     return alibi    # (num_heads, target_size, target_size)
 
+# Alignment Bias
+def enc_dec_mask(device, T, S):
+    mask = torch.ones((T, S))
+    for i in range(T):
+        mask[i, i] = 0
+    return (mask==1).to(device=device)
+
 class FaceTransformer(nn.Module):
     def __init__(
         self,
@@ -88,19 +95,19 @@ class FaceTransformer(nn.Module):
         ### layers
         self.image_encoder = torch.hub.load('pytorch/vision:v0.8.1', 'mobilenet_v2', pretrained=True)
         image_feature_dim = 1280
-        self.image_cond_process = InputProcess(image_feature_dim, self.latent_dim)
+        self.image_process = InputProcess(image_feature_dim, self.latent_dim)
 
         self.lmk2d_dim = 68 * 2
-        self.lmk_cond_process = InputProcess(self.lmk2d_dim, self.latent_dim)
+        self.lmk_process = InputProcess(self.lmk2d_dim, self.latent_dim)
 
-        self.audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
-        # wav2vec 2.0 weights initialization
-        self.audio_encoder.feature_extractor._freeze_parameters()
-        self.audio_encoder.feature_projection._freeze_parameters()
-        self.audio_encoder.encoder._freeze_parameters()
+        # self.audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
+        # # wav2vec 2.0 weights initialization
+        # self.audio_encoder.feature_extractor._freeze_parameters()
         audio_feature_dim = 768
-        self.audio_cond_process = InputProcess(audio_feature_dim, self.latent_dim)
+        self.audio_process = InputProcess(audio_feature_dim, self.latent_dim)
         
+        # self.condition_process = nn.Linear(self.latent_dim * 3, self.latent_dim)
+       
         self.input_process = InputProcess(self.input_feats, self.latent_dim)
         
         self.sequence_pos_encoder = PositionalEncoding(self.latent_dim, self.dropout)
@@ -142,7 +149,7 @@ class FaceTransformer(nn.Module):
         else:
             return cond
     
-    def forward(self, x, timesteps, image, lmk_2d, audio, img_mask, lmk_mask, force_mask=False, **kwargs):
+    def forward(self, x, timesteps, image, lmk_2d, img_mask, lmk_mask, audio_emb, force_mask=False, **kwargs):
         """
         x: [bs, nframes, nfeats] 
         timesteps: [bs] (int)
@@ -157,12 +164,18 @@ class FaceTransformer(nn.Module):
         # conditions feature extraction
         image_cond = self.image_encoder.features(image.view(bs*n, *image.shape[2:]))
         image_cond = nn.functional.adaptive_avg_pool2d(image_cond, (1, 1)).squeeze(-1).squeeze(-1).view(bs, n, -1) # [bs, n, image_feature_dim]
-        image_cond = self.image_cond_process(image_cond)
-        lmk_cond = self.lmk_cond_process(lmk_2d.reshape(bs, n, -1))
-        audio_cond = self.audio_encoder(audio, frame_num=n).last_hidden_state
-        audio_cond = self.audio_cond_process(audio_cond)
+        image_cond = self.image_process(image_cond) # [seqlen, bs, d]
         
-        cond_emb = self.mask_cond(image_cond + lmk_cond + audio_cond, force_mask=force_mask) # [seqlen, bs, d]
+        lmk_cond = self.lmk_process(lmk_2d.reshape(bs, n, -1))  # [seqlen, bs, d]
+        
+        audio_cond = self.audio_process(audio_emb)  # [seqlen, bs, d]
+        
+        # # if concat
+        # cond_emb = self.condition_process(
+        #     torch.cat([image_cond, lmk_cond, audio_cond], dim=-1)
+        # )
+        
+        cond_emb = self.mask_cond(image_cond + lmk_cond + audio_cond, force_mask=force_mask)   # [seqlen, bs, d]
         
         condseq = self.sequence_pos_encoder(cond_emb)  # [seqlen, bs, d]
         
@@ -176,7 +189,10 @@ class FaceTransformer(nn.Module):
         x = x + ts_emb   # broadcast add, [seqlen, bs, d]
         xseq = self.sequence_pos_encoder(x)
         
-        decoder_output = self.transformer(condseq, xseq, tgt_mask=tgt_mask) # [seqlen, bs, d]
+        # bias alignement mask
+        memory_mask = enc_dec_mask(x.device, xseq.shape[0], condseq.shape[0])
+        
+        decoder_output = self.transformer(condseq, xseq, tgt_mask=tgt_mask, memory_mask=memory_mask) # [seqlen, bs, d]
         output = self.outputprocess_motion(decoder_output)  # [bs, seqlen, input_nfeats]
         return output
 

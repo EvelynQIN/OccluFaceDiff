@@ -536,6 +536,12 @@ def add_predict_options(parser):
         help="test in_the_wild video or given datasets",
     )
     
+    group.add_argument(
+        "--with_audio",
+        action="store_true",
+        help="whether the input with audio.",
+    )
+    
     # for in_the_wild mode #
     group.add_argument(
         "--video_path",
@@ -564,6 +570,84 @@ def add_predict_options(parser):
         type=str,
         help="path to the test image_folder.",
     )
+    
+    group.add_argument(
+        "--audio_path",
+        default="",
+        type=str,
+        help="path to the test audio.",
+    )
+
+def add_test_options(parser):
+    group = parser.add_argument_group("test")
+
+    group.add_argument(
+        "--fix_noise",
+        action="store_true",
+        help="fix init noise for the output.",
+    )
+
+    group.add_argument(
+        "--input_motion_length",
+        default=30,
+        type=int,
+        help="motion length to chunk over the original sequence.",
+    )
+
+    group.add_argument(
+        "--split",
+        default="test",
+        type=str,
+        help="split in the dataset",
+    )
+    
+    group.add_argument(
+        "--sld_wind_size",
+        default=20,
+        type=int,
+        help="slide window size.",
+    )
+    
+    group.add_argument(
+        "--save_folder",
+        default="vis_result",
+        type=str,
+        help="folder to save visualization result.",
+    )
+    
+    group.add_argument(
+        "--model_path",
+        type=str,
+        help="Path to model####.pt file to be sampled.",
+    )
+    
+    group.add_argument(
+        "--exp_name",
+        type=str,
+        help="name of the experiment.",
+    )
+
+    group.add_argument(
+        "--motion_id",
+        default=None,
+        type=str,
+        help="name of the motion sequence.",
+    )
+    
+    group.add_argument(
+        "--subject_id",
+        default="",
+        type=str,
+        help="name of the subject.",
+    )
+    
+    group.add_argument(
+        "--occlusion_mask_prob",
+        default=0,
+        type=int,
+        help="occlusion probability.",
+    )
+
     
 def add_evaluation_options(parser):
     group = parser.add_argument_group("eval")
@@ -606,4 +690,11 @@ def predict_args():
     # args specified by the user: (all other will be loaded from the model)
     add_base_options(parser)
     add_predict_options(parser)
+    return parse_and_load_from_model(parser)
+
+def test_args():
+    parser = ArgumentParser()
+    # args specified by the user: (all other will be loaded from the model)
+    add_base_options(parser)
+    add_test_options(parser)
     return parse_and_load_from_model(parser)

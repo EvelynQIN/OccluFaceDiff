@@ -12,7 +12,7 @@ from tqdm import tqdm
 from utils import utils_transform, utils_visualize
 from utils.metrics import get_metric_function
 from utils.model_util import create_model_and_diffusion, load_model_wo_clip
-from utils.parser_util import predict_args
+from utils.parser_util import test_args
 from utils.data_util import batch_orth_proj
 from configs.config import get_cfg_defaults
 from prepare_video import  VideoProcessor
@@ -38,6 +38,8 @@ from model.FLAME import FLAME, FLAMETex
 from utils.renderer import SRenderY
 from skimage.io import imread
 import imageio
+from data_loaders.dataloader_with_pretrained import load_motion_for_subject, TestDataset
+import ffmpeg
 
 
 os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
@@ -53,7 +55,6 @@ pred_metrics = [
     "lmk_2d_mpe",
     "mvpe_face",
     "mvpe_eye_region",
-    
     "mvpe_forehead",
     "mvpe_lips",
     "mvpe_neck",
@@ -67,7 +68,7 @@ all_metrics = pred_metrics + gt_metrics
 
 class MotionTracker:
     
-    def __init__(self, config, model_cfg, device='cuda'):
+    def __init__(self, config, model_cfg, test_data, device='cuda'):
         
         self.config = config
         self.model_cfg = model_cfg
@@ -75,20 +76,17 @@ class MotionTracker:
         self.sld_wind_size = config.sld_wind_size
         self.input_motion_length = config.input_motion_length
         self.target_nfeat = config.n_exp + config.n_pose
+        self.test_data = test_data
         # IO setups
-        self.motion_id = f'{config.subject_id}_{config.motion_id}' if config.test_mode != 'in_the_wild' \
-                        else os.path.split(config.video_path)[-1].split('.')[0]
                         
         # name of the tested motion sequence
         self.save_folder = self.config.save_folder
-        self.output_folder = os.path.join(self.save_folder, self.config.arch)
-        self.motion_name = f'{self.motion_id}_{self.config.exp_name}'
+        self.output_folder = os.path.join(self.save_folder, self.config.arch, config.subject_id, config.exp_name)
         
         logger.add(os.path.join(self.output_folder, 'predict.log'))
         logger.info(f"Using device {self.device}.")
-        logger.info(f"Predict motion [{self.motion_id}] for Exp [{self.config.exp_name}].")
         
-        self.image_size = torch.tensor([[config.image_size, config.image_size]]).to(self.device)
+        self.image_size = config.image_size
         
         self.sample_time = 0
 
@@ -101,16 +99,12 @@ class MotionTracker:
         self.denoise_model, self.diffusion = self.load_diffusion_model_from_ckpt(config, model_cfg)
         
         # load relavant models
-        self.emoca = EMOCA(model_cfg)
-        self.emoca.to(self.device)
+        # self.emoca = EMOCA(model_cfg)
+        # self.emoca.to(self.device)
         self._create_flame()
         self._setup_renderer()
-        
-        # gif_writer
-        savefolder = os.path.join(self.output_folder, self.motion_name)
-        Path(savefolder).mkdir(parents=True, exist_ok=True)
-        self.writer = imageio.get_writer(os.path.join(savefolder, 'motion.gif'), mode='I')
 
+    
     def _create_flame(self):
         self.flame = FLAME(self.model_cfg).to(self.device)
         self.flametex = FLAMETex(self.model_cfg).to(self.device)
@@ -155,25 +149,14 @@ class MotionTracker:
     def sample_motion(self, motion_split, mem_idx):
         
         sample_fn = self.diffusion.p_sample_loop
-
         images = motion_split['image'].to(self.device)
-        
-        # get deca reconstruction result
-        deca_code = self.emoca(images[mem_idx:])
-        deca_code['images'] = images[mem_idx:]
-        deca_code['lmk_gt'] = motion_split['lmk_2d'][mem_idx:].to(self.device)
-        deca_code['img_mask'] = motion_split['img_mask'][mem_idx:]
 
         with torch.no_grad():
             split_length = images.shape[0]
-
-            model_kwargs = {
-                "image": images.unsqueeze(0),
-                'audio_emb': motion_split['audio_emb'].unsqueeze(0).to(self.device),
-                'img_mask': motion_split['img_mask'].unsqueeze(0).to(self.device),
-                'lmk_mask':motion_split['lmk_mask'].unsqueeze(0).to(self.device),
-                'lmk_2d': motion_split['lmk_2d'].unsqueeze(0).to(self.device)
-            }
+            
+            model_kwargs = {}
+            for key in ['image', 'audio_emb', 'img_mask', 'lmk_mask', 'lmk_2d']:
+                model_kwargs[key] = motion_split[key].unsqueeze(0).to(self.device)
 
             if self.config.fix_noise:
                 # fix noise seed for every frame
@@ -219,8 +202,14 @@ class MotionTracker:
             self.sample_time += time() - start_time
             self.memory = output_sample.clone().detach()
             output_sample = output_sample[:, mem_idx:].reshape(-1, self.target_nfeat).float()
+            
+            # gt from emoca
+            emoca_split = {}
+            for key in ['lmk_2d', 'image', 'shape', 'exp', 'pose', 'cam']:
+                emoca_split[key] = motion_split[key][mem_idx:].to(self.device)
+            emoca_split['img_mask'] = model_kwargs['img_mask'][0][mem_idx:]
 
-        return output_sample, deca_code # (n, *shape)
+        return output_sample, emoca_split
     
     def vis_motion_split(self, deca_code, diffusion_sample):
         
@@ -256,23 +245,29 @@ class MotionTracker:
         # albedo = self.flametex(deca_code['tex']).detach()
         
         # # render
-        deca_render_images = self.render.render_shape(deca_verts, deca_trans_verts, images=deca_code['images'])
-        diff_render_images = self.render.render_shape(diff_verts, diff_trans_verts, images=deca_code['images'])
+        deca_render_images = self.render.render_shape(deca_verts, deca_trans_verts, images=deca_code['image'])
+        diff_render_images = self.render.render_shape(diff_verts, diff_trans_verts, images=deca_code['image'])
         # diff_render_images = self.render(diff_verts, diff_trans_verts, albedo, deca_code['light'], background=deca_code['images'])['images']
         
         # landmarks vis
-        lmk2d_vis = utils_visualize.tensor_vis_landmarks(deca_code['images'], diff_lmk2d, deca_code['lmk_gt'])
+        lmk2d_vis = utils_visualize.tensor_vis_landmarks(deca_code['image'], diff_lmk2d, deca_code['lmk_2d'])
+        
+
+        gt_img = deca_code['image'] * deca_code['img_mask'].unsqueeze(1)
 
         # frame_id = str(frame_id).zfill(5)
         for i in range(diff_lmk2d.shape[0]):
             vis_dict = {
-                'gt_img': deca_code['images'][i].detach().cpu() * deca_code['img_mask'][i].unsqueeze(0),   # (3, 224, 224)
+                'gt_img': gt_img[i].detach().cpu(),   # (3, 224, 224)
                 'deca_img': deca_render_images[i].detach().cpu(),  # (3, 224, 224)
                 'diff_img': diff_render_images[i].detach().cpu(),  # (3, 224, 224)
                 'lmk': lmk2d_vis[i].detach().cpu()
             }
             grid_image = self.visualize(vis_dict)
-            self.writer.append_data(grid_image)
+            if self.with_audio:
+                self.writer.write(grid_image[:,:,[2,1,0]])
+            else:
+                self.writer.append_data(grid_image)
         
         # cv2.imwrite(f'{savefolder}/{frame_id}.jpg', final_views)
             
@@ -297,37 +292,66 @@ class MotionTracker:
     
     def track(self):
         
-        # load the input motion sequence
-        video_processor = VideoProcessor(self.config)
-        video_processor.preprocess_video()
-        
         # make prediction by split the whole sequences into chunks due to memory limit
-        self.num_frames = video_processor.num_frames
-        self.motion_memory = None   # init diffusion memory for motin infilling
-        start_id = 0
-        while start_id + self.input_motion_length <= self.num_frames:
-            print(f"Processing frame {start_id}")
-            motion_split = video_processor.prepare_chunk_motion(start_id)
-            if start_id == 0:
-                mem_idx = 0
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        for i in tqdm(range(len(self.test_data))):
+            batch = self.test_data[i]
+            subject_id = batch['subject_id']
+            motion_id = batch['motion_id']
+            logger.info(f'Process [{subject_id} -- {motion_id}].')
+            video_path = self.output_folder + f'/{motion_id}'
+            # set the output writer
+            audio_path = None
+            if 'SEN' in motion_id:
+                self.with_audio = True
+                audio_path = batch['audio_path']
+                self.writer = cv2.VideoWriter(video_path+'.mp4', fourcc, self.config.fps, (self.image_size*4, self.image_size))
             else:
-                mem_idx = self.input_motion_length - self.sld_wind_size
-            start_id += self.sld_wind_size
-            output_sample, deca_code = self.sample_motion(motion_split, mem_idx)
-            self.vis_motion_split(deca_code, output_sample)
-        
-        if start_id < self.num_frames:
-            print(f"Processing frame {self.num_frames-self.input_motion_length}")
-            motion_split = video_processor.prepare_chunk_motion(self.num_frames-self.input_motion_length)
-            mem_idx = self.input_motion_length - (
-                self.num_frames - (start_id - self.sld_wind_size + self.input_motion_length))
-            output_sample, deca_code = self.sample_motion(motion_split, mem_idx)
-            self.vis_motion_split(deca_code, output_sample)
-        logger.info(f'DDPM sample {self.num_frames} frames used: {self.sample_time} seconds.')
+                self.with_audio = False
+                self.writer = imageio.get_writer(video_path + '.gif', mode='I')
+            self.num_frames = batch['lmk_2d'].shape[0]
+            self.motion_memory = None   # init diffusion memory for motin infilling
+            start_id = 0
+            while start_id + self.input_motion_length <= self.num_frames:
+                print(f"Processing frame {start_id}")
+                motion_split = {}
+                for key in batch:
+                    if key in ['subject_id', 'motion_id', 'audio_path']:
+                        continue  
+                    motion_split[key] = batch[key][start_id:start_id+self.input_motion_length]
+                if start_id == 0:
+                    mem_idx = 0
+                else:
+                    mem_idx = self.input_motion_length - self.sld_wind_size
+                start_id += self.sld_wind_size
+                output_sample, deca_code = self.sample_motion(motion_split, mem_idx)
+                self.vis_motion_split(deca_code, output_sample)
             
+            if start_id < self.num_frames:
+                print(f"Processing frame {self.num_frames-self.input_motion_length}")
+                motion_split = {}
+                for key in batch:
+                    if key in ['subject_id', 'motion_id', 'audio_path']:
+                        continue  
+                    motion_split[key] = batch[key][self.num_frames-self.input_motion_length:]
+                mem_idx = self.input_motion_length - (
+                    self.num_frames - (start_id - self.sld_wind_size + self.input_motion_length))
+                output_sample, deca_code = self.sample_motion(motion_split, mem_idx)
+                self.vis_motion_split(deca_code, output_sample)
+            logger.info(f'DDPM sample {self.num_frames} frames used: {self.sample_time} seconds.')
+            
+            # concat audio 
+            if self.with_audio:
+                self.writer.release()
+                input_video = ffmpeg.input(video_path+'.mp4')
+                input_audio = ffmpeg.input(audio_path)
+                ffmpeg.concat(input_video, input_audio, v=1, a=1).output(os.path.join(video_path+'_audio.mp4')).run()
+                os.system(f"rm {video_path}.mp4")
+            
+            torch.cuda.empty_cache()
 
 def main():
-    args = predict_args()
+    args = test_args()
     pretrained_args = get_cfg_defaults()
     # to guanrantee reproducibility
     torch.backends.cudnn.benchmark = False
@@ -335,7 +359,16 @@ def main():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     
-    motion_tracker = MotionTracker(args, pretrained_args.model, 'cuda')
+    test_motion_path = load_motion_for_subject(args.dataset, args.dataset_path, args.subject_id, args.split, args.motion_id)
+    test_dataset = TestDataset(
+        args.dataset,
+        test_motion_path,
+        args.input_motion_length,
+        occlusion_mask_prob=args.occlusion_mask_prob,
+        fps=args.fps,
+        occlusion_type=args.exp_name
+    )
+    motion_tracker = MotionTracker(args, pretrained_args.model, test_dataset, 'cuda')
     
     motion_tracker.track()
 

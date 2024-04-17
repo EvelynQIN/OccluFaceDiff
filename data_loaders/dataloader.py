@@ -1,4 +1,3 @@
-# Copyri[start_id:start_id + input_mot[start_id:start_id + input_mot[start_id:start_id + input_mot[start_id:start_id + input_mot[start_id:start_id + input_mot[start_id:start_id + input_motion_length]ion_length][start_id:start_id + input_motion_length][start_id:start_id + input_motion_length][start_id:start_id + input_motion_targetght (c) Meta Platforms, Inc. All Rights Reserved
 import glob
 import os
 
@@ -13,7 +12,6 @@ import random
 from utils.landmark_mask import REGIONS
 from utils import dataset_setting
 import cv2 
-import librosa
 
 class TrainDataset(Dataset):
     def __init__(
@@ -134,20 +132,20 @@ class TrainDataset(Dataset):
         else:
             start_id = torch.randint(0, int(seqlen - input_motion_length), (1,))[0]     # random crop a motion seq
 
-        # audio input
-        audio_input = processed_data['audio']
-        # extract corresponding audio input align with the image frames
-        start_ts = int(start_id * self.sample_radio)
-        end_ts = int((start_id+input_motion_length) * self.sample_radio)
-        if audio_input is not None:
-            audio_input = audio_input[start_ts:end_ts]
-        else:
-            audio_input = np.zeros(end_ts-start_ts)
+        # # audio input
+        # audio_input = processed_data['audio']
+        # # extract corresponding audio input align with the image frames
+        # start_ts = int(start_id * self.sample_radio)
+        # end_ts = int((start_id+input_motion_length) * self.sample_radio)
+        # if audio_input is not None:
+        #     audio_input = audio_input[start_ts:end_ts]
+        # else:
+        #     audio_input = np.zeros(end_ts-start_ts)
 
         frame_id = frame_id[start_id:start_id + input_motion_length:self.skip_frames]
         lmk68 = processed_data['lmk68'][start_id:start_id + input_motion_length:self.skip_frames]  # (n, 68, 2)
-        mouth_closure_3d = processed_data['mouth_closure_3d'][start_id:start_id + input_motion_length:self.skip_frames]  # (n, 8)
-        eye_closure_3d = processed_data['eye_closure_3d'][start_id:start_id + input_motion_length:self.skip_frames] # (n, 4)
+        # mouth_closure_3d = processed_data['mouth_closure_3d'][start_id:start_id + input_motion_length:self.skip_frames]  # (n, 8)
+        # eye_closure_3d = processed_data['eye_closure_3d'][start_id:start_id + input_motion_length:self.skip_frames] # (n, 4)
         
         # read images as input 
         images_list = []
@@ -174,6 +172,7 @@ class TrainDataset(Dataset):
         images_array = torch.from_numpy(np.stack(images_list)).type(dtype = torch.float32) 
         kpt_array = torch.from_numpy(np.stack(kpt_list)).type(dtype = torch.float32) 
         mask_array = torch.from_numpy(np.stack(mask_list)).type(dtype = torch.float32) # (n, 224, 224)
+        # mask_array = torch.ones((images_array.shape[0], 224, 224))
         mask_array = self.get_occlusion_mask(mask_array)
         lmk_mask = self.get_lmk_mask(kpt_array, mask_array)
 
@@ -182,9 +181,9 @@ class TrainDataset(Dataset):
             'lmk_2d': kpt_array, # (n, 68, 3)
             'img_mask': mask_array, # (n, 224, 224)
             'lmk_mask': lmk_mask.float(),   # (n, 68)
-            'mouth_closure_3d': torch.from_numpy(mouth_closure_3d).float(), # (n, 8)
-            'eye_closure_3d': torch.from_numpy(eye_closure_3d).float(), # (n, 4)
-            'audio': torch.from_numpy(audio_input).float()  # (15990)
+            # 'mouth_closure_3d': torch.from_numpy(mouth_closure_3d).float(), # (n, 8)
+            # 'eye_closure_3d': torch.from_numpy(eye_closure_3d).float(), # (n, 4)
+            # 'audio': torch.from_numpy(audio_input).float()  # (15990)
         }
 
 class TestDataset(Dataset):
@@ -369,7 +368,7 @@ def get_dataloader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        num_workers=1,
+        num_workers=num_workers,
         drop_last=drop_last,
         persistent_workers=False,
     )

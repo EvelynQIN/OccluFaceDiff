@@ -9,7 +9,7 @@ Docstrings have been added, as well as DDIM sampling and a new collection of bet
 #
 # This code is based on https://github.com/GuyTevet/motion-diffusion-model
 # Copyright (c) Meta Platforms, Inc. All Rights Reserved
-
+from memory_profiler import profile
 import torch
 import torch.nn.functional as F
 from utils import utils_transform
@@ -39,36 +39,43 @@ def normalize(value, mean, std):
 def denormalize(value, mean, std):
     return  value * std + mean
 
-def mouth_closure_lmk_loss(pred_lmks):
+def mouth_closure_lmk_loss(pred_lmks, gt_lmks):
     upper_mouth_lmk_ids = [49, 50, 51, 52, 53, 61, 62, 63]
     lower_mouth_lmk_ids = [59, 58, 57, 56, 55, 67, 66, 65]
-    diff_pred = torch.norm(pred_lmks[:, upper_mouth_lmk_ids, :] - pred_lmks[:, lower_mouth_lmk_ids, :], 2, -1) # (b, V)
-    return diff_pred
+    diff_pred = (pred_lmks[:, upper_mouth_lmk_ids, :2] - pred_lmks[:, lower_mouth_lmk_ids, :2])
+    diff_gt = (gt_lmks[:, upper_mouth_lmk_ids, :2] - gt_lmks[:, lower_mouth_lmk_ids, :2])
+    closure_loss = torch.mean(torch.abs(diff_gt - diff_pred).sum(2))
+    return closure_loss
 
-def eye_closure_lmk_loss(pred_lmks):
+def eye_closure_lmk_loss(pred_lmks, gt_lmks):
     upper_eyelid_lmk_ids = [37, 38, 43, 44]
     lower_eyelid_lmk_ids = [41, 40, 47, 46]
-    diff_pred = torch.norm(pred_lmks[:, upper_eyelid_lmk_ids, :] - pred_lmks[:, lower_eyelid_lmk_ids, :], 2, -1) # (b, V)
+    diff_pred = (pred_lmks[:, upper_eyelid_lmk_ids, :2] - pred_lmks[:, lower_eyelid_lmk_ids, :2])
+    diff_gt = (gt_lmks[:, upper_eyelid_lmk_ids, :2] - gt_lmks[:, lower_eyelid_lmk_ids, :2])
+    closure_loss = torch.mean(torch.abs(diff_gt - diff_pred).sum(2))
 
-    return diff_pred
+    return closure_loss
 
 class DiffusionModel(GaussianDiffusion):
     def __init__(
         self,
         **kwargs,
     ):
-        super(DiffusionModel, self).__init__(
-            **kwargs,
-        )
+        super(DiffusionModel, self).__init__(**kwargs,)
+
+    def _setup(self):
         self._create_flame()
-        self._setup_renderer()
-        self._load_evalnet()
-    
+        # self._setup_renderer()
+        # self._load_evalnet()
+
+    # @profile
     def _create_flame(self):
+        print(f"[Diffusion] Load FLAME.")
         self.flame = FLAME(self.model_cfg).to(self.device)
         self.flametex = FLAMETex(self.model_cfg).to(self.device)
-    
+    # @profile
     def _setup_renderer(self):
+        print(f"[Diffusion] Set up Renderer.")
         self.render = SRenderY(
             self.model_cfg.image_size, 
             obj_filename=self.model_cfg.topology_path, 
@@ -77,18 +84,19 @@ class DiffusionModel(GaussianDiffusion):
         mask = imread(self.model_cfg.face_eye_mask_path).astype(np.float32)/255. 
         mask = torch.from_numpy(mask[:,:,0])[None,None,:,:].contiguous()
         self.uv_face_eye_mask = F.interpolate(mask, [self.model_cfg.uv_size, self.model_cfg.uv_size]).to(self.device)
-        mask = imread(self.model_cfg.face_mask_path).astype(np.float32)/255.
-        mask = torch.from_numpy(mask[:,:,0])[None,None,:,:].contiguous()
-        self.uv_face_mask = F.interpolate(mask, [self.model_cfg.uv_size, self.model_cfg.uv_size]).to(self.device)
+        # mask = imread(self.model_cfg.face_mask_path).astype(np.float32)/255.
+        # mask = torch.from_numpy(mask[:,:,0])[None,None,:,:].contiguous()
+        # self.uv_face_mask = F.interpolate(mask, [self.model_cfg.uv_size, self.model_cfg.uv_size]).to(self.device)
         # # TODO: displacement correction
         # fixed_dis = np.load(self.model_cfg.fixed_displacement_path)
         # self.fixed_uv_dis = torch.tensor(fixed_dis).float().to(self.device)
         # mean texture
-        mean_texture = imread(self.model_cfg.mean_tex_path).astype(np.float32)/255.; mean_texture = torch.from_numpy(mean_texture.transpose(2,0,1))[None,:,:,:].contiguous()
-        self.mean_texture = F.interpolate(mean_texture, [self.model_cfg.uv_size, self.model_cfg.uv_size]).to(self.device)
+        # mean_texture = imread(self.model_cfg.mean_tex_path).astype(np.float32)/255.; mean_texture = torch.from_numpy(mean_texture.transpose(2,0,1))[None,:,:,:].contiguous()
+        # self.mean_texture = F.interpolate(mean_texture, [self.model_cfg.uv_size, self.model_cfg.uv_size]).to(self.device)
         # # dense mesh template, for save detail mesh
         # self.dense_template = np.load(self.model_cfg.dense_template_path, allow_pickle=True, encoding='latin1').item()
     
+    # @profile
     def _load_evalnet(self):
  
         # ----- load resnet trained from EMOCA https://github.com/radekd91/emoca for expression loss ----- #
@@ -97,9 +105,11 @@ class DiffusionModel(GaussianDiffusion):
         self.emotion_checkpoint['linear.0.weight'] = self.emotion_checkpoint['linear.weight']
         self.emotion_checkpoint['linear.0.bias'] = self.emotion_checkpoint['linear.bias']
 
+        print(f"[Diffusion] Load emotion net.")
         self.expression_net.load_state_dict(self.emotion_checkpoint, strict=False)
         self.expression_net.eval()
-        self.expression_net.requires_grad_(False)
+        for param in self.expression_net.parameters():
+            param.requires_grad = False
 
         # ----- load lipreader network for lipread loss ----- #
         config = ConfigParser()
@@ -112,7 +122,8 @@ class DiffusionModel(GaussianDiffusion):
         )
         self.lip_reader.eval()
         self.lip_reader.model.eval()
-        self.lip_reader.requires_grad_(False)
+        for param in self.lip_reader.parameters():
+            param.requires_grad = False
 
         # ---- initialize values for cropping the face around the mouth for lipread loss ---- #
         # ---- this code is borrowed from https://github.com/mpc001/Visual_Speech_Recognition_for_Multiple_Languages ---- #
@@ -177,9 +188,11 @@ class DiffusionModel(GaussianDiffusion):
                 raise Exception('too much bias in width')
 
             mouth = img[...,int(center_y - height): int(center_y + height),
-                                 int(center_x - width): int(center_x + round(width))]
+                        int(center_x - width): int(center_x + round(width))]
 
             mouth_sequence.append(mouth)
+            
+            del img
 
         mouth_sequence = torch.stack(mouth_sequence,dim=0)
         return mouth_sequence
@@ -208,7 +221,7 @@ class DiffusionModel(GaussianDiffusion):
         weights[36:48] = 2
 
         # set mouth to zero
-        weights[48:68] = 0
+        weights[48:68] = 3
         lmk2d_gt[:,:,2] = weights[None,:] * lmk2d_gt[:,:,2]
         kp_gt = lmk2d_gt.view(-1, 3)
         kp_pred = lmk2d_pred.contiguous().view(-1, 2)
@@ -229,8 +242,8 @@ class DiffusionModel(GaussianDiffusion):
         closure_loss =  1 - torch.mean(F.cosine_similarity(closure_pred, closure_gt, dim=1))
         return closure_loss
         
-        
     # loss computation between target and prediction
+    # @profile
     def masked_l2(self, target, model_output, **model_kwargs):
 
         bs, n, c = target.shape    
@@ -245,119 +258,115 @@ class DiffusionModel(GaussianDiffusion):
         pose_loss = F.mse_loss(jaw_pred, jaw_deca)
         expr_loss = F.mse_loss(expr_pred, expr_deca)
         
-        # jitter loss for temporal smoothness
-        pose_jitter = torch.mean((jaw_pred[:,2:] + jaw_pred[:,:-2] - jaw_pred[:,1:-1]) ** 2)
-        expr_jitter = torch.mean((expr_pred[:,2:] + expr_pred[:,:-2] - expr_pred[:,1:-1]) ** 2)
+        # velocity loss
+        pose_vel_loss = torch.mean(
+            ((jaw_pred[:,1:] - jaw_pred[:,:-1]) - (jaw_deca[:,1:] - jaw_deca[:,:-1])) ** 2
+        )
+        expr_vel_loss = torch.mean(
+            ((expr_pred[:,1:] - expr_pred[:,:-1]) - (expr_deca[:,1:] - expr_deca[:,:-1])) ** 2
+        )
+        
+        # # jitter loss for temporal smoothness
+        # pose_jitter = torch.mean((jaw_pred[:,2:] + jaw_pred[:,:-2] - jaw_pred[:,1:-1]) ** 2)
+        # expr_jitter = torch.mean((expr_pred[:,2:] + expr_pred[:,:-2] - expr_pred[:,1:-1]) ** 2)
         
         # batch the output
-        images = model_kwargs['image'].reshape(bs*n, *model_kwargs['image'].shape[2:])
-        shape = model_kwargs['shape'].reshape(bs*n, -1)
-        R_aa = model_kwargs['R'].reshape(bs*n, -1)
-        expr_pred = expr_pred.reshape(bs*n, -1)
-        jaw_pred_aa = utils_transform.sixd2aa(jaw_pred.reshape(-1, 6))
+        # images = model_kwargs['image'].view(bs*n, *model_kwargs['image'].shape[2:])
+        shape = model_kwargs['shape'].view(bs*n, -1)
+        R_aa = model_kwargs['R'].view(bs*n, -1)
+        expr_pred = expr_pred.view(bs*n, -1)
+        jaw_pred_aa = utils_transform.sixd2aa(jaw_pred.view(-1, 6))
         pose_pred = torch.cat([R_aa, jaw_pred_aa], dim=-1)
-        cam = model_kwargs['cam'].reshape(bs*n, -1)
+        cam = model_kwargs['cam'].view(bs*n, -1)
         
         # flame decoder
-        verts, landmarks2d, landmarks3d = self.flame(
+        verts, landmarks2d, _ = self.flame(
             shape_params=shape, 
             expression_params=expr_pred,
             pose_params=pose_pred)
         
-        
-        landmarks3d_world = landmarks3d.clone()
-        
         # orthogonal projection
         landmarks2d = batch_orth_proj(landmarks2d, cam)[:, :, :2]
         landmarks2d[:, :, 1:] = -landmarks2d[:, :, 1:]
-        landmarks3d = batch_orth_proj(landmarks3d, cam)
-        landmarks3d[:, :, 1:] = -landmarks3d[:, :, 1:]
         trans_verts = batch_orth_proj(verts, cam)
         trans_verts[:, :, 1:] = -trans_verts[:, :, 1:]
         
         # rendering using tex
-        light = model_kwargs['light'].reshape(bs*n, *model_kwargs['light'].shape[2:])
-        tex = model_kwargs['tex'].reshape(bs*n, -1)
-        albedo = self.flametex(tex).detach()
-        ops = self.render(verts, trans_verts, albedo, light)
+        # light = model_kwargs['light'].view(bs*n, *model_kwargs['light'].shape[2:])
+        # tex = model_kwargs['tex'].view(bs*n, -1)
+        # albedo = self.flametex(tex).detach()
+        # ops = self.render(verts, trans_verts, albedo, light)
         # for key in ops.keys():
         #     ops[key] = ops[key].view(bs, n, *ops[key].shape[1:])
         
         # calculate rendered images (shapes + texture)
-        mask_face_eye = F.grid_sample(self.uv_face_eye_mask.expand(bs*n,-1,-1,-1), ops['grid'].detach(), align_corners=False)
-        predicted_images = ops['images'] * mask_face_eye * ops['alpha_images']
+        # mask_face_eye = F.grid_sample(self.uv_face_eye_mask.expand(bs*n,-1,-1,-1), ops['grid'].detach(), align_corners=False)
         
         ## --------loss computation -------- ##
         
         # ---- photometric loss ---- #
-        masks = mask_face_eye * ops['alpha_images']
-        photometric_loss = torch.mean(masks * (predicted_images - images).abs())
+        # photometric_loss = torch.mean(mask_face_eye * ops['alpha_images'] * (ops['images'] - images).abs())
             
         # ---- geometric losses ---- #
-        lmk_gt = model_kwargs['lmk_2d'].reshape(bs*n, *model_kwargs['lmk_2d'].shape[2:])
-        lmk2d_loss = self.batch_lmk2d_loss(landmarks2d, lmk_gt)
-        lip2d_loss = F.mse_loss(landmarks2d[:,48:68,:2], lmk_gt[:,48:68,:2])     
+        lmk_gt = model_kwargs['lmk_2d'].view(bs*n, *model_kwargs['lmk_2d'].shape[2:])
+        lmk2d_loss = self.batch_lmk2d_loss(landmarks2d, lmk_gt)  
+        eye_closure_loss = eye_closure_lmk_loss(landmarks2d, lmk_gt)
+        mouth_closure_loss = mouth_closure_lmk_loss(landmarks2d, lmk_gt)
         
-        mouth_closure_pred = mouth_closure_lmk_loss(landmarks3d_world)
-        eye_closure_pred = eye_closure_lmk_loss(landmarks3d_world)
-        mouth_closure3d_loss = self.batch_normalized_3d_closure_loss(mouth_closure_pred, model_kwargs['mouth_closure_3d'].reshape(bs*n, -1))
-        eye_closure3d_loss = self.batch_normalized_3d_closure_loss(eye_closure_pred, model_kwargs['eye_closure_3d'].reshape(bs*n, -1))
-        
-        # ---- emotion loss from EMOCA ---- #
-        with torch.no_grad():
-            emotion_features_pred = self.expression_net(ops['images'])
-            emotion_features_gt = self.expression_net(images)
-        emotion_loss = F.mse_loss(emotion_features_pred, emotion_features_gt)
+        # # ---- emotion loss from EMOCA ---- #
+        # with torch.no_grad():
+        #     emotion_features_pred = self.expression_net(ops['images'])
+        #     emotion_features_gt = self.expression_net(images)
+        # emotion_loss = F.mse_loss(emotion_features_pred, emotion_features_gt)
+        # del emotion_features_pred, emotion_features_gt
         
         # ---- lipread loss ---- #
         # first crop the mouths of the input and rendered faces and then calculate the cosine distance of features 
+        # mouths_gt = self.cut_mouth(images, lmk_gt[...,:2])
+        # mouths_pred = self.cut_mouth(ops['images'], landmarks2d[...,:2])
+        # mouths_gt = self.mouth_transform(mouths_gt)
+        # mouths_pred = self.mouth_transform(mouths_pred)
 
-        mouths_gt = self.cut_mouth(images, lmk_gt[...,:2])
-        mouths_pred = self.cut_mouth(ops['images'], landmarks2d[...,:2])
-        mouths_gt = self.mouth_transform(mouths_gt)
-        mouths_pred = self.mouth_transform(mouths_pred)
+        # # # ---- resize back to BxKx1xHxW (grayscale input for lipread net) ---- #
+        # mouths_gt = mouths_gt.view(bs, n, mouths_gt.shape[-2], mouths_gt.shape[-1])
+        # mouths_pred = mouths_pred.view(bs, n, mouths_gt.shape[-2], mouths_gt.shape[-1])
 
+        # with torch.no_grad():
+        #     lip_features_gt = self.lip_reader.model.encoder(
+        #         mouths_gt,
+        #         None,
+        #         extract_resnet_feats=True
+        #     )
+            
+        #     lip_features_pred = self.lip_reader.model.encoder(
+        #         mouths_pred,
+        #         None,
+        #         extract_resnet_feats=True
+        #     )
 
-        # ---- resize back to BxKx1xHxW (grayscale input for lipread net) ---- #
-        mouths_gt = mouths_gt.view(bs, n, mouths_gt.shape[-2], mouths_gt.shape[-1])
-        mouths_pred = mouths_pred.view(bs, n, mouths_gt.shape[-2], mouths_gt.shape[-1])
-
-        lip_features_gt = self.lip_reader.model.encoder(
-            mouths_gt,
-            None,
-            extract_resnet_feats=True
-        )
-
-        lip_features_pred = self.lip_reader.model.encoder(
-            mouths_pred,
-            None,
-            extract_resnet_feats=True
-        )
-
-        # cosine similarity from spectre
-        # lr = (lip_features_gt*lip_features_pred).sum(1)/torch.linalg.norm(lip_features_pred,dim=1)/torch.linalg.norm(lip_features_gt,dim=1)
-        # lipread_loss = 1-torch.mean(lr)
-        lipread_loss = F.mse_loss(lip_features_gt, lip_features_pred)
+        # lipread_loss = F.mse_loss(lip_features_gt, lip_features_pred)
         
-        loss = 10 * lmk2d_loss + 0.5 * lip2d_loss + 5.0 * mouth_closure3d_loss + 5.0 * eye_closure3d_loss \
-            + 1.0 * photometric_loss + 2.0 * emotion_loss + 2.0 * lipread_loss \
-            + 1.0 * expr_loss + 1.0 * pose_loss + 0.5 * expr_jitter + 0.5 * pose_jitter
+        loss = 1.0 * lmk2d_loss + 5.0 * mouth_closure_loss + 2.0 * eye_closure_loss \
+            + 1.0 * 0 + 2.0 * 0 \
+            + 10.0 * expr_loss + 10.0 * pose_loss + 1.0 * expr_vel_loss + 1.0 * pose_vel_loss
+            
         
         loss_dict = {
-            'expr_loss': expr_loss,
-            'pose_loss': pose_loss,
-            'expr_jitter': expr_jitter,
-            'pose_jitter': pose_jitter,
-            'lmk2d_loss': lmk2d_loss,
-            'lip2d_loss': lip2d_loss,
-            'mouth_closure3d_loss': mouth_closure3d_loss,
-            'eye_closure3d_loss': eye_closure3d_loss,
-            'photometric_loss': photometric_loss,
-            'emotion_loss': emotion_loss,
-            'lipread_loss' : lipread_loss,
+            'expr_loss': expr_loss.detach().item(),
+            'pose_loss': pose_loss.detach().item(),
+            # 'expr_jitter': expr_jitter.detach().item(),
+            # 'pose_jitter': pose_jitter.detach().item(),
+            'expr_vel_loss': expr_vel_loss.detach().item(),
+            'pose_vel_loss': pose_vel_loss.detach().item(),
+            'lmk2d_loss': lmk2d_loss.detach().item(),
+            'mouth_closure_loss': mouth_closure_loss.detach().item(),
+            'eye_closure_loss': eye_closure_loss.detach().item(),
+            # 'photometric_loss': photometric_loss.detach().item(),
+            # 'emotion_loss': emotion_loss.detach().item(),
+            # 'lipread_loss' : lipread_loss.detach().item(),
             'loss': loss
         }
-        
+
         return loss_dict
 
     def training_losses(

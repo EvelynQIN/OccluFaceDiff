@@ -6,9 +6,8 @@ import numpy as np
 
 import torch
 
-from data_loaders.dataloader import get_dataloader, load_data, TrainDataset
-from model.FLAME import FLAME
-from model.networks import PureMLP
+from data_loaders.dataloader_with_pretrained import get_dataloader, load_data, TrainDataset
+
 # from runner.train_mlp import train_step, val_step
 from runner.training_loop import TrainLoop
 
@@ -20,6 +19,7 @@ from utils.config import Config
 import wandb
 from tqdm import tqdm
 from configs.config import get_cfg_defaults
+
 
 def train_diffusion_model(args, model_cfg, train_dataloader, val_dataloader):
     print("creating model and diffusion...")
@@ -76,14 +76,15 @@ def main():
         json.dump(dict(args), fw, indent=4, sort_keys=True) 
     
     print("creating training data loader...")    
-    train_image_path, train_processed_path = load_data(
+    train_processed_path = load_data(
         args.dataset,
         args.dataset_path,
         "train",
+        args.input_motion_length
     )
+    print(f"number of train sequences: {len(train_processed_path)}")
     train_dataset = TrainDataset(
         args.dataset,
-        train_image_path,
         train_processed_path,
         args.input_motion_length,
         args.train_dataset_repeat_times,
@@ -92,7 +93,6 @@ def main():
         args.mixed_occlusion_prob,
         args.fps
     )
-    
 
     train_loader = get_dataloader(
         train_dataset, "train", batch_size=args.batch_size, num_workers=args.num_workers
@@ -100,15 +100,15 @@ def main():
     
     # val data loader
     print("creating val data loader...")
-    val_image_path, val_processed_path = load_data(
+    val_processed_path = load_data(
         args.dataset,
         args.dataset_path,
         "test",
+        args.input_motion_length
     )
-    
+    print(f"number of test sequences: {len(val_processed_path)}")
     val_dataset = TrainDataset(
         args.dataset,
-        val_image_path, 
         val_processed_path,
         args.input_motion_length,
         5,

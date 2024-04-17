@@ -92,6 +92,7 @@ class SpacedDiffusion(DiffusionModel):
                 self.timestep_map.append(i)
         kwargs["betas"] = np.array(new_betas)
         super().__init__(**kwargs)
+        self._setup()
 
     def p_mean_variance(
         self, model, *args, **kwargs
