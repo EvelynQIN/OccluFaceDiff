@@ -65,15 +65,16 @@ class DiffusionModel(GaussianDiffusion):
 
     def _setup(self):
         self._create_flame()
-        # self._setup_renderer()
+        self._setup_renderer()
         # self._load_evalnet()
 
-    # @profile
+    @profile
     def _create_flame(self):
         print(f"[Diffusion] Load FLAME.")
         self.flame = FLAME(self.model_cfg).to(self.device)
         self.flametex = FLAMETex(self.model_cfg).to(self.device)
-    # @profile
+
+    @profile
     def _setup_renderer(self):
         print(f"[Diffusion] Set up Renderer.")
         self.render = SRenderY(
@@ -96,7 +97,7 @@ class DiffusionModel(GaussianDiffusion):
         # # dense mesh template, for save detail mesh
         # self.dense_template = np.load(self.model_cfg.dense_template_path, allow_pickle=True, encoding='latin1').item()
     
-    # @profile
+    @profile
     def _load_evalnet(self):
  
         # ----- load resnet trained from EMOCA https://github.com/radekd91/emoca for expression loss ----- #
@@ -271,11 +272,10 @@ class DiffusionModel(GaussianDiffusion):
         # expr_jitter = torch.mean((expr_pred[:,2:] + expr_pred[:,:-2] - expr_pred[:,1:-1]) ** 2)
         
         # batch the output
-        # images = model_kwargs['image'].view(bs*n, *model_kwargs['image'].shape[2:])
         shape = model_kwargs['shape'].view(bs*n, -1)
         R_aa = model_kwargs['R'].view(bs*n, -1)
-        expr_pred = expr_pred.view(bs*n, -1)
-        jaw_pred_aa = utils_transform.sixd2aa(jaw_pred.view(-1, 6))
+        expr_pred = expr_pred.reshape(bs*n, -1)
+        jaw_pred_aa = utils_transform.sixd2aa(jaw_pred.reshape(-1, 6))
         pose_pred = torch.cat([R_aa, jaw_pred_aa], dim=-1)
         cam = model_kwargs['cam'].view(bs*n, -1)
         
@@ -290,44 +290,50 @@ class DiffusionModel(GaussianDiffusion):
         landmarks2d[:, :, 1:] = -landmarks2d[:, :, 1:]
         trans_verts = batch_orth_proj(verts, cam)
         trans_verts[:, :, 1:] = -trans_verts[:, :, 1:]
-        
-        # rendering using tex
+
+        # # rendering
+        # images = model_kwargs['image'].view(bs*n, *model_kwargs['image'].shape[2:])
         # light = model_kwargs['light'].view(bs*n, *model_kwargs['light'].shape[2:])
-        # tex = model_kwargs['tex'].view(bs*n, -1)
-        # albedo = self.flametex(tex).detach()
+        
+        # # if not using texture, default to gray
+        # if self.model_cfg.use_texture:
+        #     tex = model_kwargs['tex'].view(bs*n, -1)
+        #     albedo = self.flametex(tex).detach()
+        # else:
+        #     albedo = torch.ones([bs*n, 3, self.model_cfg.uv_size, self.model_cfg.uv_size], device=images.device) * 0.5
+
         # ops = self.render(verts, trans_verts, albedo, light)
-        # for key in ops.keys():
-        #     ops[key] = ops[key].view(bs, n, *ops[key].shape[1:])
         
         # calculate rendered images (shapes + texture)
         # mask_face_eye = F.grid_sample(self.uv_face_eye_mask.expand(bs*n,-1,-1,-1), ops['grid'].detach(), align_corners=False)
         
         ## --------loss computation -------- ##
         
-        # ---- photometric loss ---- #
-        # photometric_loss = torch.mean(mask_face_eye * ops['alpha_images'] * (ops['images'] - images).abs())
-            
         # ---- geometric losses ---- #
         lmk_gt = model_kwargs['lmk_2d'].view(bs*n, *model_kwargs['lmk_2d'].shape[2:])
         lmk2d_loss = self.batch_lmk2d_loss(landmarks2d, lmk_gt)  
         eye_closure_loss = eye_closure_lmk_loss(landmarks2d, lmk_gt)
         mouth_closure_loss = mouth_closure_lmk_loss(landmarks2d, lmk_gt)
         
-        # # ---- emotion loss from EMOCA ---- #
+        #  # ---- photometric loss ---- #
+        # photometric_loss = torch.mean(mask_face_eye * ops['alpha_images'] * (ops['images'] - images).abs())
+            
+        
+        # # # ---- emotion loss from EMOCA ---- #
         # with torch.no_grad():
         #     emotion_features_pred = self.expression_net(ops['images'])
         #     emotion_features_gt = self.expression_net(images)
         # emotion_loss = F.mse_loss(emotion_features_pred, emotion_features_gt)
-        # del emotion_features_pred, emotion_features_gt
+
         
-        # ---- lipread loss ---- #
-        # first crop the mouths of the input and rendered faces and then calculate the cosine distance of features 
+        # # ---- lipread loss ---- #
+        # # first crop the mouths of the input and rendered faces and then calculate the distance of features 
         # mouths_gt = self.cut_mouth(images, lmk_gt[...,:2])
         # mouths_pred = self.cut_mouth(ops['images'], landmarks2d[...,:2])
         # mouths_gt = self.mouth_transform(mouths_gt)
         # mouths_pred = self.mouth_transform(mouths_pred)
 
-        # # # ---- resize back to BxKx1xHxW (grayscale input for lipread net) ---- #
+        # # # # ---- resize back to BxKx1xHxW (grayscale input for lipread net) ---- #
         # mouths_gt = mouths_gt.view(bs, n, mouths_gt.shape[-2], mouths_gt.shape[-1])
         # mouths_pred = mouths_pred.view(bs, n, mouths_gt.shape[-2], mouths_gt.shape[-1])
 
@@ -346,9 +352,9 @@ class DiffusionModel(GaussianDiffusion):
 
         # lipread_loss = F.mse_loss(lip_features_gt, lip_features_pred)
         
-        loss = 1.0 * lmk2d_loss + 5.0 * mouth_closure_loss + 2.0 * eye_closure_loss \
-            + 1.0 * 0 + 2.0 * 0 \
-            + 10.0 * expr_loss + 10.0 * pose_loss + 1.0 * expr_vel_loss + 1.0 * pose_vel_loss
+        loss = 0.2 * lmk2d_loss + 0.5 * mouth_closure_loss + 0.1 * eye_closure_loss \
+            + 1.0 * expr_loss + 1.0 * pose_loss + 0.01 * expr_vel_loss + 0.01 * pose_vel_loss \
+            + 0.001 * 0 + 0.5 * 0 + 0.1 * 0\
             
         
         loss_dict = {
@@ -366,6 +372,8 @@ class DiffusionModel(GaussianDiffusion):
             # 'lipread_loss' : lipread_loss.detach().item(),
             'loss': loss
         }
+
+        del ops
 
         return loss_dict
 

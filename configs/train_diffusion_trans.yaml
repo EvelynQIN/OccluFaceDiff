@@ -1,5 +1,5 @@
 save_dir: "./checkpoints" 
-num_epoch: 50
+num_epoch: 100
 dataset: "multiface" 
 dataset_path: "./dataset"
 weight_decay: 0.001
@@ -8,17 +8,17 @@ gradient_accumulation_steps: 128
 lr: 0.0003 
 cosine_scheduler: True
 device: 0
-num_workers: 8
+num_workers: 4
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
 train_dataset_repeat_times: 30
 input_motion_length: 20
-occlusion_mask_prob: 0.3
+occlusion_mask_prob: 0.6
 # mixed_occlusion_prob: 0.3
 cond_mask_prob: 0.1
 fps: 30
-# resume_checkpoint: "checkpoints/Transformer_512d_freeze/model_22.pt"
+resume_checkpoint: "checkpoints/Transformer_512d_2l_0.5occ/model_23.pt"
 
 # flame_params
 n_exp: 50 
@@ -31,7 +31,7 @@ save_interval: 1
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_512d_2l" 
+arch: "diffusion_Transformer_512d_2l_0.6occ" 
 latent_dim: 512
 dropout: 0.2
 

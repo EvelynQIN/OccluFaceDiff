@@ -1,28 +1,21 @@
 import os
 import glob 
-import argparse
-import json
-import logging
-import multiprocessing as mp
 import os
+import cv2
 
-import requests
-from bs4 import BeautifulSoup
-
-def main():
-    keep_cams = ['23_C', '26_C']
-    img_folder = 'dataset/FaMoS/downsampled_images_4'
+def main(img_folder):
+    keep_cams = '26_C'
     
     for sub in os.listdir(img_folder):
-        if os.path.split(sub)[-1].endswith("readme"):
+        if 'readme' in sub:
             continue
         for motion in os.listdir(os.path.join(img_folder, sub)):
-            files = glob.glob(os.path.join(img_folder, sub, motion, '**/*.png'))
+            files = glob.glob(os.path.join(img_folder, sub, motion, '*.jpg'))
             for f in files:
-                cam_type = os.path.split(f)[-1].split('.')[2]
-                if cam_type not in keep_cams:
+                if keep_cams not in f:
                     os.remove(f)
             
 
 if __name__ == "__main__":
-    main()
+    img_folder = 'dataset/vocaset/image'
+    main(img_folder)

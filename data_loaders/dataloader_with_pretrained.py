@@ -104,7 +104,7 @@ class TrainDataset(Dataset):
         add_mask = torch.bernoulli(torch.ones(1) * self.occlusion_mask_prob)[0]
         if not add_mask:
             return mask_array
-
+        
         num_frames = mask_array.shape[0]
 
         # select occlusion type
@@ -116,7 +116,7 @@ class TrainDataset(Dataset):
                 mask_array[:,:,:] = 0
             elif occlusion_type == 1:
                 # occlude the whole mouth region
-                mask_array[:,100:,100:] = 0
+                mask_array[:,100:,:] = 0
             else:
                 # occlude random regions for each frame
                 mask_bbx = torch.randint(low=4, high=220, size=(num_frames,4)) 

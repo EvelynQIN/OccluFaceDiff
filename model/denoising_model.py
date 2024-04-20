@@ -149,6 +149,18 @@ class FaceTransformer(nn.Module):
         else:
             return cond
     
+    def mask_audio_cond(self, audio_emb):
+        """
+        audio_emb: [bs, n, c]
+        """
+        bs = audio_emb.shape[0]
+        mask = torch.bernoulli(
+            torch.ones(bs, device=audio_emb.device) * 0.2
+        )
+        mask = mask.view(bs, 1, 1)
+        # 1-> use null_cond, 0-> use real cond
+        return audio_emb * (1.0 - mask)
+    
     def forward(self, x, timesteps, image, lmk_2d, img_mask, lmk_mask, audio_emb, force_mask=False, **kwargs):
         """
         x: [bs, nframes, nfeats] 
@@ -168,6 +180,7 @@ class FaceTransformer(nn.Module):
         
         lmk_cond = self.lmk_process(lmk_2d.reshape(bs, n, -1))  # [seqlen, bs, d]
         
+        audio_emb = self.mask_audio_cond(audio_emb)
         audio_cond = self.audio_process(audio_emb)  # [seqlen, bs, d]
         
         # # if concat
@@ -183,6 +196,7 @@ class FaceTransformer(nn.Module):
         if self.use_mask:
             T = x.shape[1]
             tgt_mask = self.tgt_mask[:, :T, :T].clone().detach().to(device=x.device)    # (num_heads, seqlen, seqlen)
+            tgt_mask = tgt_mask.repeat(bs, 1, 1)
 
         # cross attention of the sparse cond & motion_output
         x = self.input_process(x)

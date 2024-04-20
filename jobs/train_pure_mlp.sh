@@ -1,1 +1,0 @@
-python3 train.py --config_path configs/train_mlp.yaml
