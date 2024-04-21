@@ -21,9 +21,9 @@ from utils.renderer import SRenderY
 from skimage.io import imread
 import torchvision.transforms.functional as F_v
 import sys
-sys.path.append("external/Visual_Speech_Recognition_for_Multiple_Languages")
-from external.Visual_Speech_Recognition_for_Multiple_Languages.lipreading.model import Lipreading
-from external.Visual_Speech_Recognition_for_Multiple_Languages.dataloader.transform import Compose, Normalize, CenterCrop, SpeedRate, Identity
+# sys.path.append("external/Visual_Speech_Recognition_for_Multiple_Languages")
+# from external.Visual_Speech_Recognition_for_Multiple_Languages.lipreading.model import Lipreading
+# from external.Visual_Speech_Recognition_for_Multiple_Languages.dataloader.transform import Compose, Normalize, CenterCrop, SpeedRate, Identity
 from configparser import ConfigParser
 
 from diffusion.gaussian_diffusion import (
@@ -65,16 +65,14 @@ class DiffusionModel(GaussianDiffusion):
 
     def _setup(self):
         self._create_flame()
-        self._setup_renderer()
+        # self._setup_renderer()
         # self._load_evalnet()
 
-    @profile
     def _create_flame(self):
         print(f"[Diffusion] Load FLAME.")
         self.flame = FLAME(self.model_cfg).to(self.device)
         self.flametex = FLAMETex(self.model_cfg).to(self.device)
 
-    @profile
     def _setup_renderer(self):
         print(f"[Diffusion] Set up Renderer.")
         self.render = SRenderY(
@@ -97,106 +95,105 @@ class DiffusionModel(GaussianDiffusion):
         # # dense mesh template, for save detail mesh
         # self.dense_template = np.load(self.model_cfg.dense_template_path, allow_pickle=True, encoding='latin1').item()
     
-    @profile
-    def _load_evalnet(self):
+    # def _load_evalnet(self):
  
-        # ----- load resnet trained from EMOCA https://github.com/radekd91/emoca for expression loss ----- #
-        self.expression_net = ExpressionLossNet().to(self.device)
-        self.emotion_checkpoint = torch.load(self.model_cfg.expression_net_path)['state_dict']
-        self.emotion_checkpoint['linear.0.weight'] = self.emotion_checkpoint['linear.weight']
-        self.emotion_checkpoint['linear.0.bias'] = self.emotion_checkpoint['linear.bias']
+    #     # ----- load resnet trained from EMOCA https://github.com/radekd91/emoca for expression loss ----- #
+    #     self.expression_net = ExpressionLossNet().to(self.device)
+    #     self.emotion_checkpoint = torch.load(self.model_cfg.expression_net_path)['state_dict']
+    #     self.emotion_checkpoint['linear.0.weight'] = self.emotion_checkpoint['linear.weight']
+    #     self.emotion_checkpoint['linear.0.bias'] = self.emotion_checkpoint['linear.bias']
 
-        print(f"[Diffusion] Load emotion net.")
-        self.expression_net.load_state_dict(self.emotion_checkpoint, strict=False)
-        self.expression_net.eval()
-        for param in self.expression_net.parameters():
-            param.requires_grad = False
+    #     print(f"[Diffusion] Load emotion net.")
+    #     self.expression_net.load_state_dict(self.emotion_checkpoint, strict=False)
+    #     self.expression_net.eval()
+    #     for param in self.expression_net.parameters():
+    #         param.requires_grad = False
 
-        # ----- load lipreader network for lipread loss ----- #
-        config = ConfigParser()
+    #     # ----- load lipreader network for lipread loss ----- #
+    #     config = ConfigParser()
 
-        config.read('configs/lipread_config.ini')
-        self.lip_reader = Lipreading(
-            config,
-            device=self.device
+    #     config.read('configs/lipread_config.ini')
+    #     self.lip_reader = Lipreading(
+    #         config,
+    #         device=self.device
             
-        )
-        self.lip_reader.eval()
-        self.lip_reader.model.eval()
-        for param in self.lip_reader.parameters():
-            param.requires_grad = False
+    #     )
+    #     self.lip_reader.eval()
+    #     self.lip_reader.model.eval()
+    #     for param in self.lip_reader.parameters():
+    #         param.requires_grad = False
 
-        # ---- initialize values for cropping the face around the mouth for lipread loss ---- #
-        # ---- this code is borrowed from https://github.com/mpc001/Visual_Speech_Recognition_for_Multiple_Languages ---- #
-        self._crop_width = 96
-        self._crop_height = 96
-        self._window_margin = 12
-        self._start_idx = 48
-        self._stop_idx = 68
-        crop_size = (88, 88)
-        (mean, std) = (0.421, 0.165)
+    #     # ---- initialize values for cropping the face around the mouth for lipread loss ---- #
+    #     # ---- this code is borrowed from https://github.com/mpc001/Visual_Speech_Recognition_for_Multiple_Languages ---- #
+    #     self._crop_width = 96
+    #     self._crop_height = 96
+    #     self._window_margin = 12
+    #     self._start_idx = 48
+    #     self._stop_idx = 68
+    #     crop_size = (88, 88)
+    #     (mean, std) = (0.421, 0.165)
 
-        # ---- transform mouths before going into the lipread network for loss ---- #
-        self.mouth_transform = Compose([
-            Normalize(0.0, 1.0),
-            CenterCrop(crop_size),
-            Normalize(mean, std),
-            Identity()]
-        )
+    #     # ---- transform mouths before going into the lipread network for loss ---- #
+    #     self.mouth_transform = Compose([
+    #         Normalize(0.0, 1.0),
+    #         CenterCrop(crop_size),
+    #         Normalize(mean, std),
+    #         Identity()]
+    #     )
     
-    def cut_mouth(self, images, landmarks, convert_grayscale=True):
-        """ function adapted from https://github.com/mpc001/Visual_Speech_Recognition_for_Multiple_Languages"""
+    # def cut_mouth(self, images, landmarks, convert_grayscale=True):
+    #     """ function adapted from https://github.com/mpc001/Visual_Speech_Recognition_for_Multiple_Languages"""
 
-        mouth_sequence = []
+    #     mouth_sequence = []
 
-        landmarks = landmarks * 112 + 112
-        for frame_idx,frame in enumerate(images):
-            window_margin = min(self._window_margin // 2, frame_idx, len(landmarks) - 1 - frame_idx)
-            smoothed_landmarks = landmarks[frame_idx-window_margin:frame_idx + window_margin + 1].mean(dim=0)
-            smoothed_landmarks += landmarks[frame_idx].mean(dim=0) - smoothed_landmarks.mean(dim=0)
+    #     landmarks = landmarks * 112 + 112
+    #     for frame_idx,frame in enumerate(images):
+    #         window_margin = min(self._window_margin // 2, frame_idx, len(landmarks) - 1 - frame_idx)
+    #         smoothed_landmarks = landmarks[frame_idx-window_margin:frame_idx + window_margin + 1].mean(dim=0)
+    #         smoothed_landmarks += landmarks[frame_idx].mean(dim=0) - smoothed_landmarks.mean(dim=0)
 
-            center_x, center_y = torch.mean(smoothed_landmarks[self._start_idx:self._stop_idx], dim=0)
+    #         center_x, center_y = torch.mean(smoothed_landmarks[self._start_idx:self._stop_idx], dim=0)
 
-            center_x = center_x.round()
-            center_y = center_y.round()
+    #         center_x = center_x.round()
+    #         center_y = center_y.round()
 
-            height = self._crop_height//2
-            width = self._crop_width//2
+    #         height = self._crop_height//2
+    #         width = self._crop_width//2
 
-            threshold = 5
+    #         threshold = 5
 
-            if convert_grayscale:
-                img = F_v.rgb_to_grayscale(frame).squeeze()
-            else:
-                img = frame
+    #         if convert_grayscale:
+    #             img = F_v.rgb_to_grayscale(frame).squeeze()
+    #         else:
+    #             img = frame
 
-            if center_y - height < 0:
-                center_y = height
-            if center_y - height < 0 - threshold:
-                raise Exception('too much bias in height')
-            if center_x - width < 0:
-                center_x = width
-            if center_x - width < 0 - threshold:
-                raise Exception('too much bias in width')
+    #         if center_y - height < 0:
+    #             center_y = height
+    #         if center_y - height < 0 - threshold:
+    #             raise Exception('too much bias in height')
+    #         if center_x - width < 0:
+    #             center_x = width
+    #         if center_x - width < 0 - threshold:
+    #             raise Exception('too much bias in width')
 
-            if center_y + height > img.shape[-2]:
-                center_y = img.shape[-2] - height
-            if center_y + height > img.shape[-2] + threshold:
-                raise Exception('too much bias in height')
-            if center_x + width > img.shape[-1]:
-                center_x = img.shape[-1] - width
-            if center_x + width > img.shape[-1] + threshold:
-                raise Exception('too much bias in width')
+    #         if center_y + height > img.shape[-2]:
+    #             center_y = img.shape[-2] - height
+    #         if center_y + height > img.shape[-2] + threshold:
+    #             raise Exception('too much bias in height')
+    #         if center_x + width > img.shape[-1]:
+    #             center_x = img.shape[-1] - width
+    #         if center_x + width > img.shape[-1] + threshold:
+    #             raise Exception('too much bias in width')
 
-            mouth = img[...,int(center_y - height): int(center_y + height),
-                        int(center_x - width): int(center_x + round(width))]
+    #         mouth = img[...,int(center_y - height): int(center_y + height),
+    #                     int(center_x - width): int(center_x + round(width))]
 
-            mouth_sequence.append(mouth)
+    #         mouth_sequence.append(mouth)
             
-            del img
+    #         del img
 
-        mouth_sequence = torch.stack(mouth_sequence,dim=0)
-        return mouth_sequence
+    #     mouth_sequence = torch.stack(mouth_sequence,dim=0)
+    #     return mouth_sequence
 
     
     def batch_lmk2d_loss(self, lmk2d_pred, lmk2d_gt):
@@ -233,19 +230,71 @@ class DiffusionModel(GaussianDiffusion):
 
         return torch.matmul(dif_abs, vis) * 1.0 / k
 
-    def batch_normalized_3d_closure_loss(self, closure_pred, closure_gt):
-        """
-        Computes the loss between the ground truth and pred 3d closure losses
-        Inputs:
-        closure_pred  : bs x v
-        closure_gt: bs x v
-        """
-        closure_loss =  1 - torch.mean(F.cosine_similarity(closure_pred, closure_gt, dim=1))
-        return closure_loss
-        
-    # loss computation between target and prediction
-    # @profile
+    # loss computation between target and prediction where only 3d supervision is available
     def masked_l2(self, target, model_output, **model_kwargs):
+
+        bs, n, c = target.shape    
+
+        loss_dict = {}
+        
+        # parse the output and target
+        jaw_pred, expr_pred = model_output[...,:6], model_output[...,6:]
+        jaw_gt, expr_gt = target[...,:6], target[...,6:]
+
+        # l2 loss on flame parameters w.r.t deca's output             
+        pose_loss = F.mse_loss(jaw_pred, jaw_gt)
+        expr_loss = F.mse_loss(expr_pred, expr_gt)
+        
+        # velocity loss
+        pose_vel_loss = torch.mean(
+            ((jaw_pred[:,1:] - jaw_pred[:,:-1]) - (jaw_gt[:,1:] - jaw_gt[:,:-1])) ** 2
+        )
+        expr_vel_loss = torch.mean(
+            ((expr_pred[:,1:] - expr_pred[:,:-1]) - (expr_gt[:,1:] - expr_gt[:,:-1])) ** 2
+        )
+        
+        # batch the output
+        shape = model_kwargs['shape'].view(bs*n, -1)
+        R_aa = torch.zeros((bs*n, 3)).to(shape.device)
+        expr_pred = expr_pred.reshape(bs*n, -1)
+        expr_gt = expr_gt.reshape(bs*n, -1)
+        jaw_pred_aa = utils_transform.sixd2aa(jaw_pred.reshape(-1, 6))
+        jaw_gt_aa = utils_transform.sixd2aa(jaw_gt.reshape(-1, 6))
+        pose_pred = torch.cat([R_aa, jaw_pred_aa], dim=-1)
+        pose_gt = torch.cat([R_aa, jaw_gt_aa], dim=-1)
+        
+        # flame decoder
+        _, lmk_3d_pred, _ = self.flame(
+            shape_params=shape, 
+            expression_params=expr_pred,
+            pose_params=pose_pred)
+        
+        _, lmk_3d_gt, _ = self.flame(
+            shape_params=shape, 
+            expression_params=expr_gt,
+            pose_params=pose_gt)
+        
+        lmk3d_loss = torch.mean(
+            torch.norm(lmk_3d_gt - lmk_3d_pred, 2, -1)
+        )
+        
+        loss = 1.0 * expr_loss + 1.0 * pose_loss + 0.01 * expr_vel_loss + 0.01 * pose_vel_loss \
+                + 0.5 * lmk3d_loss
+            
+        
+        loss_dict = {
+            'expr_loss': expr_loss.detach().item(),
+            'pose_loss': pose_loss.detach().item(),
+            'expr_vel_loss': expr_vel_loss.detach().item(),
+            'pose_vel_loss': pose_vel_loss.detach().item(),
+            'lmk3d_loss': lmk3d_loss.detach().item(),
+            'loss': loss
+        }
+
+        return loss_dict
+        
+    # loss computation between target and prediction where only 2d images are available
+    def masked_l2_2dloss(self, target, model_output, **model_kwargs):
 
         bs, n, c = target.shape    
 
@@ -372,8 +421,6 @@ class DiffusionModel(GaussianDiffusion):
             # 'lipread_loss' : lipread_loss.detach().item(),
             'loss': loss
         }
-
-        del ops
 
         return loss_dict
 

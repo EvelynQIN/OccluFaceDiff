@@ -1,22 +1,22 @@
 save_dir: "./checkpoints" 
 num_epoch: 100
-dataset: "multiface" 
+dataset: "vocaset" 
 dataset_path: "./dataset"
 weight_decay: 0.001
 batch_size: 1
 gradient_accumulation_steps: 128
-lr: 0.0003 
+lr: 0.0001
 cosine_scheduler: True
 device: 0
 num_workers: 4
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
-train_dataset_repeat_times: 30
+train_dataset_repeat_times: 100
 input_motion_length: 20
-occlusion_mask_prob: 0.6
-# mixed_occlusion_prob: 0.3
-cond_mask_prob: 0.1
+occlusion_mask_prob: 0.3
+
+cond_mask_prob: 0
 fps: 30
 resume_checkpoint: "checkpoints/Transformer_512d_2l_0.5occ/model_23.pt"
 
@@ -31,7 +31,7 @@ save_interval: 1
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_512d_2l_0.6occ" 
+arch: "diffusion_Transformer_512d_2l_0.3occ_voca" 
 latent_dim: 512
 dropout: 0.2
 
@@ -45,19 +45,15 @@ num_heads: 8
 # unusable for transformer encoder 
 num_dec_layers: 3
 
-# for flame
-# flame_model_path: "flame_2020/generic_model.pkl"
-# flame_lmk_embedding_path: "flame_2020/dense_lmk_embedding.npy"
-
 # training losses
-shape_loss_w: 0.01
-pose_loss_w: 5.0
-expr_loss_w: 5.0
-trans_loss_w: 5.0
-mouth_closure_loss_w: 1.0
-eye_closure_loss_w: 1.0
-verts3d_loss_w: 1000.0
-lmk2d_loss_w: 0.1
-verts2d_loss_w: 100.0
-pose_jitter_w: 0.1
-exp_jitter_w: 0.1
+# shape_loss_w: 0.01
+# pose_loss_w: 5.0
+# expr_loss_w: 5.0
+# trans_loss_w: 5.0
+# mouth_closure_loss_w: 1.0
+# eye_closure_loss_w: 1.0
+# verts3d_loss_w: 1000.0
+# lmk2d_loss_w: 0.1
+# verts2d_loss_w: 100.0
+# pose_jitter_w: 0.1
+# exp_jitter_w: 0.1

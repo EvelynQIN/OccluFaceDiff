@@ -148,5 +148,42 @@ multiface_entities = ["002645310", "002643814", "002539136", "7889059", "0027575
             "8870559", "6674443", "5067077", "002914589", "6795937", "002421669"]
 
 image_size = {
-    'multiface': (512, 333)
+    'multiface': (512, 333),
+    'FaMoS': (300, 400),
+    'vocaset': (300, 400)
 }
+
+# FaMoS
+FaMoS_motion_id = [
+    'anger', 'bareteeth', 'blow_cheeks', 'cheeks_in', 
+    'disgust', 'eyebrow', 'fear', 'happiness', 
+    'head_rotation_left_right', 'head_rotation_up_down', 'high_smile', 'jaw', 
+    'kissing', 'lip_corners_down', 'lips_back', 'lips_up', 
+    'mouth_down', 'mouth_extreme', 'mouth_middle', 'mouth_open', 
+    'mouth_side', 'mouth_up', 'rolling_lips', 'sadness', 
+    'sentence', 'smile_closed', 'surprise', 'wrinkle_nose']
+
+FaMoS_split = {
+    'train': list(range(20)),
+    'test': list(range(20, 28)) # use last 8 sequences as testset
+}
+
+# vocaset
+vocaset_motion_id = [
+    'sentence01', 'sentence02', 'sentence03', 'sentence04', 
+    'sentence05', 'sentence06', 'sentence07', 'sentence08', 
+    'sentence09', 'sentence10', 'sentence11', 'sentence12', 
+    'sentence13', 'sentence14', 'sentence15', 'sentence16', 
+    'sentence17', 'sentence18', 'sentence19', 'sentence20', 
+    'sentence21', 'sentence22', 'sentence23', 'sentence24', 
+    'sentence25', 'sentence26', 'sentence27', 'sentence28', 
+    'sentence29', 'sentence30', 'sentence31', 'sentence32', 
+    'sentence33', 'sentence34', 'sentence35', 'sentence36', 
+    'sentence37', 'sentence38', 'sentence39', 'sentence40']
+
+vocaset_split = {
+    'train': list(range(30)),
+    'test': list(range(30, 40)) # use last 10 sequences as testset
+}
+
+

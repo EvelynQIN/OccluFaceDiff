@@ -1,4 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. All Rights Reserved
 import json
 import os
 import random
@@ -8,15 +7,14 @@ import numpy as np
 import torch
 
 from data_loaders.dataloader_w3d import get_dataloader, load_data, TrainDataset
-from model.FLAME import FLAME
-from model.networks import PureMLP
+
 # from runner.train_mlp import train_step, val_step
 from runner.training_loop import TrainLoop
 
 from utils import dist_util
 
 from utils.model_util import create_model_and_diffusion
-from utils.parser_util import train_mlp_args
+from utils.parser_util import train_trans_args
 from utils.config import Config
 import wandb
 from tqdm import tqdm
@@ -45,13 +43,13 @@ def set_deterministic(seed):
     torch.manual_seed(seed)
 
 def main():
-    args = train_mlp_args() 
+    args = train_trans_args() 
     kwargs = dict(args._get_kwargs())
     cfg_path = args.config_path
     args = Config(default_cfg_path=cfg_path, **kwargs)
 
-    pretrained_args = get_cfg_defaults()
-
+    default_cfg = get_cfg_defaults()
+    
     set_deterministic(args.seed)
 
     model_type = args.arch.split('_')[0]
@@ -64,7 +62,7 @@ def main():
             name=args.arch,
             config=args,
             settings=wandb.Settings(start_method="fork"),
-            dir="./wandb"
+            dir="./"
         )
     
     if args.save_dir is None:
@@ -77,44 +75,45 @@ def main():
     with open(args_path, "w") as fw:
         json.dump(dict(args), fw, indent=4, sort_keys=True) 
     
-    train_image_path, train_processed_path = load_data(
-        args.dataset,
+    print("creating training data loader...")    
+    train_processed_path = load_data(
+        [args.dataset],
         args.dataset_path,
         "train",
+        args.input_motion_length
     )
+    print(f"number of train sequences: {len(train_processed_path['img_folders'])}")
     train_dataset = TrainDataset(
         args.dataset,
-        train_image_path,
         train_processed_path,
         args.input_motion_length,
         args.train_dataset_repeat_times,
         args.no_normalization,
         args.occlusion_mask_prob,
-        args.mixed_occlusion_prob,
         args.fps
     )
-    
+
     train_loader = get_dataloader(
         train_dataset, "train", batch_size=args.batch_size, num_workers=args.num_workers
     )
     
     # val data loader
     print("creating val data loader...")
-    val_image_path, val_processed_path = load_data(
-        args.dataset,
+    val_processed_path = load_data(
+        [args.dataset],
         args.dataset_path,
         "test",
+        args.input_motion_length
     )
-    
+    print(f"number of test sequences: {len(val_processed_path['img_folders'])}")
+
     val_dataset = TrainDataset(
         args.dataset,
-        val_image_path, 
         val_processed_path,
         args.input_motion_length,
-        5,
+        10,
         args.no_normalization,
         args.occlusion_mask_prob,
-        args.mixed_occlusion_prob,
         args.fps
     )
     
@@ -122,7 +121,7 @@ def main():
         val_dataset, "val", batch_size=args.batch_size, num_workers=args.num_workers
     )
 
-    train_diffusion_model(args, pretrained_args.model, train_loader, val_loader)
+    train_diffusion_model(args, default_cfg.model, train_loader, val_loader)
 
 if __name__ == "__main__":
     main()

@@ -101,21 +101,7 @@ class TrainLoop:
         self.ddp_model = self.model 
 
         self.loss_keys = None
-        
-        # self.loss_weights = {
-        #     'shape_loss_w': args.shape_loss_w,
-        #     'pose_loss_w': args.pose_loss_w, 
-        #     'expr_loss_w': args.expr_loss_w,
-        #     'trans_loss_w': args.trans_loss_w,
-        #     'mouth_closure_loss_w': args.mouth_closure_loss_w,
-        #     'eye_closure_loss_w': args.eye_closure_loss_w,
-        #     'verts3d_loss_w': args.verts3d_loss_w,
-        #     'lmk2d_loss_w': args.lmk2d_loss_w,
-        #     'verts2d_loss_w': args.verts2d_loss_w,
-        #     'pose_jitter_w': args.pose_jitter_w,
-        #     'exp_jitter_w': args.exp_jitter_w
-        # }
-    @profile
+
     def _load_and_sync_parameters(self):
         resume_checkpoint = self.resume_checkpoint
 
@@ -129,7 +115,7 @@ class TrainLoop:
                     map_location=dist_util.dev(),
                 )
             )
-    # @profile
+
     def _load_optimizer_state(self):
         main_checkpoint = self.resume_checkpoint
         opt_checkpoint = os.path.join(
@@ -143,7 +129,6 @@ class TrainLoop:
         )
         self.opt.load_state_dict(state_dict)
     
-    @profile
     def run_loop(self):
         local_step = 0
         for epoch in range(self.resume_epoch+1, self.num_epochs+1):
