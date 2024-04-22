@@ -6,7 +6,6 @@ import torch
 import torchvision
 import torchvision.transforms.functional as F_v
 
-from data_loaders.dataloader import load_data, TestDataset
 from tqdm import tqdm
 
 from utils import utils_transform, utils_visualize
@@ -42,29 +41,6 @@ import imageio
 
 os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
 
-pred_metrics = [
-    "pred_jitter",
-    "mvpe",
-    "mvve",
-    "shape_error",
-    "expre_error",
-    "pose_error",
-    "lmk_3d_mvpe",
-    "lmk_2d_mpe",
-    "mvpe_face",
-    "mvpe_eye_region",
-    
-    "mvpe_forehead",
-    "mvpe_lips",
-    "mvpe_neck",
-    "mvpe_nose",
-]
-gt_metrics = [
-    "gt_jitter",
-]
-
-all_metrics = pred_metrics + gt_metrics
-
 class MotionTracker:
     
     def __init__(self, config, model_cfg, device='cuda'):
@@ -76,13 +52,11 @@ class MotionTracker:
         self.input_motion_length = config.input_motion_length
         self.target_nfeat = config.n_exp + config.n_pose
         # IO setups
-        self.motion_id = f'{config.subject_id}_{config.motion_id}' if config.test_mode != 'in_the_wild' \
-                        else os.path.split(config.video_path)[-1].split('.')[0]
+        self.motion_id = os.path.split(config.video_path)[-1].split('.')[0]
                         
         # name of the tested motion sequence
         self.save_folder = self.config.save_folder
-        self.output_folder = os.path.join(self.save_folder, self.config.arch)
-        self.motion_name = f'{self.motion_id}_{self.config.exp_name}'
+        self.output_folder = os.path.join(self.save_folder, self.config.arch, self.config.exp_name)
         
         logger.add(os.path.join(self.output_folder, 'predict.log'))
         logger.info(f"Using device {self.device}.")
@@ -106,10 +80,15 @@ class MotionTracker:
         self._create_flame()
         self._setup_renderer()
         
-        # gif_writer
-        savefolder = os.path.join(self.output_folder, self.motion_name)
-        Path(savefolder).mkdir(parents=True, exist_ok=True)
-        self.writer = imageio.get_writer(os.path.join(savefolder, 'motion.gif'), mode='I')
+        # writer
+        Path(self.output_folder).mkdir(parents=True, exist_ok=True)
+
+        if self.config.with_audio:
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            self.video_path = os.path.join(self.output_folder, f'{self.motion_id}.mp4')
+            self.writer = cv2.VideoWriter(self.video_path, fourcc, self.config.fps, (self.image_size*4, self.image_size))
+        else:
+            self.writer = imageio.get_writer(os.path.join(self.output_folder, f'{self.motion_id}.gif'), mode='I')
 
     def _create_flame(self):
         self.flame = FLAME(self.model_cfg).to(self.device)
@@ -148,9 +127,6 @@ class MotionTracker:
         denoise_model.to(self.device)  # dist_util.dev())
         denoise_model.eval()  # disable random masking
         return denoise_model, diffusion
-    
-    def output_video(self, fps=30):
-        utils_visualize.images_to_video(self.output_folder, fps, self.motion_name)
     
     def sample_motion(self, motion_split, mem_idx):
         
@@ -272,7 +248,11 @@ class MotionTracker:
                 'lmk': lmk2d_vis[i].detach().cpu()
             }
             grid_image = self.visualize(vis_dict)
-            self.writer.append_data(grid_image)
+            
+            if self.config.with_audio:
+                self.writer.write(grid_image[:,:,[2,1,0]])
+            else:
+                self.writer.append_data(grid_image)
         
         # cv2.imwrite(f'{savefolder}/{frame_id}.jpg', final_views)
             
@@ -324,6 +304,14 @@ class MotionTracker:
             output_sample, deca_code = self.sample_motion(motion_split, mem_idx)
             self.vis_motion_split(deca_code, output_sample)
         logger.info(f'DDPM sample {self.num_frames} frames used: {self.sample_time} seconds.')
+        
+        # concat audio 
+        if self.config.with_audio:
+            self.writer.release()
+            out_video_path = os.path.join(self.output_folder, f"{self.motion_id}_audio.mp4")
+            os.system(f"ffmpeg -i {self.video_path} -i {video_processor.audio_path} -c:v copy {out_video_path}")
+            os.system(f"rm {self.video_path}")
+        
             
 
 def main():

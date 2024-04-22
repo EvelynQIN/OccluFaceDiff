@@ -6,7 +6,7 @@ import torch
 import torchvision
 import torchvision.transforms.functional as F_v
 
-from data_loaders.dataloader import load_data, TestDataset
+from data_loaders.dataloader_with_pretrained import load_data, TestDataset
 from tqdm import tqdm
 
 from utils import utils_transform, utils_visualize
@@ -20,7 +20,7 @@ import os.path
 from enum import Enum
 from glob import glob
 from pathlib import Path
-
+import subprocess
 import cv2
 import torch.nn.functional as F
 from loguru import logger
@@ -43,28 +43,6 @@ import ffmpeg
 
 
 os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
-
-pred_metrics = [
-    "pred_jitter",
-    "mvpe",
-    "mvve",
-    "shape_error",
-    "expre_error",
-    "pose_error",
-    "lmk_3d_mvpe",
-    "lmk_2d_mpe",
-    "mvpe_face",
-    "mvpe_eye_region",
-    "mvpe_forehead",
-    "mvpe_lips",
-    "mvpe_neck",
-    "mvpe_nose",
-]
-gt_metrics = [
-    "gt_jitter",
-]
-
-all_metrics = pred_metrics + gt_metrics
 
 class MotionTracker:
     
@@ -343,9 +321,10 @@ class MotionTracker:
             # concat audio 
             if self.with_audio:
                 self.writer.release()
-                input_video = ffmpeg.input(video_path+'.mp4')
-                input_audio = ffmpeg.input(audio_path)
-                ffmpeg.concat(input_video, input_audio, v=1, a=1).output(os.path.join(video_path+'_audio.mp4')).run()
+                # input_video = ffmpeg.input(video_path+'.mp4')
+                # input_audio = ffmpeg.input(audio_path)
+                # ffmpeg.concat(input_video, input_audio, v=1, a=1).output(video_path+'_audio.mp4', vcodec='rawvideo').run()
+                os.system(f"ffmpeg -i {video_path}.mp4 -i {audio_path} -c:v copy {video_path}_audio.mp4")
                 os.system(f"rm {video_path}.mp4")
             
             torch.cuda.empty_cache()

@@ -13,6 +13,7 @@ from transformers import Wav2Vec2Processor
 import librosa
 from model.wav2vec import Wav2Vec2Model
 from mmseg.apis import inference_model, init_model
+from moviepy.editor import VideoFileClip
 
 class VideoProcessor:
     def __init__(self, config=None, image_folder='./outputs'):
@@ -23,11 +24,6 @@ class VideoProcessor:
         self.scale = config.scale 
         self.image_folder = image_folder
         self.K = config.input_motion_length # motion length to chunk
-
-        # for audio alignment
-        self.audio_fps = 16000  
-        self.data_fps_original = 30 # TODO
-        self.sample_radio = int(self.audio_fps / self.data_fps_original)
         
         # landmark detector
         face_detector_kwargs = {
@@ -74,26 +70,19 @@ class VideoProcessor:
         return tform
 
     def video_to_frames(self):
-        if self.config.test_mode == 'in_the_wild':
-            video_path = self.config.video_path
-            if not os.path.exists(video_path):
-                logger.error(f'Video path {video_path} not existed!')
-                exit(1) 
-            video_name = os.path.split(video_path)[1].split('.')[0]
-            frame_dst = os.path.join(self.image_folder, video_name)
-            if not os.path.exists(frame_dst):
-                os.makedirs(frame_dst)
-                os.system(f'ffmpeg -i {video_path} -vf fps={self.fps} -q:v 1 {frame_dst}/%05d.png')
-                if self.config.with_audio:
-                    self.audio_path = os.path.join(frame_dst, 'audio.wav')
-                    os.system("ffmpeg -i {} {} -y".format(video_path, self.audio_path))
-        else:
-            frame_dst = self.config.image_folder
-            if not os.path.exists(frame_dst):
-                logger.error(f'Frame dst folder {frame_dst} not existed!')
-                exit(1) 
+        video_path = self.config.video_path
+        if not os.path.exists(video_path):
+            logger.error(f'Video path {video_path} not existed!')
+            exit(1) 
+        video_name = os.path.split(video_path)[1].split('.')[0]
+        frame_dst = os.path.join(self.image_folder, video_name)
+        if not os.path.exists(frame_dst):
+            os.makedirs(frame_dst)
+            os.system(f'ffmpeg -i {video_path} -vf fps={self.fps} -q:v 1 {frame_dst}/%05d.png')
             if self.config.with_audio:
-                self.audio_path = self.config.audio_path
+                self.audio_path = os.path.join(frame_dst, 'audio.wav')
+                os.system("ffmpeg -i {} {} -y".format(video_path, self.audio_path))
+        
         self.image_paths = sorted(glob.glob(f'{frame_dst}/*.png'))
         self.num_frames = len(self.image_paths)
         logger.info(f"Motion Len = {self.num_frames}")

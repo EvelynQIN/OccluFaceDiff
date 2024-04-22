@@ -332,16 +332,19 @@ def tensor_vis_landmarks(images, landmarks, gt_landmarks=None, color = 'g', isSc
             predicted_landmark = predicted_landmarks[i]
             predicted_landmark[...,0] = predicted_landmark[...,0]*image.shape[1]/2 + image.shape[1]/2
             predicted_landmark[...,1] = predicted_landmark[...,1]*image.shape[0]/2 + image.shape[0]/2
+            if gt_landmarks is not None:
+                gt_landmarks_np[...,0] = gt_landmarks_np[...,0]*image.shape[1]/2 + image.shape[1]/2
+                gt_landmarks_np[...,1] = gt_landmarks_np[...,1]*image.shape[0]/2 + image.shape[0]/2
         else:
             predicted_landmark = predicted_landmarks[i]
         if predicted_landmark.shape[0] == 68:
             image_landmarks = plot_kpts(image, predicted_landmark, color)
             if gt_landmarks is not None:
-                image_landmarks = plot_verts(image_landmarks, gt_landmarks_np[i]*image.shape[0]/2 + image.shape[0]/2, 'r')
+                image_landmarks = plot_verts(image_landmarks, gt_landmarks_np[i], 'r')
         else:
             image_landmarks = plot_verts(image, predicted_landmark, color)
             if gt_landmarks is not None:
-                image_landmarks = plot_verts(image_landmarks, gt_landmarks_np[i]*image.shape[0]/2 + image.shape[0]/2, 'r')
+                image_landmarks = plot_verts(image_landmarks, gt_landmarks_np[i], 'r')
         vis_landmarks.append(image_landmarks)
 
     vis_landmarks = np.stack(vis_landmarks)

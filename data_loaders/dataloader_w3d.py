@@ -12,6 +12,7 @@ from utils import dataset_setting
 import cv2 
 from torchvision import transforms
 import torchvision.transforms.functional as F 
+from utils.famos_camera import batch_perspective_project, load_mpi_camera
 
 def random_color_jitter_to_video(imgs, brightness, contrast, saturation, hue, order):
     #imgs of shape [N, 3, h, w]
@@ -173,7 +174,7 @@ class TrainDataset(Dataset):
         M = cv2.getRotationMatrix2D((112, 112), angle, scale=1.0)
 
         for i, fid in enumerate(frame_id):
-            frame_id = "%06d.jpg"%(fid)
+            frame_id = "%06d"%(fid)
             kpt = lmk_2d[i].numpy()
             
             img_path = os.path.join(img_folder, f"{motion_id}.{frame_id}.{self.cam_id}.jpg")
@@ -217,118 +218,268 @@ class TrainDataset(Dataset):
             'target': target.float()
         }
 
-class TestDataset(Dataset):
+def random_occlusion(occlusion_type, mask_array):
+    occlusion_types = [
+        'downsample_frame',
+        'bottom_right',
+        'bottom_left',
+        'top_left',
+        # 'top_right',
+        'right_half',
+        'left_half',
+        'top_half' ,
+        'bottom_half',
+        'all_occ',
+        'missing_middle'
+    ]
+    num_occ_types = len(occlusion_types)
+
+    if occlusion_type == 'random_occlusion':
+        occlusion_id = torch.randint(low=0, high=num_occ_types, size=(1,))[0]
+        occlusion_type = occlusion_types[occlusion_id]
+    
+    bs, h, w = mask_array.shape
+    ch = h // 2
+    cw = w // 2
+
+    if occlusion_type == 'downsample_frame':
+        mask_array[::3] = 0
+    elif occlusion_type == 'bottom_right':
+        mask_array[:,ch:,cw:] = 0
+    elif occlusion_type == 'missing_middle':
+        mask_array[5:15,:,:] = 0
+    elif occlusion_type == 'bottom_left':
+        mask_array[:,ch:,:cw] = 0
+    elif occlusion_type == 'top_left':
+        mask_array[:,:ch,:cw] = 0
+    # elif occlusion_type == 'top_right':
+    #     mask_array[:,:100,112:] = 0
+    elif occlusion_type == 'right_half':
+        mask_array[:,:,cw:] = 0
+    elif occlusion_type == 'left_half':
+        mask_array[:,:,:cw] = 0
+    elif occlusion_type == 'top_half':
+        mask_array[:,:ch,:] = 0
+    elif occlusion_type == 'bottom_half':
+        mask_array[:,ch:,:] = 0
+    elif occlusion_type == 'all_occ':
+        mask_array[:,:,:] = 0
+    else:
+        raise ValueError(f"Occlusion type not supported!")
+    return mask_array
+
+class TestOneMotion:
     def __init__(
         self,
-        dataset,
-        norm_dict,
-        motions,
-        no_normalization=True,
-        occlusion_mask_prob=0,
+        dataset_name,
+        split_data,
+        input_motion_length=120,
+        occlusion_mask_prob=0.5,
+        fps=30,
+        occlusion_type=None
     ):
-        self.dataset = dataset
-        self.mean = norm_dict['mean']
-        self.std = norm_dict['std']
-        self.motions = motions
-        self.no_normalization = no_normalization
+        self.split_data = split_data    # path dict for one test motion sequence
+        self.dataset_name = dataset_name
+        self.data_fps_original = 60 if dataset_name != 'multiface' else 30
+        self.original_image_size = dataset_setting.image_size[self.dataset_name]
+        self.occlusion_type = occlusion_type
+
+        # image process
+        self.image_size = 224 
+        self.scale = 1.5
+        self.trans = 0
+        self.cam_id = '26_C'
+        
+        self.input_motion_length = input_motion_length
         self.occlusion_mask_prob = occlusion_mask_prob
+        self.fps = fps
+        self.skip_frames = int(self.data_fps_original / self.fps) 
 
-    def __len__(self):
-        return len(self.motion_path_list)
+        self.calib = load_mpi_camera(
+            calib_fname=self.split_data['calib_path'],
+            resize_factor=4.0
+        )
 
-    def inv_transform(self, target):
-        
-        target = target * self.std["target"] + self.mean["target"]
-        
-        return target
+        processed_data = torch.load(self.split_data['processed_path'])
+        self.img_folder = self.split_data['img_folder']
+        self.motion_id = self.split_data['motion_id']
+        self.subject_id = self.split_data['subject_id']
+        self.audio_path = self.split_data['audio_path']
 
-    def __getitem__(self, idx):
-        
-        id = idx % len(self.motion_path_list)
-
-        motion_dict =self.motions[id]
-        
-        seqlen = motion_dict['target'].shape[0]
-        
-        lmk_2d = motion_dict['lmk_2d']  # (n, 68, 2)
-        lmk_3d_normed = motion_dict['lmk_3d_normed'] # (n, 68, 3)
-        target = motion_dict['target'] # (n, shape300 + exp100 + rot30 + trans3)
-        motion_id = os.path.split(self.motion_path_list[id])[1].split('.')[0]
-        
-        
-        n_imgs = torch.sum(motion_dict['img_mask'])
-        img_arr = motion_dict['arcface_input'] # (n_imgs, 3, 112, 112)
-
-        # make sure there are always 4 images 
-        needed_imgs = 4 - n_imgs
-        if needed_imgs < 0:
-            # sample 4 images with equal intervals
-            img_ids = torch.arange(0, n_imgs, n_imgs // 4)[:4]
-            img_arr = img_arr[img_ids]
-        elif needed_imgs > 0:
-            # repeat needed images
-            img_arr_added_ids = torch.randint(0, n_imgs, size=(needed_imgs,))
-            img_arr_repeated = motion_dict['arcface_input'][img_arr_added_ids]
-            img_arr = torch.cat([img_arr, img_arr_repeated], dim=0)
-        assert (not img_arr.isnan().any()) and img_arr.shape[0] == 4
-            
-        # Normalization 
-        if not self.no_normalization:    
-            lmk_3d_normed = ((lmk_3d_normed.reshape(-1, 3) - self.mean['lmk_3d_normed']) / (self.std['lmk_3d_normed'] + 1e-8)).reshape(seqlen, -1, 3)
-            target = (target - self.mean['target']) / (self.std['target'] + 1e-8)
-        
-        # add random occlusion mask
-        occlusion_mask = self.add_random_occlusion_mask(lmk_2d)  
-        
-        return target.float(), lmk_2d.float(), lmk_3d_normed.float(), img_arr.float(), occlusion_mask, motion_id
-
-    def add_random_occlusion_mask(self, lmk_2d, **model_kwargs):
-        input_motion_length, num_lmks = lmk_2d.shape[:2]
-        occlusion_mask = torch.zeros(input_motion_length, num_lmks) # (n, v)
-        add_mask = torch.bernoulli(torch.ones(1) * self.occlusion_mask_prob)[0]
-        if add_mask == 0:
-            return occlusion_mask
-        
-        # select occlusion type
-        
-        occlusion_type = model_kwargs.get("occlusion_type", torch.randint(low=0, high=3, size=(1,))[0])
-
-        if occlusion_type == 0:
-            # occlude fixed set of lmks
-            if "occlude_lmks" in model_kwargs:
-                occlude_lmks  = model_kwargs["occlude_lmks"]
-            else:
-                occlude_center_lmk_id = model_kwargs.get("occlude_center_lmk_id", torch.randint(low=0, high=num_lmks, size=(1,))[0])
-                occlude_radius = model_kwargs.get("occlude_radius", torch.rand(1)[0] * 1.5)
-                lmk_2d_dist_to_center = torch.norm(
-                    lmk_2d[0] - lmk_2d[0, occlude_center_lmk_id][None],
-                    2,
-                    -1
-                )
-                occlude_lmks = lmk_2d_dist_to_center < occlude_radius
-            occlusion_mask[:, occlude_lmks] = 1
-        elif occlusion_type == 1:
-            # occlude random set of lmks for each frame
-            for i in range(input_motion_length):
-                occlude_center_lmk_id = torch.randint(low=0, high=num_lmks, size=(1,))[0]
-                occlude_radius = torch.rand(1)[0] * 1.5
-                lmk_2d_dist_to_center = torch.norm(
-                    lmk_2d[i] - lmk_2d[i, occlude_center_lmk_id][None],
-                    2,
-                    -1
-                )
-                occlude_lmks = lmk_2d_dist_to_center < occlude_radius
-                occlusion_mask[i, occlude_lmks] = 1
+        # get processed data
+        self.frame_id = processed_data['frame_id'][::self.skip_frames]
+        self.num_frames = len(self.frame_id)
+        self.lmk_2d = processed_data['lmk_2d'][::self.skip_frames]  # (n, 68, 2)
+        self.shape = processed_data['shape'][::self.skip_frames]
+        if 'audio_emb' in processed_data:
+            self.audio_emb = processed_data['audio_emb'][::self.skip_frames]
+            self.with_audio = True
         else:
-            # occlude random num of frames
-            if "occlude_frame_ids" in model_kwargs:
-                occlude_frame_ids = model_kwargs["occlusion_type"]
-            else:
-                num_occluded_frames = torch.randint(low=1, high=input_motion_length//2, size=(1,))[0]
-                occlude_frame_ids =  torch.LongTensor(random.sample(range(input_motion_length), num_occluded_frames))
+            self.audio_emb = torch.zeros((self.target.shape[0], 768))
+            self.with_audio = False
+        
+        # get target flame params for 2d aligment
+        flame_params = np.load(self.split_data['flame_param_path'], allow_pickle=True)[()]
+        
+        self.expression = torch.Tensor(flame_params["flame_expr"])[::self.skip_frames,:50]
+        self.rot_aa = torch.Tensor(flame_params["flame_pose"])[::self.skip_frames,:3*3] # full poses exluding eye poses (root, neck, jaw, left_eyeball, right_eyeball)
+        self.trans = torch.Tensor(flame_params['flame_trans'])[::self.skip_frames].unsqueeze(1) 
+        # get random mask
+        self.img_mask = self.get_occlusion_mask(self.num_frames, self.occlusion_type)
+    
+    def crop_face(self, landmarks, scale=1.0):
+        left = np.min(landmarks[:, 0])
+        right = np.max(landmarks[:, 0])
+        top = np.min(landmarks[:, 1])
+        bottom = np.max(landmarks[:, 1])
 
-            occlusion_mask[occlude_frame_ids] = 1
-        return occlusion_mask
+        old_size = (right - left + bottom - top) / 2
+        center = np.array([right - (right - left) / 2.0, bottom - (bottom - top) / 2.0])  # + old_size*0.1])
+
+        size = int(old_size * scale)
+
+        # crop image
+        src_pts = np.array([[center[0] - size / 2, center[1] - size / 2], 
+                            [center[0] - size / 2, center[1] + size / 2],
+                            [center[0] + size / 2, center[1] - size / 2]])
+        DST_PTS = np.array([[0, 0], [0, self.image_size - 1], [self.image_size - 1, 0]])
+        tform = estimate_transform('similarity', src_pts, DST_PTS)
+
+        return tform
+
+    def get_occlusion_mask(self, num_frames, occlusion_type='downsample_frame'):
+        # add random occlusion mask
+        add_mask = torch.bernoulli(torch.ones(1) * self.occlusion_mask_prob)[0]
+        mask_array = torch.ones(num_frames, self.original_image_size[0], self.original_image_size[1])
+        if not add_mask:
+            print(f"non occluded mask returned")
+            return mask_array
+        return random_occlusion(occlusion_type, mask_array)
+
+    def get_lmk_mask(self, lmk2d, img_mask):
+        lmk_mask = torch.ones(lmk2d.shape[0], lmk2d.shape[1]) # [B, V]
+        kpt = (lmk2d[...,:2].clone() * 112 + 112).long()
+        for i in range(lmk2d.shape[0]):
+            for j in range(lmk2d.shape[1]):
+                x, y = kpt[i, j]
+                if x < 0 or y < 0 or \
+                    x >= self.image_size or y >= self.image_size or \
+                    img_mask[i, y, x] < 1e-8:
+                    lmk_mask[i, j] = 0
+        return lmk_mask
+
+    def image_augment(self, image):
+         # image augmentation
+        transf_order, b, c, s, h = transforms.ColorJitter.get_params(
+            brightness=(1, 2),
+            contrast=(1, 1.5),
+            saturation=(1, 1),
+            hue=(-0.1,0.1))
+        
+        return random_color_jitter_to_video(image, b, c, s, h, transf_order)
+
+    def prepare_chunk_motion(self, start_id):
+
+        # read images as input 
+        images_list = []
+        kpt_list = []
+        original_images_list = []
+        mask_list = []
+        lmk_2d_gt = self.lmk_2d.clone()[start_id:start_id+self.input_motion_length]
+        mask_gt = self.img_mask.clone()[start_id:start_id+self.input_motion_length]
+        mask_gt = (mask_gt * 255).numpy().astype(np.uint8)
+        
+        for i, fid in enumerate(self.frame_id[start_id:start_id+self.input_motion_length]):
+            frame_id = "%06d"%(fid)
+            kpt = lmk_2d_gt[i].numpy()
+            
+            img_path = os.path.join(self.img_folder, f"{self.motion_id}.{frame_id}.{self.cam_id}.jpg")
+            if not os.path.exists(img_path):
+                frame = np.zeros((self.original_image_size[0], self.original_image_size[1], 3)).astype(np.uint8)
+            else:
+                frame = cv2.imread(img_path)
+                if frame is None:
+                    frame = np.zeros((self.original_image_size[0], self.original_image_size[1], 3)).astype(np.uint8)
+
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            tform = self.crop_face(kpt, self.scale) 
+            cropped_kpt = np.dot(tform.params, np.hstack([kpt, np.ones([kpt.shape[0],1])]).T).T
+            cropped_kpt[:,:2] = cropped_kpt[:,:2]/self.image_size * 2  - 1
+            cropped_image = warp(frame, tform.inverse, output_shape=(self.image_size, self.image_size))
+            cropped_mask = warp(mask_gt[i], tform.inverse, output_shape=(self.image_size, self.image_size))
+            images_list.append(cropped_image.transpose(2,0,1)) # (3, 224, 224)
+            mask_list.append(cropped_mask)
+            kpt_list.append(cropped_kpt)
+            original_images_list.append(frame.transpose(2,0,1) / 255.)
+
+        image_array = torch.from_numpy(np.stack(images_list)).type(dtype = torch.float32) 
+        mask_array = torch.from_numpy(np.stack(mask_list)).type(dtype = torch.float32) 
+        kpt_array = torch.from_numpy(np.stack(kpt_list)).type(dtype = torch.float32) 
+        original_img = torch.from_numpy(np.stack(original_images_list)).type(dtype = torch.float32) 
+
+        lmk_mask = self.get_lmk_mask(kpt_array, mask_array)
+
+        return {
+            'image': image_array, # (n, 3, 224, 224)
+            'lmk_2d': kpt_array, # (n, 68, 3)
+            'img_mask': mask_array.float(), # (n, 224, 224)
+            'lmk_mask': lmk_mask.float(),   # (n, 68)
+            'audio_emb': self.audio_emb[start_id:start_id+self.input_motion_length].float(),
+            'original_img': original_img
+        }
+
+
+def load_split_for_subject(dataset, dataset_path, subject_id, split='test', motion_id=None, cam_id = '26_C'):
+    """Return the subject id and motion id for the selected split
+    """
+    if dataset == 'FaMoS':
+        split_id = dataset_setting.FaMoS_split[split]
+        selected_motions = [dataset_setting.FaMoS_motion_id[i] for i in split_id]
+    elif dataset == 'vocaset':
+        split_id = dataset_setting.vocaset_split[split]
+        selected_motions = [dataset_setting.vocaset_motion_id[i] for i in split_id]
+    else:
+        raise ValueError(f"Dataset name not supported!, Should be in [FaMoS, vocaset]")
+    processed_folder = os.path.join(dataset_path, dataset, 'processed')
+    img_folder = os.path.join(dataset_path, dataset, 'image')
+    audio_folder = os.path.join(dataset_path, dataset, 'audio')
+    calib_folder = os.path.join(dataset_path, dataset, 'calib')
+    flame_param_folder = os.path.join(dataset_path, dataset, 'flame_params')
+    img_paths = []
+    processed_paths = []
+    calib_paths = []
+    flame_param_paths = []
+    subjects = []
+    motion_ids = []
+    audios = []
+    if motion_id == None:
+        for motion in selected_motions:
+            img_paths.append(os.path.join(img_folder, subject_id, motion))
+            processed_paths.append(os.path.join(processed_folder, subject_id, f"{motion}.pt"))
+            calib_paths.append(os.path.join(calib_folder, subject_id, motion, f"{cam_id}.tka"))
+            subjects.append(subject_id)
+            motion_ids.append(motion)
+            flame_param_paths.append(os.path.join(flame_param_folder, subject_id, f"{motion}.npy"))
+            audios.append(os.path.join(audio_folder, subject_id, f"{motion}.wav"))
+    else:
+        img_paths.append(os.path.join(img_folder, subject_id, motion_id))
+        processed_paths.append(os.path.join(processed_folder, subject_id, f"{motion_id}.pt"))
+        calib_paths.append(os.path.join(calib_folder, subject_id, motion_id, f"{cam_id}.tka"))
+        subjects.append(subject_id)
+        motion_ids.append(motion_id)
+        flame_param_paths.append(os.path.join(flame_param_folder, subject_id, f"{motion_id}.npy"))
+        audios.append(os.path.join(audio_folder, subject_id, f"{motion_id}.wav"))
+
+    split_data = {
+        'img_folder': img_paths,
+        'processed_path': processed_paths,
+        'calib_path': calib_paths,
+        'subject_id': subjects,
+        'motion_id': motion_ids,
+        'flame_param_path': flame_param_paths,
+        'audio_path': audios
+    }
+    return split_data
 
 def get_split(dataset_path, dataset, split):
     """Return the subject id and motion id for the selected split

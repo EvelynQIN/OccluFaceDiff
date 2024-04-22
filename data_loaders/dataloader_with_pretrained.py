@@ -10,7 +10,6 @@ from skimage.io import imread
 from skimage.transform import estimate_transform, warp
 from collections import defaultdict
 import random
-from utils.landmark_mask import REGIONS
 from utils import dataset_setting
 from utils import utils_transform
 from torchvision import transforms
@@ -194,7 +193,7 @@ class TrainDataset(Dataset):
         batch['R'] = pose[...,:3]
 
         return batch
-
+    
 class TestDataset(Dataset):
     def __init__(
         self,
@@ -217,10 +216,9 @@ class TestDataset(Dataset):
         self.no_normalization = no_normalization
         self.input_motion_length = input_motion_length
         self.occlusion_mask_prob = occlusion_mask_prob
-
+    
     def __len__(self):
         return len(self.processed_path)
-
 
     def get_occlusion_mask(self, mask_array, occlusion_type='downsample_frame'):
         # add random occlusion mask
@@ -237,12 +235,23 @@ class TestDataset(Dataset):
         for i in range(lmk2d.shape[0]):
             lmk_mask.append(img_mask[i, pix_pos[i, :, 1], pix_pos[i, :, 0]])
         return torch.stack(lmk_mask)
+    
+    def image_augment(self, image):
+         # image augmentation
+        transf_order, b, c, s, h = transforms.ColorJitter.get_params(
+            brightness=(1, 2.5),
+            contrast=(1, 2),
+            saturation=(1, 1),
+            hue=(-0.1,0.1))
+        
+        return random_color_jitter_to_video(image, b, c, s, h, transf_order)
 
     def __getitem__(self, idx):
         id = idx % len(self.processed_path)
         batch = torch.load(self.processed_path[id])
 
         subject, _, motion_id = self.processed_path[id].split('/')[-3:]
+        batch['image'] = self.image_augment(batch['image'])
         batch['motion_id'] = motion_id[:-3]
         batch['subject_id'] = subject.split('--')[3]
         if 'SEN' in motion_id:

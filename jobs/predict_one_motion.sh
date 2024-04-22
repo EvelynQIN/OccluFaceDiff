@@ -1,1 +1,1 @@
-python3 predict.py --model_path checkpoints/Transformer_512d_freeze_resume/model_41.pt --save_folder vis_result --exp_name non_occ --test_mode in_the_wild --video_path face_motion_videos/occ/female_hand_surprise.mp4 --input_motion_length 20 --sld_wind_size 15
+python3 predict.py --model_path checkpoints/Transformer_512d_2l_wpho/model_22.pt --save_folder vis_result --exp_name non_occ --test_mode in_the_wild --video_path face_motion_videos/non_occ/duda.mp4 --input_motion_length 20 --sld_wind_size 15
