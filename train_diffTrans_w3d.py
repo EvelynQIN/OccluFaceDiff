@@ -78,6 +78,10 @@ def main():
     print("creating training data loader...")   
 
     datasets = ['multiface', 'vocaset'] 
+    print(f"[Datsets] used for training: {datasets}.")
+
+    mask_ratio = 0.3
+    print(f"Training mask ratio: {mask_ratio}")
     train_processed_path = load_data(
         datasets,
         args.dataset_path,
@@ -91,7 +95,8 @@ def main():
         args.train_dataset_repeat_times,
         args.no_normalization,
         args.occlusion_mask_prob,
-        args.fps
+        args.fps,
+        mask_ratio
     )
 
     train_loader = get_dataloader(
@@ -105,16 +110,26 @@ def main():
         args.dataset_path,
         "test",
     )
-    print(f"number of test sequences: {len(val_processed_path['img_folders'])}")
+    num_val_seq = len(val_processed_path['img_folders'])
+    select_val_id = [i for i in range(num_val_seq)]
+    random.shuffle(select_val_id)
+    select_val_id = select_val_id[:120]
+    
+    select_val_processed_path = dict()
+    for k in val_processed_path:
+        select_val_processed_path[k] = [val_processed_path[k][id] for id in select_val_id]
+    
+    print(f"number of test sequences: {len(select_val_processed_path['img_folders'])}")
 
     val_dataset = TrainDataset(
         datasets,
-        val_processed_path,
+        select_val_processed_path,
         args.input_motion_length,
         10,
         args.no_normalization,
         args.occlusion_mask_prob,
-        args.fps
+        args.fps,
+        mask_ratio
     )
     
     val_loader = get_dataloader(

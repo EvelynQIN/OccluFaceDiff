@@ -27,6 +27,64 @@ def random_color_jitter_to_video(imgs, brightness, contrast, saturation, hue, or
 
     return transform(imgs)
 
+def get_occlusion_mask_half(mask_array, occlusion_mask_prob):
+        # add random occlusion mask to mask half of the image plane
+        add_mask = torch.bernoulli(torch.ones(1) * occlusion_mask_prob)[0]
+        if not add_mask:
+            return mask_array
+
+        num_frames, h, w = mask_array.shape
+        ch, cw = h // 2, w // 2
+
+        # select occlusion type
+        occlusion_type = torch.randint(low=0, high=4, size=(1,))[0]
+
+        if occlusion_type == 0: 
+            # left half
+            mask_array[:, :, :cw] = 0
+        elif occlusion_type == 1:
+            # right half
+            mask_array[:, :, cw:] = 0
+        elif occlusion_type == 2:
+            # upper
+            mask_array[:, :ch, :] = 0
+        else:
+            # bottom
+            mask_array[:, ch:, :] = 0
+
+        return mask_array
+
+def get_occlusion_mask_random(mask_array, occlusion_mask_prob, mask_ratio=0.3):
+        # add random occlusion mask
+        add_mask = torch.bernoulli(torch.ones(1) * occlusion_mask_prob)[0]
+        if not add_mask:
+            return mask_array
+
+        num_frames = mask_array.shape[0]
+
+        # select occlusion type
+        occlusion_type = torch.randint(low=0, high=3, size=(1,))[0]
+        mask_len_max = int(mask_ratio * 224)
+
+        if occlusion_type == 0:
+            # occlude fixed region: top left coords and w, h of occlusion rectangle
+            x, y = torch.randint(low=20, high=200, size=(2,)) 
+            dx, dy = torch.randint(low=20, high=mask_len_max, size=(2,))    
+            mask_array[:, y:y+dy, x:x+dx] = 0
+        elif occlusion_type == 1:
+            # occlude random regions for each frame
+            mask_loc = torch.randint(low=20, high=200, size=(num_frames,2)) 
+            mask_len = torch.randint(low=20, high=mask_len_max, size=(num_frames,2)) 
+            for i in range(num_frames):
+                mask_array[i, mask_loc[i,0]:mask_loc[i,0]+mask_len[i,0], mask_loc[i,1]:mask_loc[i,1]+mask_len[i,1]] = 0
+        else:
+            # occlude random num of frames
+            occluded_frame_ids = torch.randint(low=0, high=num_frames, size=(num_frames // 2,))
+            mask_array[occluded_frame_ids] = 0
+
+        return mask_array
+
+
 class TrainDataset(Dataset):
     def __init__(
         self,
@@ -36,15 +94,23 @@ class TrainDataset(Dataset):
         train_dataset_repeat_times=1,
         no_normalization=True,
         occlusion_mask_prob=0.5,
-        fps=30
+        fps=30,
+        mask_ratio=0.3
     ):
         self.split_data = split_data
         self.fps = fps
+        self.mask_ratio=mask_ratio
+
+        # for audio alignment
+        sampling_rate = 16000
+
+
         self.dataset_info = defaultdict(dict)
         for dataset_name in dataset_names:
             data_fps_original = 60 if dataset_name != 'multiface' else 30
             self.dataset_info[dataset_name]['original_image_size'] = dataset_setting.image_size[dataset_name]
             self.dataset_info[dataset_name]['skip_frames'] = int(data_fps_original / self.fps) 
+            self.dataset_info[dataset_name]['audio_align'] = int(sampling_rate / data_fps_original) 
             self.dataset_info[dataset_name]['input_motion_length'] = input_motion_length * self.dataset_info[dataset_name]['skip_frames']
 
         # image process
@@ -159,12 +225,16 @@ class TrainDataset(Dataset):
             kpt_array = processed_data['lmk_2d'][start_id:start_id + dataset_info['input_motion_length']:dataset_info['skip_frames']].numpy() * 112 + 112
             img_mask_array = (processed_data['img_mask'][start_id:start_id + dataset_info['input_motion_length']:dataset_info['skip_frames']].numpy() * 255).astype(np.uint8)
             
-            audio_emb = processed_data['audio_emb'][start_id:start_id + dataset_info['input_motion_length']:dataset_info['skip_frames']]
             shape = processed_data['shape'][start_id:start_id + dataset_info['input_motion_length']:dataset_info['skip_frames']]
             pose = processed_data['pose'][start_id:start_id + dataset_info['input_motion_length']:dataset_info['skip_frames']]
             exp = processed_data['exp'][start_id:start_id + dataset_info['input_motion_length']:dataset_info['skip_frames']]
             jaw_6d = utils_transform.aa2sixd(pose[...,3:])
             target = torch.cat([jaw_6d, exp], dim=-1)
+
+            if 'audio_input' in processed_data:
+                sid = dataset_info['audio_align']*start_id
+                duration = dataset_info['audio_align']*dataset_info['input_motion_length']
+                audio_input = processed_data['audio_input'][sid : sid + duration].float()
 
             # read images as input 
             images_list = []
@@ -191,10 +261,10 @@ class TrainDataset(Dataset):
             lmk_2d = processed_data['lmk_2d'][start_id:start_id + dataset_info['input_motion_length']:dataset_info['skip_frames']]  # (n, 68, 2)
             target = processed_data['target'][start_id:start_id + dataset_info['input_motion_length']:dataset_info['skip_frames']]
             shape = processed_data['shape'][start_id:start_id + dataset_info['input_motion_length']:dataset_info['skip_frames']]
-            if 'audio_emb' in processed_data:
-                audio_emb = processed_data['audio_emb'][start_id:start_id + dataset_info['input_motion_length']:dataset_info['skip_frames']]
-            else:
-                audio_emb = torch.zeros((target.shape[0], 768))
+            if 'audio_input' in processed_data:
+                sid = dataset_info['audio_align']*start_id
+                duration = dataset_info['audio_align']*dataset_info['input_motion_length']
+                audio_input = processed_data['audio_input'][sid : sid + duration].float()
         
             # read images as input 
             images_list = []
@@ -234,18 +304,20 @@ class TrainDataset(Dataset):
         # apply random color jitter and gaussian blur
         image_array = self.image_augment(image_array)
         # get random occlusion mask 
-        img_mask = self.get_occlusion_mask(img_mask)
+        img_mask = get_occlusion_mask_random(img_mask, self.occlusion_mask_prob, mask_ratio=self.mask_ratio)
         lmk_mask = self.get_lmk_mask(kpt_array, img_mask)
 
-        return {
+        batch = {
             'image': image_array, # (n, 3, 224, 224)
             'lmk_2d': kpt_array[...,:2], # (n, 68, 2)
             'img_mask': img_mask.float(), # (n, 224, 224)
             'lmk_mask': lmk_mask.float(),   # (n, 68)
-            'audio_emb': audio_emb.float(),
             'shape': shape.float(),
             'target': target.float()
         }
+        if 'audio_input' in processed_data:
+            batch['audio_input'] = audio_input
+        return batch
 
 def random_occlusion(occlusion_type, mask_array):
     occlusion_types = [

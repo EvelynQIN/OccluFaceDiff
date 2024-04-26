@@ -8,11 +8,11 @@ gradient_accumulation_steps: 128
 lr: 0.0003
 cosine_scheduler: True
 device: 0
-num_workers: 8
+num_workers: 4
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
-train_dataset_repeat_times: 100
+train_dataset_repeat_times: 80
 input_motion_length: 20
 occlusion_mask_prob: 0.3
 

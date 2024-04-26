@@ -100,9 +100,9 @@ class FaceTransformer(nn.Module):
         self.lmk2d_dim = 68 * 2
         self.lmk_process = InputProcess(self.lmk2d_dim, self.latent_dim)
 
-        # self.audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
-        # # wav2vec 2.0 weights initialization
-        # self.audio_encoder.feature_extractor._freeze_parameters()
+        # wav2vec 2.0 weights initialization
+        self.audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
+        self.audio_encoder.feature_extractor._freeze_parameters()
         audio_feature_dim = 768
         self.audio_process = InputProcess(audio_feature_dim, self.latent_dim)
         
@@ -160,8 +160,14 @@ class FaceTransformer(nn.Module):
         mask = mask.view(bs, 1, 1)
         # 1-> use null_cond, 0-> use real cond
         return audio_emb * (1.0 - mask)
+
+    def freeze_wav2vec(self):
+        self.audio_encoder.freeze_encoder()
     
-    def forward(self, x, timesteps, image, lmk_2d, img_mask, lmk_mask, audio_emb, force_mask=False, **kwargs):
+    def unfreeze_wav2vec(self):
+        self.audio_encoder.unfreeze_encoder()
+    
+    def forward(self, x, timesteps, image, lmk_2d, img_mask, lmk_mask, audio_input=None, force_mask=False, **kwargs):
         """
         x: [bs, nframes, nfeats] 
         timesteps: [bs] (int)
@@ -179,6 +185,11 @@ class FaceTransformer(nn.Module):
         image_cond = self.image_process(image_cond) # [seqlen, bs, d]
         
         lmk_cond = self.lmk_process(lmk_2d.reshape(bs, n, -1))  # [seqlen, bs, d]
+        
+        if audio_input is None:
+            audio_emb = torch.zeros((bs,n,768)).to(x.device)
+        else:
+            audio_emb = self.audio_encoder(audio_input, frame_num=n).last_hidden_state
         
         audio_emb = self.mask_audio_cond(audio_emb)
         audio_cond = self.audio_process(audio_emb)  # [seqlen, bs, d]

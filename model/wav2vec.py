@@ -72,6 +72,22 @@ def linear_interpolation(features, input_fps, output_fps, output_len=None):
 class Wav2Vec2Model(Wav2Vec2Model):
     def __init__(self, config):
         super().__init__(config)
+    
+    def freeze_encoder(self):
+        print(f"[Wav2Vec] Frozen.")
+        self.feature_projection.eval()
+        self.encoder.eval()
+        for layer in [self.feature_projection, self.encoder]:
+            for param in layer.parameters():
+                param.requires_grad = False
+
+    def unfreeze_encoder(self):
+        print(f"[Wav2Vec] Unfrozen.")
+        self.feature_projection.train()
+        self.encoder.train()
+        for layer in [self.feature_projection, self.encoder]:
+            for param in layer.parameters():
+                param.requires_grad = True
 
     def forward(
         self,

@@ -69,15 +69,25 @@ class DiffusionModel(GaussianDiffusion):
         # self._setup_renderer()
         # self._load_evalnet()
 
+        # set up loss weight
+        self.loss_weight = {
+            'expr_loss': 2.0,
+            'pose_loss': 1.0,
+            'expr_vel_loss': 0.01,
+            'pose_vel_loss': 0.01,
+            'lmk3d_loss': 0.5
+        }
+        print(f"[Diffusion] Loss weights used: {self.loss_weight}")
+
     def _create_flame(self):
         print(f"[Diffusion] Load FLAME.")
         self.flame = FLAME(self.model_cfg).to(self.device)
         
-        flame_vmask_path = "flame_2020/FLAME_masks.pkl"
-        with open(flame_vmask_path, 'rb') as f:
-            flame_v_mask = pickle.load(f, encoding="latin1")
+        # flame_vmask_path = "flame_2020/FLAME_masks.pkl"
+        # with open(flame_vmask_path, 'rb') as f:
+        #     flame_v_mask = pickle.load(f, encoding="latin1")
 
-        self.lip_v_mask = torch.from_numpy(flame_v_mask['lips']).to(self.device)
+        # self.lip_v_mask = torch.from_numpy(flame_v_mask['lips']).to(self.device)
 
     def _setup_renderer(self):
         print(f"[Diffusion] Set up Renderer.")
@@ -270,25 +280,23 @@ class DiffusionModel(GaussianDiffusion):
         pose_gt = torch.cat([R_aa, jaw_gt_aa], dim=-1)
         
         # flame decoder
-        verts_pred, _, _ = self.flame(
+        _, lmk3d_pred, _ = self.flame(
             shape_params=shape, 
             expression_params=expr_pred,
             pose_params=pose_pred)
         
-        verts_gt, _, _ = self.flame(
+        _, lmk3d_gt, _ = self.flame(
             shape_params=shape, 
             expression_params=expr_gt,
             pose_params=pose_gt)
         
-        # 3d loss on lip verts
-        verts_gt_lips = torch.index_select(verts_gt, 1, self.lip_v_mask)
-        verts_pred_lips = torch.index_select(verts_pred, 1, self.lip_v_mask)
-        lip3d_loss = torch.mean(
-            torch.norm(verts_gt_lips - verts_pred_lips, 2, -1)
+        lmk3d_loss = torch.mean(
+            torch.norm(lmk3d_pred - lmk3d_gt, 2, -1)
         )
         
-        loss = 1.0 * expr_loss + 1.0 * pose_loss + 0.01 * expr_vel_loss + 0.01 * pose_vel_loss \
-                + 5.0 * lip3d_loss
+        loss = self.loss_weight['expr_loss'] * expr_loss + self.loss_weight['pose_loss'] * pose_loss \
+                + self.loss_weight['expr_vel_loss'] * expr_vel_loss + self.loss_weight['pose_vel_loss'] * pose_vel_loss \
+                + self.loss_weight['lmk3d_loss'] * lmk3d_loss
             
         
         loss_dict = {
@@ -296,7 +304,7 @@ class DiffusionModel(GaussianDiffusion):
             'pose_loss': pose_loss.detach().item(),
             'expr_vel_loss': expr_vel_loss.detach().item(),
             'pose_vel_loss': pose_vel_loss.detach().item(),
-            'lip3d_loss': lip3d_loss.detach().item(),
+            'lmk3d_loss': lmk3d_loss.detach().item(),
             'loss': loss
         }
 

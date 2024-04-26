@@ -135,19 +135,26 @@ class TrainLoop:
             self.model.train()
             print(f"Starting training epoch {epoch}")
             self.epoch = epoch
+
+            if epoch > 0 and epoch % 2 == 0:
+                self.model.unfreeze_wav2vec()
+            else:
+                self.model.freeze_wav2vec()
+
             for batch in tqdm(self.train_loader):
                 local_step += 1
-                target = batch['target'].to(self.device)
+                for k in batch:
+                    batch[k] = batch[k].to(self.device)
+                target = batch['target']
                 model_kwargs = {}
                 for k in batch:
                     if k != 'target':
-                        model_kwargs[k] = batch[k].to(self.device)
+                        model_kwargs[k] = batch[k]
 
                 grad_update = True if local_step % self.gradient_accumulation_steps == 0 else False 
                 self.run_step(target, grad_update, **model_kwargs)
             if epoch == self.num_epochs or epoch % self.save_interval == 0:
                 self.save()
-                self.save_wav2vec()
             if epoch % self.log_interval == 0:
                 self.validation()
 
@@ -170,6 +177,7 @@ class TrainLoop:
         else:
             self.forward_backward(batch, log_loss=False, **model_kwargs)
         # # free gpu memory
+        del batch
         torch.cuda.empty_cache()
         # gc.collect()
 
@@ -212,11 +220,13 @@ class TrainLoop:
         with torch.no_grad():
             for batch in tqdm(self.val_loader):
                 eval_steps += 1
-                target = batch['target'].to(self.device)
+                for k in batch:
+                    batch[k] = batch[k].to(self.device)
+                target = batch['target']
                 model_kwargs = {}
                 for k in batch:
                     if k != 'target':
-                        model_kwargs[k] = batch[k].to(self.device)
+                        model_kwargs[k] = batch[k]
                 t, weights = self.schedule_sampler.sample(target.shape[0], dist_util.dev())
                 compute_losses = functools.partial(
                     self.diffusion.training_losses,
