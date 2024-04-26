@@ -12,7 +12,7 @@ num_workers: 8
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
-train_dataset_repeat_times: 50
+train_dataset_repeat_times: 100
 input_motion_length: 20
 occlusion_mask_prob: 0.3
 
@@ -26,7 +26,7 @@ n_pose: 6 # jaw pose in 6d
 
 
 # log
-wandb_log: False
+wandb_log: True
 save_interval: 1 
 log_interval: 1 
 

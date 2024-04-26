@@ -103,22 +103,22 @@ def create_training_data(args, dataset, device='cuda'):
     # audio processor
     audio_processor = Wav2Vec2Processor.from_pretrained(
         "facebook/wav2vec2-base-960h")  # HuBERT uses the processor of Wav2Vec 2.0
-    wav2vec = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
-    wav2vec.feature_extractor._freeze_parameters()
-    wav2vec.to(device)
+    # wav2vec = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
+    # wav2vec.feature_extractor._freeze_parameters()
+    # wav2vec.to(device)
     
     # # init facial segmentator
     # config_file = 'face_segmentation/deeplabv3plus_r101_512x512_face-occlusion.py'
     # checkpoint_file = 'face_segmentation/deeplabv3plus_r101_512x512_face-occlusion-93ec6695.pth'
     # face_segment = init_model(config_file, checkpoint_file, device=device)
     
-    flame_params_folder = os.path.join(root_dir, dataset, "flame_params")
-    calib_folder = os.path.join(root_dir, dataset, "calib")
+    # flame_params_folder = os.path.join(root_dir, dataset, "flame_params")
+    # calib_folder = os.path.join(root_dir, dataset, "calib")
     image_folder = os.path.join(root_dir, dataset, "image")
     audio_folder = os.path.join(root_dir, dataset, "audio")
     out_folder = os.path.join(root_dir, dataset, "processed")
-    camera_name = "26_C" # name of the selected camera view
-
+    # camera_name = "26_C" # name of the selected camera view
+    print_shape = True
     for sbj in tqdm(os.scandir(image_folder)):
         print(f"Process {sbj.name}")
 
@@ -128,51 +128,65 @@ def create_training_data(args, dataset, device='cuda'):
 
         for motion in os.scandir(sbj.path):
             out_fname = os.path.join(out_folder_sbj, f"{motion.name}.pt")
-            flame_params_path = os.path.join(flame_params_folder, sbj.name, f"{motion.name}.npy")
-            flame_params = np.load(flame_params_path, allow_pickle=True)[()]
-   
-            num_frames = len(flame_params["flame_verts"])
-            print(f"processing {motion.name} with {num_frames} frames")
-            if num_frames < 10:
-                print(f"{sbj.name} {motion.name} is nulll")
+            if not os.path.exists(out_fname):
                 continue
-            calib_fname = os.path.join(calib_folder, sbj.name, motion.name, f"{camera_name}.tka")
+            output = torch.load(out_fname)
+            # flame_params_path = os.path.join(flame_params_folder, sbj.name, f"{motion.name}.npy")
+            # flame_params = np.load(flame_params_path, allow_pickle=True)[()]
+   
+            # num_frames = len(flame_params["flame_verts"])
+            # print(f"processing {motion.name} with {num_frames} frames")
+            # if num_frames < 10:
+            #     print(f"{sbj.name} {motion.name} is nulll")
+            #     continue
+            # calib_fname = os.path.join(calib_folder, sbj.name, motion.name, f"{camera_name}.tka")
             audio_path = os.path.join(audio_folder, sbj.name, f"{motion.name}.wav")
 
-            # get the gt flame params and projected 2d lmks
-            shape = torch.Tensor(flame_params["flame_shape"])[:,:100]
-            expression = torch.Tensor(flame_params["flame_expr"])[:,:50]
-            rot_aa = torch.Tensor(flame_params["flame_pose"])[:,:3*3] # full poses exluding eye poses (root, neck, jaw, left_eyeball, right_eyeball)
-            trans = torch.Tensor(flame_params['flame_trans']).unsqueeze(1)
-            frame_id = torch.Tensor(flame_params['frame_id']).long()
+            # # get the gt flame params and projected 2d lmks
+            # shape = torch.Tensor(flame_params["flame_shape"])[:,:100]
+            # expression = torch.Tensor(flame_params["flame_expr"])[:,:50]
+            # rot_aa = torch.Tensor(flame_params["flame_pose"])[:,:3*3] # full poses exluding eye poses (root, neck, jaw, left_eyeball, right_eyeball)
+            # trans = torch.Tensor(flame_params['flame_trans']).unsqueeze(1)
+            # frame_id = torch.Tensor(flame_params['frame_id']).long()
 
-            # get 2d landmarks from gt mesh
-            _, lmk_3d, _ = flame(shape, expression, rot_aa) # (nframes, V, 3)
-            lmk_3d += trans
-            calibration = load_mpi_camera(calib_fname, resize_factor=4.0)
-            lmk_2d = batch_3d_to_2d(calibration, lmk_3d)
+            # # get 2d landmarks from gt mesh
+            # _, lmk_3d, _ = flame(shape, expression, rot_aa) # (nframes, V, 3)
+            # lmk_3d += trans
+            # calibration = load_mpi_camera(calib_fname, resize_factor=4.0)
+            # lmk_2d = batch_3d_to_2d(calibration, lmk_3d)
 
-            # get 6d pose representation of jaw pose
-            rot_jaw_6d = utils_transform.aa2sixd(rot_aa[...,6:9]) # (nframes, 6)
-            target = torch.cat([rot_jaw_6d, expression], dim=1) 
+            # # get 6d pose representation of jaw pose
+            # rot_jaw_6d = utils_transform.aa2sixd(rot_aa[...,6:9]) # (nframes, 6)
+            # target = torch.cat([rot_jaw_6d, expression], dim=1) 
 
             # get audio input
             speech_array, sampling_rate = librosa.load(audio_path, sr=16000)
-            audio_input = np.squeeze(audio_processor(speech_array, return_tensors=None, padding="longest",
-                                        sampling_rate=sampling_rate).input_values)
-            with torch.no_grad():
-                audio_input = torch.from_numpy(audio_input).float().unsqueeze(0).to(device)
-                audio_emb = wav2vec(audio_input, frame_num = num_frames).last_hidden_state.squeeze(0).cpu()
+            audio_input = audio_processor(
+                speech_array, 
+                return_tensors='pt', 
+                padding="longest", 
+                sampling_rate=sampling_rate).input_values
             
-            output = {
-                "lmk_2d": lmk_2d, 
-                "target": target, 
-                "shape": shape,
-                "audio_emb": audio_emb,
-                "frame_id": frame_id
-            }
-            for k in output:
-                assert output[k] is not None
+            output['audio_input'] = audio_input.squeeze()
+            if print_shape:
+                print(output['audio_input'].shape)
+                print_shape = False
+
+            # audio_input = np.squeeze(audio_processor(speech_array, return_tensors=None, padding="longest",
+            #                             sampling_rate=sampling_rate).input_values)
+            # with torch.no_grad():
+            #     audio_input = torch.from_numpy(audio_input).float().unsqueeze(0).to(device)
+            #     audio_emb = wav2vec(audio_input, frame_num = num_frames).last_hidden_state.squeeze(0).cpu()
+            
+            # output = {
+            #     "lmk_2d": lmk_2d, 
+            #     "target": target, 
+            #     "shape": shape,
+            #     "audio_emb": audio_emb,
+            #     "frame_id": frame_id
+            # }
+            # for k in output:
+            #     assert output[k] is not None
             
             torch.save(output, out_fname)
     
