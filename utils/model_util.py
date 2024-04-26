@@ -45,7 +45,9 @@ def load_model_wo_clip(model, state_dict):
 
 def create_model_and_diffusion(args, model_cfg, device):
     arch = args.arch  
-    if "Enc" in arch:
+    if "Audio" in arch:
+        denoise_model = denoising_model.AudioTransformer(**get_transformer_args(args))
+    elif "Enc" in arch:
         denoise_model = denoising_model.TransformerEncoder(**get_transformer_args(args))
     elif "Trans" in arch:
         denoise_model = denoising_model.FaceTransformer(**get_transformer_args(args))

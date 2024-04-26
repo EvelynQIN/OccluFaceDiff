@@ -147,6 +147,7 @@ class TrainLoop:
                 self.run_step(target, grad_update, **model_kwargs)
             if epoch == self.num_epochs or epoch % self.save_interval == 0:
                 self.save()
+                self.save_wav2vec()
             if epoch % self.log_interval == 0:
                 self.validation()
 
@@ -169,7 +170,7 @@ class TrainLoop:
         else:
             self.forward_backward(batch, log_loss=False, **model_kwargs)
         # # free gpu memory
-        # torch.cuda.empty_cache()
+        torch.cuda.empty_cache()
         # gc.collect()
 
     # @profile
@@ -297,6 +298,12 @@ class TrainLoop:
             "wb",
         ) as f:
             torch.save(self.opt.state_dict(), f)
+    
+    def save_wav2vec(self):
+        if not os.path.exists(self.save_dir):
+            os.makedirs(self.save_dir)
+        ckpt_path = os.path.join(self.save_dir, f'wav2vec_{self.epoch}.pt')
+        self.model.save_audio_ckpt(ckpt_path)
 
 
 def parse_resume_epoch_from_filename(filename):

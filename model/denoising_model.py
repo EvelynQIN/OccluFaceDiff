@@ -210,6 +210,140 @@ class FaceTransformer(nn.Module):
         output = self.outputprocess_motion(decoder_output)  # [bs, seqlen, input_nfeats]
         return output
 
+
+class AudioTransformer(nn.Module):
+    def __init__(
+        self,
+        arch,
+        latent_dim=256, 
+        ff_size=1024, 
+        num_enc_layers=2, 
+        num_dec_layers=2,
+        num_heads=4, 
+        dropout=0.1,
+        activation="gelu", 
+        dataset='FaMoS',
+        use_mask=True,
+        n_exp = 50,
+        n_pose = 6,
+        **kwargs):
+        super().__init__()
+
+        self.tag = 'AudioTransformer'
+        self.nexp = n_exp
+        self.npose = n_pose
+        self.input_feats = n_exp + n_pose
+        self.dataset = dataset
+        self.use_mask = use_mask
+        if self.use_mask:
+            print(f"[{self.tag}] Using alibi mask for decoder.")
+        self.latent_dim = latent_dim
+
+        self.ff_size = ff_size
+        self.num_enc_layers = num_enc_layers
+        self.num_dec_layers = num_dec_layers
+        self.num_heads = num_heads
+        self.dropout = dropout
+        self.activation = activation
+
+        self.cond_mask_prob = kwargs.get('cond_mask_prob', 0.)
+        self.arch = arch
+        
+        ### layers
+        self.audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
+        # wav2vec 2.0 weights initialization
+        self.audio_encoder.feature_extractor._freeze_parameters()
+        audio_feature_dim = 768
+        self.audio_process = InputProcess(audio_feature_dim, self.latent_dim)
+        
+        # self.condition_process = nn.Linear(self.latent_dim * 3, self.latent_dim)
+       
+        self.input_process = InputProcess(self.input_feats, self.latent_dim)
+        
+        self.sequence_pos_encoder = PositionalEncoding(self.latent_dim, self.dropout)
+        self.embed_timestep = TimestepEmbedder(self.latent_dim, self.sequence_pos_encoder)
+        target_mask = neighborhood_mask(target_size=2000, num_heads = self.num_heads, bias_step=20)
+        self.register_buffer('tgt_mask', target_mask)
+        
+        print(f"[{self.tag}] Using transformer as backbone.")
+        self.transformer = nn.Transformer(
+            d_model=self.latent_dim,
+            nhead=self.num_heads,
+            num_encoder_layers=self.num_enc_layers,
+            num_decoder_layers=self.num_dec_layers,
+            dim_feedforward=self.ff_size,
+            dropout=self.dropout,
+            activation=self.activation,
+            norm_first=False
+        )
+        
+        self.outputprocess_motion = MotionOutput(output_feats=self.input_feats, latent_dim=self.latent_dim)
+
+    def save_audio_ckpt(self, ckpt_path):
+        
+        audio_state_dict = {
+            'audio_encoder': self.audio_encoder.state_dict(),
+            'audio_process': self.audio_process.state_dict()
+        }
+        with open(ckpt_path,"wb") as f:
+            torch.save(audio_state_dict, f)
+    
+    def mask_cond(self, cond, force_mask=False):
+        bs = cond.shape[1]
+        ndim = len(cond.shape)
+        if force_mask:
+            return torch.zeros_like(cond)
+        elif self.training and self.cond_mask_prob > 0.0:
+            mask = torch.bernoulli(
+                torch.ones(bs, device=cond.device) * self.cond_mask_prob
+            )
+            if ndim == 5:
+                mask = mask.view(1, bs, 1, 1, 1)
+            elif ndim == 3:
+                mask = mask.view(1, bs, 1)
+            else: 
+                raise ValueError( f"Invalid dimension for conditioning mask {cond.shape}")
+              # 1-> use null_cond, 0-> use real cond
+            return cond * (1.0 - mask)
+        else:
+            return cond
+    
+    def forward(self, x, timesteps, audio_input, force_mask=False, **kwargs):
+        """
+        x: [bs, nframes, nfeats] 
+        timesteps: [bs] (int)
+        audio_input: output of audio preprocessor
+        """
+        bs, n = x.shape[:2]
+
+        ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
+
+        # conditions feature extraction
+        audio_emb = self.audio_encoder(audio_input, frame_num=n).last_hidden_state # [bs, n, 768]
+        audio_cond = self.audio_process(audio_emb)  # [seqlen, bs, d]
+        
+        cond_emb = self.mask_cond(audio_cond, force_mask=force_mask)   # [seqlen, bs, d]
+        
+        condseq = self.sequence_pos_encoder(cond_emb)  # [seqlen, bs, d]
+        
+        tgt_mask=None
+        if self.use_mask:
+            T = x.shape[1]
+            tgt_mask = self.tgt_mask[:, :T, :T].clone().detach().to(device=x.device)    # (num_heads, seqlen, seqlen)
+            tgt_mask = tgt_mask.repeat(bs, 1, 1)
+
+        # cross attention of the sparse cond & motion_output
+        x = self.input_process(x)
+        x = x + ts_emb   # broadcast add, [seqlen, bs, d]
+        xseq = self.sequence_pos_encoder(x)
+        
+        # bias alignement mask
+        memory_mask = enc_dec_mask(x.device, xseq.shape[0], condseq.shape[0])
+        
+        decoder_output = self.transformer(condseq, xseq, tgt_mask=tgt_mask, memory_mask=memory_mask) # [seqlen, bs, d]
+        output = self.outputprocess_motion(decoder_output)  # [bs, seqlen, input_nfeats]
+        return output
+
 class TransformerEncoder(nn.Module):
     def __init__(
         self,
