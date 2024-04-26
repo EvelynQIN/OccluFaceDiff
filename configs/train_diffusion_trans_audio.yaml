@@ -1,14 +1,14 @@
 save_dir: "./checkpoints" 
-num_epoch: 50
-dataset: "multiface" 
+num_epoch: 500
+dataset: "vocaset" 
 dataset_path: "./dataset"
 weight_decay: 0.001
 batch_size: 1
-gradient_accumulation_steps: 128
-lr: 0.0003
+gradient_accumulation_steps: 60
+lr: 0.00005
 cosine_scheduler: True
 device: 0
-num_workers: 8
+num_workers: 4
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
@@ -27,11 +27,11 @@ n_pose: 6 # jaw pose in 6d
 
 # log
 wandb_log: True
-save_interval: 1 
+save_interval: 5 
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_512d_2l_0.3occ_joint" 
+arch: "diffusion_AudioTrans_512d_2l_audio" 
 latent_dim: 512
 dropout: 0.2
 
@@ -39,7 +39,7 @@ use_mask: True  # use alibi mask
 
 # unusable for gru
 ff_size: 1024
-num_enc_layers: 2
+num_enc_layers: 1
 num_heads: 8
 
 # unusable for transformer encoder 

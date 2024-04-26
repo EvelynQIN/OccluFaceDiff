@@ -56,7 +56,6 @@ class TrainDataset(Dataset):
         
         self.train_dataset_repeat_times = train_dataset_repeat_times
         self.no_normalization = no_normalization
-        self.input_motion_length = input_motion_length
         self.occlusion_mask_prob = occlusion_mask_prob
        
     def __len__(self):
