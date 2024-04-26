@@ -56,13 +56,13 @@ class MotionTracker:
                         
         # name of the tested motion sequence
         self.save_folder = self.config.save_folder
-        self.output_folder = os.path.join(self.save_folder, self.config.arch, self.config.exp_name)
+        self.output_folder = os.path.join(self.save_folder, self.config.arch, 'in-the-wild', self.config.exp_name)
         
         logger.add(os.path.join(self.output_folder, 'predict.log'))
         logger.info(f"Using device {self.device}.")
         logger.info(f"Predict motion [{self.motion_id}] for Exp [{self.config.exp_name}].")
         
-        self.image_size = torch.tensor([[config.image_size, config.image_size]]).to(self.device)
+        self.image_size = config.image_size
         
         self.sample_time = 0
 

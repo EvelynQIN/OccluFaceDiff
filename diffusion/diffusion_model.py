@@ -231,7 +231,7 @@ class DiffusionModel(GaussianDiffusion):
         return torch.matmul(dif_abs, vis) * 1.0 / k
 
     # loss computation between target and prediction where only 3d supervision is available
-    def masked_l2_w3d(self, target, model_output, **model_kwargs):
+    def masked_l2(self, target, model_output, **model_kwargs):
 
         bs, n, c = target.shape    
 
@@ -294,7 +294,7 @@ class DiffusionModel(GaussianDiffusion):
         return loss_dict
         
     # loss computation between target and prediction where only 2d images are available
-    def masked_l2(self, target, model_output, **model_kwargs):
+    def masked_l2_w2d(self, target, model_output, **model_kwargs):
 
         bs, n, c = target.shape    
 

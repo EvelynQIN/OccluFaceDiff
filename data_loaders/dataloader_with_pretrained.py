@@ -109,33 +109,30 @@ class TrainDataset(Dataset):
         # select occlusion type
         occlusion_type = torch.randint(low=0, high=3, size=(1,))[0]
 
-        if with_audio:
-            if occlusion_type == 0:
-                # occlude all visual cues
-                mask_array[:,:,:] = 0
-            elif occlusion_type == 1:
-                # occlude the whole mouth region
-                mask_array[:,100:,:] = 0
-            else:
-                # occlude random regions for each frame
-                mask_bbx = torch.randint(low=4, high=220, size=(num_frames,4)) 
-                for i in range(num_frames):
-                    mask_array[i, mask_bbx[i,0]:mask_bbx[i,1], mask_bbx[i,2]:mask_bbx[i,3]] = 0
+
+        # if occlusion_type == 0:
+        #     # occlude all visual cues
+        #     mask_array[:,:,:] = 0
+        if occlusion_type <= 1:
+            # occlude the whole mouth region
+            mask_array[:,110:,:] = 0
         else:
-            if occlusion_type == 0:
-                # occlude fixed region: top left coords and w, h of occlusion rectangle
-                x, y = torch.randint(low=10, high=200, size=(2,)) 
-                dx, dy = torch.randint(low=20, high=112, size=(2,))    
-                mask_array[:, y:y+dy, x:x+dx] = 0
-            elif occlusion_type == 1:
-                # occlude random regions for each frame
-                mask_bbx = torch.randint(low=20, high=200, size=(num_frames,4)) 
-                for i in range(num_frames):
-                    mask_array[i, mask_bbx[i,0]:mask_bbx[i,1], mask_bbx[i,2]:mask_bbx[i,3]] = 0
-            else:
-                # occlude random num of frames
-                occluded_frame_ids = torch.randint(low=0, high=num_frames, size=(num_frames // 2,))
-                mask_array[occluded_frame_ids] = 0
+            # occlude middle frames
+            mask_array[5:10,:,:] = 0
+
+            #     # occlude fixed region: top left coords and w, h of occlusion rectangle
+            #     x, y = torch.randint(low=10, high=160, size=(2,)) 
+            #     dx, dy = torch.randint(low=25, high=220, size=(2,))    
+            #     mask_array[:, y:y+dy, x:x+dx] = 0
+            # elif occlusion_type == 1:
+            #     # occlude random regions for each frame
+            #     mask_bbx = torch.randint(low=20, high=200, size=(num_frames,4)) 
+            #     for i in range(num_frames):
+            #         mask_array[i, mask_bbx[i,0]:mask_bbx[i,1], mask_bbx[i,2]:mask_bbx[i,3]] = 0
+            # else:
+            #     # occlude random num of frames
+            #     occluded_frame_ids = torch.randint(low=0, high=num_frames, size=(num_frames // 2,))
+            #     mask_array[occluded_frame_ids] = 0
         return mask_array
 
     def get_lmk_mask(self, lmk2d, img_mask):

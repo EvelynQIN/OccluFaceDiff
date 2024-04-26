@@ -80,22 +80,23 @@ class VideoProcessor:
             os.makedirs(frame_dst)
             os.system(f'ffmpeg -i {video_path} -vf fps={self.fps} -q:v 1 {frame_dst}/%05d.png')
             if self.config.with_audio:
-                self.audio_path = os.path.join(frame_dst, 'audio.wav')
-                os.system("ffmpeg -i {} {} -y".format(video_path, self.audio_path))
+                audio_path = os.path.join(frame_dst, 'audio.wav')
+                os.system("ffmpeg -i {} {} -y".format(video_path, audio_path))
         
+        self.audio_path = os.path.join(frame_dst, 'audio.wav')
         self.image_paths = sorted(glob.glob(f'{frame_dst}/*.png'))
         self.num_frames = len(self.image_paths)
         logger.info(f"Motion Len = {self.num_frames}")
 
         if self.config.with_audio:
             speech_array, sampling_rate = librosa.load(self.audio_path, sr=16000)
-            self.audio_values = np.squeeze(
+            audio_values = np.squeeze(
                 self.audio_processor(
                     speech_array, 
                     return_tensors='pt', 
                     padding="longest",
                     sampling_rate=sampling_rate).input_values)
-            audio_input = audio_input.float().unsqueeze(0).to(self.device)
+            audio_input = audio_values.float().unsqueeze(0).to(self.device)
             with torch.no_grad():
                 self.audio_emb = self.wav2vec(audio_input, frame_num = self.num_frames).last_hidden_state.squeeze(0).cpu()
         else:

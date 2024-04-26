@@ -311,7 +311,6 @@ def plot_verts(image, kpts, color = 'r'):
     elif color == 'y':
         c = (0, 255, 255)
     image = image.copy()
-
     for i in range(kpts.shape[0]):
         st = kpts[i, :2]
         image = cv2.circle(image,(int(st[0]), int(st[1])), 1, c, 2)  
@@ -322,19 +321,20 @@ def tensor_vis_landmarks(images, landmarks, gt_landmarks=None, color = 'g', isSc
     # visualize landmarks
     vis_landmarks = []
     images = images.cpu().numpy()
+    b, c, h, w = images.shape
     predicted_landmarks = landmarks.detach().cpu().numpy()
     if gt_landmarks is not None:
-        gt_landmarks_np = gt_landmarks.detach().cpu().numpy()
+        gt_landmarks_np = gt_landmarks.detach().cpu().numpy().copy()   # [bs, v, 3]
+        if isScale:
+            gt_landmarks_np[...,0] = gt_landmarks_np[...,0]*w/2 + w/2
+            gt_landmarks_np[...,1] = gt_landmarks_np[...,1]*h/2 + h/2
     for i in range(images.shape[0]):
         image = images[i]
         image = image.transpose(1,2,0)[:,:,[2,1,0]].copy(); image = (image*255)
         if isScale:
             predicted_landmark = predicted_landmarks[i]
-            predicted_landmark[...,0] = predicted_landmark[...,0]*image.shape[1]/2 + image.shape[1]/2
-            predicted_landmark[...,1] = predicted_landmark[...,1]*image.shape[0]/2 + image.shape[0]/2
-            if gt_landmarks is not None:
-                gt_landmarks_np[...,0] = gt_landmarks_np[...,0]*image.shape[1]/2 + image.shape[1]/2
-                gt_landmarks_np[...,1] = gt_landmarks_np[...,1]*image.shape[0]/2 + image.shape[0]/2
+            predicted_landmark[...,0] = predicted_landmark[...,0]*w/2 + w/2
+            predicted_landmark[...,1] = predicted_landmark[...,1]*h/2 + h/2
         else:
             predicted_landmark = predicted_landmarks[i]
         if predicted_landmark.shape[0] == 68:

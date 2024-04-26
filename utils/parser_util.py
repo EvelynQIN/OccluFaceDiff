@@ -529,12 +529,6 @@ def add_predict_options(parser):
         help="name of the experiment.",
     )
 
-    group.add_argument(
-        "--test_mode",
-        type=str,
-        default="in_the_wild",
-        help="test in_the_wild video or given datasets",
-    )
     
     group.add_argument(
         "--with_audio",
@@ -547,35 +541,6 @@ def add_predict_options(parser):
         "--video_path",
         type=str,
         help="video to track, must provide with in_the_wild test_mode.",
-    )
-   
-    ## for non-in-the-wild mode ##
-    group.add_argument(
-        "--motion_id",
-        default="",
-        type=str,
-        help="name of the motion sequence.",
-    )
-    
-    group.add_argument(
-        "--subject_id",
-        default="",
-        type=str,
-        help="name of the subject.",
-    )
-    
-    group.add_argument(
-        "--image_folder",
-        default="",
-        type=str,
-        help="path to the test image_folder.",
-    )
-    
-    group.add_argument(
-        "--audio_path",
-        default="",
-        type=str,
-        help="path to the test audio.",
     )
 
 def add_test_options(parser):

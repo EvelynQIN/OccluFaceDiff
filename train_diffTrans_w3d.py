@@ -75,16 +75,17 @@ def main():
     with open(args_path, "w") as fw:
         json.dump(dict(args), fw, indent=4, sort_keys=True) 
     
-    print("creating training data loader...")    
+    print("creating training data loader...")   
+
+    datasets = ['multiface', 'vocaset'] 
     train_processed_path = load_data(
-        [args.dataset],
+        datasets,
         args.dataset_path,
         "train",
-        args.input_motion_length
     )
     print(f"number of train sequences: {len(train_processed_path['img_folders'])}")
     train_dataset = TrainDataset(
-        args.dataset,
+        datasets,
         train_processed_path,
         args.input_motion_length,
         args.train_dataset_repeat_times,
@@ -100,15 +101,14 @@ def main():
     # val data loader
     print("creating val data loader...")
     val_processed_path = load_data(
-        [args.dataset],
+        datasets,
         args.dataset_path,
         "test",
-        args.input_motion_length
     )
     print(f"number of test sequences: {len(val_processed_path['img_folders'])}")
 
     val_dataset = TrainDataset(
-        args.dataset,
+        datasets,
         val_processed_path,
         args.input_motion_length,
         10,

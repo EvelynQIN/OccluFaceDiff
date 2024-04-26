@@ -1,24 +1,24 @@
 save_dir: "./checkpoints" 
-num_epoch: 100
+num_epoch: 50
 dataset: "multiface" 
 dataset_path: "./dataset"
 weight_decay: 0.001
 batch_size: 1
 gradient_accumulation_steps: 128
-lr: 0.0001
+lr: 0.0003
 cosine_scheduler: True
 device: 0
 num_workers: 8
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
-train_dataset_repeat_times: 30
+train_dataset_repeat_times: 50
 input_motion_length: 20
 occlusion_mask_prob: 0.3
 
 cond_mask_prob: 0
 fps: 30
-resume_checkpoint: "checkpoints/Transformer_512d_2l/model_20.pt"
+# resume_checkpoint: "checkpoints/Transformer_512d_2l_wpho/model_22.pt"
 
 # flame_params
 n_exp: 50 
@@ -26,12 +26,12 @@ n_pose: 6 # jaw pose in 6d
 
 
 # log
-wandb_log: True
+wandb_log: False
 save_interval: 1 
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_512d_2l_0.3occ" 
+arch: "diffusion_Transformer_512d_2l_0.3occ_joint" 
 latent_dim: 512
 dropout: 0.2
 
