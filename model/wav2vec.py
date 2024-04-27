@@ -80,6 +80,7 @@ class Wav2Vec2Model(Wav2Vec2Model):
         for layer in [self.feature_projection, self.encoder]:
             for param in layer.parameters():
                 param.requires_grad = False
+        self.masked_spec_embed.requires_grad = False    # torch.nn.parameters
 
     def unfreeze_encoder(self):
         print(f"[Wav2Vec] Unfrozen.")
@@ -88,6 +89,7 @@ class Wav2Vec2Model(Wav2Vec2Model):
         for layer in [self.feature_projection, self.encoder]:
             for param in layer.parameters():
                 param.requires_grad = True
+        self.masked_spec_embed.requires_grad = True     # torch.nn.parameters
 
     def forward(
         self,
