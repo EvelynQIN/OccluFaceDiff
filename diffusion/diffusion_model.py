@@ -71,11 +71,11 @@ class DiffusionModel(GaussianDiffusion):
 
         # set up loss weight
         self.loss_weight = {
-            'expr_loss': 2.0,
+            'expr_loss': 10.0,
             'pose_loss': 1.0,
             'expr_vel_loss': 0.01,
             'pose_vel_loss': 0.01,
-            'lmk3d_loss': 0.5
+            'lmk3d_loss': 1.0
         }
         print(f"[Diffusion] Loss weights used: {self.loss_weight}")
 

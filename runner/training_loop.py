@@ -113,7 +113,8 @@ class TrainLoop:
                 dist_util.load_state_dict(
                     resume_checkpoint,
                     map_location=dist_util.dev(),
-                )
+                ),
+                strict=False
             )
 
     def _load_optimizer_state(self):

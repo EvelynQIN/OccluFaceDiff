@@ -80,7 +80,7 @@ def main():
     datasets = ['multiface', 'vocaset'] 
     print(f"[Datsets] used for training: {datasets}.")
 
-    mask_ratio = 0.3
+    mask_ratio = 0.5
     print(f"Training mask ratio: {mask_ratio}")
     train_processed_path = load_data(
         datasets,
@@ -114,7 +114,7 @@ def main():
     select_val_id = [i for i in range(num_val_seq)]
     random.shuffle(select_val_id)
     select_val_id = select_val_id[:120]
-    
+
     select_val_processed_path = dict()
     for k in val_processed_path:
         select_val_processed_path[k] = [val_processed_path[k][id] for id in select_val_id]

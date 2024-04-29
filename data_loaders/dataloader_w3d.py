@@ -269,11 +269,17 @@ class TrainDataset(Dataset):
             # read images as input 
             images_list = []
             kpt_list = []
+            mask_list = []
             
             frame_id = processed_data['frame_id'][start_id:start_id + dataset_info['input_motion_length']:dataset_info['skip_frames']]
+            img_mask_array = (processed_data['img_mask'][start_id:start_id + dataset_info['input_motion_length']:dataset_info['skip_frames']].numpy() * 255).astype(np.uint8)
             for i, fid in enumerate(frame_id):
                 frame_id = "%06d"%(fid)
                 kpt = lmk_2d[i].numpy()
+                if i >= len(img_mask_array):
+                    frame_img_mask = img_mask_array[-1]
+                else:
+                    frame_img_mask = img_mask_array[i]
                 
                 img_path = os.path.join(img_folder, f"{motion_id}.{frame_id}.{self.cam_id}.jpg")
                 if not os.path.exists(img_path):
@@ -285,6 +291,7 @@ class TrainDataset(Dataset):
 
                 # apply random rotation to both lmks and frame
                 frame = cv2.warpAffine(frame, M, (dataset_info['original_image_size'][1], dataset_info['original_image_size'][0]))
+                frame_img_mask = cv2.warpAffine(frame_img_mask, M, (dataset_info['original_image_size'][1], dataset_info['original_image_size'][0]))
                 kpt_homo = np.concatenate([kpt[...,:2], np.ones((68, 1))], axis=-1)
                 kpt = M.dot(kpt_homo.T).T
 
@@ -293,13 +300,15 @@ class TrainDataset(Dataset):
                 cropped_kpt = np.dot(tform.params, np.hstack([kpt, np.ones([kpt.shape[0],1])]).T).T
                 cropped_kpt[:,:2] = cropped_kpt[:,:2]/self.image_size * 2  - 1
                 cropped_image = warp(frame, tform.inverse, output_shape=(self.image_size, self.image_size))
+                cropped_mask = warp(frame_img_mask, tform.inverse, output_shape=(self.image_size, self.image_size))
 
                 images_list.append(cropped_image.transpose(2,0,1)) # (3, 224, 224)
                 kpt_list.append(cropped_kpt)
+                mask_list.append(cropped_mask)
 
             image_array = torch.from_numpy(np.stack(images_list)).type(dtype = torch.float32) 
             kpt_array = torch.from_numpy(np.stack(kpt_list)).type(dtype = torch.float32) 
-            img_mask = torch.ones((image_array.shape[0], self.image_size, self.image_size))
+            img_mask = torch.from_numpy(np.stack(mask_list)).type(dtype = torch.float32) 
 
         # apply random color jitter and gaussian blur
         image_array = self.image_augment(image_array)

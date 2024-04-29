@@ -96,41 +96,69 @@ def create_training_data(args, dataset, device='cuda'):
     print("processing dataset ", dataset)
     root_dir = './dataset'
     
-    # init flame
-    flame = FLAME(args)
+    # # init flame
+    # flame = FLAME(args)
 
-    # init wav2vec
-    # audio processor
-    audio_processor = Wav2Vec2Processor.from_pretrained(
-        "facebook/wav2vec2-base-960h")  # HuBERT uses the processor of Wav2Vec 2.0
+    # # init wav2vec
+    # audio_processor = Wav2Vec2Processor.from_pretrained(
+    #     "facebook/wav2vec2-base-960h")  # HuBERT uses the processor of Wav2Vec 2.0
     # wav2vec = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
     # wav2vec.feature_extractor._freeze_parameters()
     # wav2vec.to(device)
     
-    # # init facial segmentator
-    # config_file = 'face_segmentation/deeplabv3plus_r101_512x512_face-occlusion.py'
-    # checkpoint_file = 'face_segmentation/deeplabv3plus_r101_512x512_face-occlusion-93ec6695.pth'
-    # face_segment = init_model(config_file, checkpoint_file, device=device)
+    # init facial segmentator
+    config_file = 'face_segmentation/deeplabv3plus_r101_512x512_face-occlusion.py'
+    checkpoint_file = 'face_segmentation/deeplabv3plus_r101_512x512_face-occlusion-93ec6695.pth'
+    face_segment = init_model(config_file, checkpoint_file, device=device)
     
     # flame_params_folder = os.path.join(root_dir, dataset, "flame_params")
     # calib_folder = os.path.join(root_dir, dataset, "calib")
     image_folder = os.path.join(root_dir, dataset, "image")
-    audio_folder = os.path.join(root_dir, dataset, "audio")
+    # audio_folder = os.path.join(root_dir, dataset, "audio")
     out_folder = os.path.join(root_dir, dataset, "processed")
     # camera_name = "26_C" # name of the selected camera view
     print_shape = True
-    for sbj in tqdm(os.scandir(image_folder)):
-        print(f"Process {sbj.name}")
 
+    for sbj in os.scandir(image_folder):
+        print(f"Process {sbj.name}")
+        
         out_folder_sbj = os.path.join(out_folder, sbj.name)
         if not os.path.exists(out_folder_sbj):
             os.makedirs(out_folder_sbj)
-
+        num_motion = 0
         for motion in os.scandir(sbj.path):
+            print(f"Process No.{num_motion}_{motion.name}")
+            num_motion += 1
             out_fname = os.path.join(out_folder_sbj, f"{motion.name}.pt")
             if not os.path.exists(out_fname):
                 continue
             output = torch.load(out_fname)
+            if 'img_mask' in output:
+                print(f"{motion.name} already processed!")
+                continue
+            mask_list = []
+            skip_frame = 5
+            fid = 0
+            prev_mask = None
+            for img_path in sorted(glob.glob(os.path.join(motion.path, '*.jpg'))):
+                if fid % skip_frame == 0:
+                    frame = cv2.imread(img_path)
+                    seg_result = inference_model(face_segment, frame)
+                    seg_mask = np.asanyarray(seg_result.pred_sem_seg.values()[0].to('cpu'))[0]
+                    prev_mask = seg_mask
+                else:
+                    assert prev_mask is not None
+                    seg_mask = prev_mask
+                mask_list.append(seg_mask)
+                fid += 1
+            
+            mask_list = np.stack(mask_list)
+            
+            output['img_mask'] = torch.from_numpy(mask_list).float()
+            if print_shape:
+                print(output['img_mask'].shape)
+                print_shape = False
+
             # flame_params_path = os.path.join(flame_params_folder, sbj.name, f"{motion.name}.npy")
             # flame_params = np.load(flame_params_path, allow_pickle=True)[()]
    
@@ -140,7 +168,7 @@ def create_training_data(args, dataset, device='cuda'):
             #     print(f"{sbj.name} {motion.name} is nulll")
             #     continue
             # calib_fname = os.path.join(calib_folder, sbj.name, motion.name, f"{camera_name}.tka")
-            audio_path = os.path.join(audio_folder, sbj.name, f"{motion.name}.wav")
+            # audio_path = os.path.join(audio_folder, sbj.name, f"{motion.name}.wav")
 
             # # get the gt flame params and projected 2d lmks
             # shape = torch.Tensor(flame_params["flame_shape"])[:,:100]
@@ -160,17 +188,17 @@ def create_training_data(args, dataset, device='cuda'):
             # target = torch.cat([rot_jaw_6d, expression], dim=1) 
 
             # get audio input
-            speech_array, sampling_rate = librosa.load(audio_path, sr=16000)
-            audio_input = audio_processor(
-                speech_array, 
-                return_tensors='pt', 
-                padding="longest", 
-                sampling_rate=sampling_rate).input_values
+            # speech_array, sampling_rate = librosa.load(audio_path, sr=16000)
+            # audio_input = audio_processor(
+            #     speech_array, 
+            #     return_tensors='pt', 
+            #     padding="longest", 
+            #     sampling_rate=sampling_rate).input_values
             
-            output['audio_input'] = audio_input.squeeze()
-            if print_shape:
-                print(output['audio_input'].shape)
-                print_shape = False
+            # output['audio_input'] = audio_input.squeeze()
+            # if print_shape:
+            #     print(output['audio_input'].shape)
+            #     print_shape = False
 
             # audio_input = np.squeeze(audio_processor(speech_array, return_tensors=None, padding="longest",
             #                             sampling_rate=sampling_rate).input_values)
@@ -191,7 +219,15 @@ def create_training_data(args, dataset, device='cuda'):
             torch.save(output, out_fname)
     
 if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(description='get vocaset training data.')
+
+    parser.add_argument('--device', type=str, default='cpu', help='device')
+
+    args = parser.parse_args()
+
     model_cfg = get_cfg_defaults().model
     dataset = 'vocaset'
-    device = 'cpu'
+    device = args.device
+
     create_training_data(model_cfg, dataset, device)

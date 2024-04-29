@@ -8,17 +8,17 @@ gradient_accumulation_steps: 128
 lr: 0.0003
 cosine_scheduler: True
 device: 0
-num_workers: 4
+num_workers: 8
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
-train_dataset_repeat_times: 80
+train_dataset_repeat_times: 50
 input_motion_length: 20
 occlusion_mask_prob: 0.3
 
 cond_mask_prob: 0
 fps: 30
-# resume_checkpoint: "checkpoints/Transformer_512d_2l_wpho/model_22.pt"
+resume_checkpoint: "checkpoints/Transformer_512d_2l_wpho/model_22.pt"
 
 # flame_params
 n_exp: 50 
