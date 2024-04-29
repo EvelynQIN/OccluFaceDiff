@@ -79,7 +79,7 @@ class TrainLoop:
             self.mp_trainer.master_params, lr=self.lr, weight_decay=self.weight_decay
         )
         if self.args.cosine_scheduler:
-            self.scheduler = WarmupCosineSchedule(self.opt, warmup_steps=50, t_total=self.num_steps)
+            self.scheduler = WarmupCosineSchedule(self.opt, warmup_steps=args.warmup_steps, t_total=self.num_steps)
         
         if self.resume_epoch and self.load_optimizer:
             self._load_optimizer_state()
@@ -137,10 +137,10 @@ class TrainLoop:
             print(f"Starting training epoch {epoch}")
             self.epoch = epoch
 
-            if epoch > 0 and epoch % 2 == 0:
-                self.model.unfreeze_wav2vec()
-            else:
-                self.model.freeze_wav2vec()
+            # if epoch > 0 and epoch % 2 == 0:
+            #     self.model.unfreeze_wav2vec()
+            # else:
+            #     self.model.freeze_wav2vec()
 
             for batch in tqdm(self.train_loader):
                 local_step += 1

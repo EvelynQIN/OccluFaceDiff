@@ -117,7 +117,7 @@ class FaceTransformer(nn.Module):
         
         print(f"[{self.tag}] Using transformer as backbone.")
         self.transformer = nn.Transformer(
-            d_model=self.latent_dim,
+            d_model=self.latent_dim * 2,
             nhead=self.num_heads,
             num_encoder_layers=self.num_enc_layers,
             num_decoder_layers=self.num_dec_layers,
@@ -127,7 +127,7 @@ class FaceTransformer(nn.Module):
             norm_first=False
         )
         
-        self.outputprocess_motion = MotionOutput(output_feats=self.input_feats, latent_dim=self.latent_dim)
+        self.outputprocess_motion = MotionOutput(output_feats=self.input_feats, latent_dim=self.latent_dim * 2)
 
     def mask_cond(self, cond, force_mask=False):
         bs = cond.shape[1]
@@ -167,39 +167,41 @@ class FaceTransformer(nn.Module):
     def unfreeze_wav2vec(self):
         self.audio_encoder.unfreeze_encoder()
     
-    def forward(self, x, timesteps, image, lmk_2d, img_mask, lmk_mask, audio_input=None, force_mask=False, **kwargs):
+    def forward(self, x, timesteps, image=None, lmk_2d=None, img_mask=None, lmk_mask=None, audio_input=None, force_mask=False, **kwargs):
         """
         x: [bs, nframes, nfeats] 
         timesteps: [bs] (int)
         images: [bs, nframes, 3, 224, 224]
         """
         bs, n = x.shape[:2]
-        image = image.clone() * (img_mask.unsqueeze(2))
-        lmk_2d = lmk_2d[...,:2].clone() * (lmk_mask.unsqueeze(-1))
 
-        ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
+        if image is not None:
+            image = image.clone() * (img_mask.unsqueeze(2))
+            lmk_2d = lmk_2d[...,:2].clone() * (lmk_mask.unsqueeze(-1))
 
-        # conditions feature extraction
-        image_cond = self.image_encoder.features(image.view(bs*n, *image.shape[2:]))
-        image_cond = nn.functional.adaptive_avg_pool2d(image_cond, (1, 1)).squeeze(-1).squeeze(-1).view(bs, n, -1) # [bs, n, image_feature_dim]
-        image_cond = self.image_process(image_cond) # [seqlen, bs, d]
-        
-        lmk_cond = self.lmk_process(lmk_2d.reshape(bs, n, -1))  # [seqlen, bs, d]
+            ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
+
+            # conditions feature extraction
+            image_cond = self.image_encoder.features(image.view(bs*n, *image.shape[2:]))
+            image_cond = nn.functional.adaptive_avg_pool2d(image_cond, (1, 1)).squeeze(-1).squeeze(-1).view(bs, n, -1) # [bs, n, image_feature_dim]
+            image_cond = self.image_process(image_cond) # [seqlen, bs, d]
+            lmk_cond = self.lmk_process(lmk_2d.reshape(bs, n, -1))  # [seqlen, bs, d]
+            vis_cond = image_cond + lmk_cond
+        else:
+            vis_cond = torch.zeros((bs, n, self.latent_dim)).to(x.device)
         
         if audio_input is None:
             audio_emb = torch.zeros((bs,n,768)).to(x.device)
         else:
             audio_emb = self.audio_encoder(audio_input, frame_num=n).last_hidden_state
         
-        audio_emb = self.mask_audio_cond(audio_emb)
+        # audio_emb = self.mask_audio_cond(audio_emb)
         audio_cond = self.audio_process(audio_emb)  # [seqlen, bs, d]
         
         # # if concat
-        # cond_emb = self.condition_process(
-        #     torch.cat([image_cond, lmk_cond, audio_cond], dim=-1)
-        # )
+        cond_emb = torch.cat([vis_cond, audio_cond], dim=-1)
         
-        cond_emb = self.mask_cond(image_cond + lmk_cond + audio_cond, force_mask=force_mask)   # [seqlen, bs, d]
+        cond_emb = self.mask_cond(cond_emb, force_mask=force_mask)   # [seqlen, bs, d]
         
         condseq = self.sequence_pos_encoder(cond_emb)  # [seqlen, bs, d]
         

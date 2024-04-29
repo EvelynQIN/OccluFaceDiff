@@ -7,6 +7,7 @@ batch_size: 1
 gradient_accumulation_steps: 128
 lr: 0.0003
 cosine_scheduler: True
+warmup_steps: 100
 device: 0
 num_workers: 8
 diffusion_steps: 1000 
@@ -44,16 +45,3 @@ num_heads: 8
 
 # unusable for transformer encoder 
 num_dec_layers: 3
-
-# training losses
-# shape_loss_w: 0.01
-# pose_loss_w: 5.0
-# expr_loss_w: 5.0
-# trans_loss_w: 5.0
-# mouth_closure_loss_w: 1.0
-# eye_closure_loss_w: 1.0
-# verts3d_loss_w: 1000.0
-# lmk2d_loss_w: 0.1
-# verts2d_loss_w: 100.0
-# pose_jitter_w: 0.1
-# exp_jitter_w: 0.1

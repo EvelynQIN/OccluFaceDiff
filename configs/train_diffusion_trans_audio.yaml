@@ -3,22 +3,22 @@ num_epoch: 500
 dataset: "vocaset" 
 dataset_path: "./dataset"
 weight_decay: 0.001
-batch_size: 1
-gradient_accumulation_steps: 60
+batch_size: 16
+gradient_accumulation_steps: 4
 lr: 0.00001
 cosine_scheduler: True
+warmup_steps: 10
 device: 0
-num_workers: 4
+num_workers: 8
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
-train_dataset_repeat_times: 100
-input_motion_length: 20
-occlusion_mask_prob: 0.3
+train_dataset_repeat_times: 20
+input_motion_length: 60
 
 cond_mask_prob: 0
 fps: 30
-resume_checkpoint: "checkpoints/Transformer_512d_2l_wpho/model_22.pt"
+# resume_checkpoint: 
 
 # flame_params
 n_exp: 50 
@@ -26,13 +26,13 @@ n_pose: 6 # jaw pose in 6d
 
 
 # log
-wandb_log: True
-save_interval: 5 
+wandb_log: False
+save_interval: 1 
 log_interval: 1 
 
 #model architecture
 arch: "diffusion_AudioTrans_512d_2l_audio" 
-latent_dim: 512
+latent_dim: 256
 dropout: 0.2
 
 use_mask: True  # use alibi mask
@@ -40,20 +40,7 @@ use_mask: True  # use alibi mask
 # unusable for gru
 ff_size: 1024
 num_enc_layers: 1
-num_heads: 8
+num_heads: 4
 
 # unusable for transformer encoder 
-num_dec_layers: 3
-
-# training losses
-# shape_loss_w: 0.01
-# pose_loss_w: 5.0
-# expr_loss_w: 5.0
-# trans_loss_w: 5.0
-# mouth_closure_loss_w: 1.0
-# eye_closure_loss_w: 1.0
-# verts3d_loss_w: 1000.0
-# lmk2d_loss_w: 0.1
-# verts2d_loss_w: 100.0
-# pose_jitter_w: 0.1
-# exp_jitter_w: 0.1
+num_dec_layers: 2

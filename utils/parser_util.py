@@ -310,16 +310,19 @@ def add_training_options(parser):
         help="If True, use the cosine scheduler with warm up steps.",
     )
     group.add_argument(
+        "--warmup_steps",
+        default=0,
+        type=int,
+        help="Number of warm up steps of the cosine scheduler.",
+    )
+    
+    group.add_argument(
         "--train_dataset_repeat_times",
         default=1000,
         type=int,
         help="Repeat the training dataset to save training time",
     )
-    group.add_argument(
-        "--eval_during_training",
-        action="store_true",
-        help="If True, will run evaluation during training.",
-    )
+
     group.add_argument(
         "--log_interval", default=100, type=int, help="Log losses each N steps"
     )
@@ -365,79 +368,6 @@ def add_training_options(parser):
         default=0,
         type=float,
         help="Probability for adding random occlusion mask.",
-    )
-
-    group.add_argument(
-        "--mixed_occlusion_prob",
-        default=0,
-        type=float,
-        help="Probability for adding mixed random occlusion mask.",
-    )
-    
-    group.add_argument(
-        "--shape_loss_w",
-        default=1.0,
-        type=float
-    )
-    
-    group.add_argument(
-        "--pose_loss_w",
-        default=1.0,
-        type=float
-    )
-    
-    group.add_argument(
-        "--expr_loss_w",
-        default=1.0,
-        type=float
-    )
-    
-    group.add_argument(
-        "--trans_loss_w",
-        default=1.0,
-        type=float
-    )
-    
-    group.add_argument(
-        "--mouth_closure_loss_w",
-        default=1.0,
-        type=float
-    )
-    
-    group.add_argument(
-        "--eye_closure_loss_w",
-        default=1.0,
-        type=float
-    )
-    
-    group.add_argument(
-        "--verts3d_loss_w",
-        default=1.0,
-        type=float
-    )
-    
-    group.add_argument(
-        "--lmk2d_loss_w",
-        default=1.0,
-        type=float
-    )
-    
-    group.add_argument(
-        "--verts2d_loss_w",
-        default=1.0,
-        type=float
-    )
-    
-    group.add_argument(
-        "--pose_jitter_w",
-        default=1.0,
-        type=float
-    )
-    
-    group.add_argument(
-        "--exp_jitter_w",
-        default=1.0,
-        type=float
     )
 
 def add_sampling_options(parser):

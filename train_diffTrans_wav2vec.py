@@ -6,7 +6,7 @@ import numpy as np
 
 import torch
 
-from data_loaders.dataloader_audio import get_dataloader, load_data, TrainDataset
+from data_loaders.dataloader_audio import get_dataloader, load_data_all, TrainDataset
 
 # from runner.train_mlp import train_step, val_step
 from runner.training_loop import TrainLoop
@@ -75,17 +75,21 @@ def main():
     with open(args_path, "w") as fw:
         json.dump(dict(args), fw, indent=4, sort_keys=True) 
     
+    datasets = ['multiface', 'vocaset']
+    print(f"training on datasets: {datasets}")
     print("creating training data loader...")   
 
-    train_processed_path = load_data(
-        args.dataset,
-        args.dataset_path,
+    train_data = load_data_all(
+        datasets,
         "train",
+        args.input_motion_length
     )
-    print(f"number of train sequences: {len(train_processed_path['img_folders'])}")
+    print(f"number of train sequences: {len(train_processed_path['shape'])}")
     train_dataset = TrainDataset(
-        args.dataset,
-        train_processed_path
+        train_data,
+        args.input_motion_length,
+        args.train_dataset_repeat_times,
+        args.fps
     )
 
     train_loader = get_dataloader(
@@ -94,16 +98,18 @@ def main():
     
     # val data loader
     print("creating val data loader...")
-    val_processed_path = load_data(
-        args.dataset,
-        args.dataset_path,
-        "test"
+    val_data = load_data_all(
+        datasets,
+        "test",
+        args.input_motion_length
     )
-    print(f"number of test sequences: {len(val_processed_path['img_folders'])}")
+    print(f"number of test sequences: {len(val_data['shape'])}")
 
     val_dataset = TrainDataset(
-        args.dataset,
-        val_processed_path
+        val_data,
+        args.input_motion_length,
+        2,
+        args.fps
     )
     
     val_loader = get_dataloader(

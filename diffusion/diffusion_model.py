@@ -43,8 +43,8 @@ def denormalize(value, mean, std):
 def mouth_closure_lmk_loss(pred_lmks, gt_lmks):
     upper_mouth_lmk_ids = [49, 50, 51, 52, 53, 61, 62, 63]
     lower_mouth_lmk_ids = [59, 58, 57, 56, 55, 67, 66, 65]
-    diff_pred = (pred_lmks[:, upper_mouth_lmk_ids, :2] - pred_lmks[:, lower_mouth_lmk_ids, :2])
-    diff_gt = (gt_lmks[:, upper_mouth_lmk_ids, :2] - gt_lmks[:, lower_mouth_lmk_ids, :2])
+    diff_pred = (pred_lmks[:, upper_mouth_lmk_ids, :] - pred_lmks[:, lower_mouth_lmk_ids, :])
+    diff_gt = (gt_lmks[:, upper_mouth_lmk_ids, :] - gt_lmks[:, lower_mouth_lmk_ids, :])
     closure_loss = torch.mean(torch.abs(diff_gt - diff_pred).sum(2))
     return closure_loss
 
@@ -71,11 +71,12 @@ class DiffusionModel(GaussianDiffusion):
 
         # set up loss weight
         self.loss_weight = {
-            'expr_loss': 10.0,
+            'expr_loss': 1.0,
             'pose_loss': 1.0,
             'expr_vel_loss': 0.01,
             'pose_vel_loss': 0.01,
-            'lmk3d_loss': 1.0
+            'lmk3d_loss': 0.1,
+            'mouth_closure_loss': 0.5
         }
         print(f"[Diffusion] Loss weights used: {self.loss_weight}")
 
@@ -294,9 +295,11 @@ class DiffusionModel(GaussianDiffusion):
             torch.norm(lmk3d_pred - lmk3d_gt, 2, -1)
         )
         
+        mouth_closure_loss = mouth_closure_lmk_loss(lmk3d_pred, lmk3d_gt)
+        
         loss = self.loss_weight['expr_loss'] * expr_loss + self.loss_weight['pose_loss'] * pose_loss \
                 + self.loss_weight['expr_vel_loss'] * expr_vel_loss + self.loss_weight['pose_vel_loss'] * pose_vel_loss \
-                + self.loss_weight['lmk3d_loss'] * lmk3d_loss
+                + self.loss_weight['lmk3d_loss'] * lmk3d_loss + self.loss_weight['mouth_closure_loss'] * mouth_closure_loss
             
         
         loss_dict = {
@@ -305,6 +308,7 @@ class DiffusionModel(GaussianDiffusion):
             'expr_vel_loss': expr_vel_loss.detach().item(),
             'pose_vel_loss': pose_vel_loss.detach().item(),
             'lmk3d_loss': lmk3d_loss.detach().item(),
+            'mouth_closure_loss': mouth_closure_loss.detach().item(),
             'loss': loss
         }
 
