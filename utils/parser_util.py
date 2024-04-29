@@ -609,7 +609,7 @@ def add_test_options(parser):
     group.add_argument(
         "--occlusion_mask_prob",
         default=0,
-        type=int,
+        type=float,
         help="occlusion probability.",
     )
 

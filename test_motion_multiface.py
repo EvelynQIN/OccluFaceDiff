@@ -39,6 +39,7 @@ from utils.renderer import SRenderY
 from skimage.io import imread
 import imageio
 from data_loaders.dataloader_with_pretrained import load_motion_for_subject, TestDataset
+from model.wav2vec import Wav2Vec2Model
 import ffmpeg
 
 
@@ -59,7 +60,7 @@ class MotionTracker:
                         
         # name of the tested motion sequence
         self.save_folder = self.config.save_folder
-        self.output_folder = os.path.join(self.save_folder, self.config.arch, config.subject_id, config.exp_name)
+        self.output_folder = os.path.join(self.save_folder, self.config.arch, config.subject_id, config.exp_name, config.split)
         
         logger.add(os.path.join(self.output_folder, 'predict.log'))
         logger.info(f"Using device {self.device}.")
@@ -74,7 +75,7 @@ class MotionTracker:
         self.max_error = 30.
 
         # diffusion models
-        self.denoise_model, self.diffusion = self.load_diffusion_model_from_ckpt(config, model_cfg)
+        self.load_diffusion_model_from_ckpt(config, model_cfg)
         
         # load relavant models
         # self.emoca = EMOCA(model_cfg)
@@ -85,7 +86,7 @@ class MotionTracker:
     
     def _create_flame(self):
         self.flame = FLAME(self.model_cfg).to(self.device)
-        self.flametex = FLAMETex(self.model_cfg).to(self.device)
+        self.flametex = FLAMETex(self.model_cfg).to(self.device)    
     
     def _setup_renderer(self):
         self.render = SRenderY(
@@ -111,16 +112,28 @@ class MotionTracker:
     def load_diffusion_model_from_ckpt(self, args, model_cfg):
         logger.info("Creating model and diffusion...")
         args.arch = args.arch[len("diffusion_") :]
-        denoise_model, diffusion = create_model_and_diffusion(args, model_cfg, self.device)
+        self.denoise_model, self.diffusion = create_model_and_diffusion(args, model_cfg, self.device)
 
         logger.info(f"Loading checkpoints from [{args.model_path}]...")
         state_dict = torch.load(args.model_path, map_location="cpu")
-        load_model_wo_clip(denoise_model, state_dict)
+        self.denoise_model.load_state_dict(state_dict, strict=False)
 
-        denoise_model.to(self.device)  # dist_util.dev())
-        denoise_model.eval()  # disable random masking
-        return denoise_model, diffusion
-    
+        self.denoise_model.to(self.device)  # dist_util.dev())
+        self.denoise_model.eval()  # disable random masking
+
+        # create audio encoder tuned in the state_dict
+        self.audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
+        w2v_ckpt = {}
+        for key in state_dict.keys():
+            if key.startswith('audio_encoder.'):
+                k = key.replace("audio_encoder.","")
+                w2v_ckpt[k] = state_dict[key]
+        if len(w2v_ckpt) > 0:
+            self.audio_encoder.load_state_dict(w2v_ckpt, strict=True)
+            logger.info(f"Load Audio Encoder Successfully from CKPT!")
+        self.audio_encoder.to(self.device)
+        self.audio_encoder.eval()
+            
     def output_video(self, fps=30):
         utils_visualize.images_to_video(self.output_folder, fps, self.motion_name)
     
@@ -274,6 +287,7 @@ class MotionTracker:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         for i in tqdm(range(len(self.test_data))):
             batch = self.test_data[i]
+            self.num_frames = batch['lmk_2d'].shape[0]
             subject_id = batch['subject_id']
             motion_id = batch['motion_id']
             logger.info(f'Process [{subject_id} -- {motion_id}].')
@@ -284,10 +298,13 @@ class MotionTracker:
                 self.with_audio = True
                 audio_path = batch['audio_path']
                 self.writer = cv2.VideoWriter(video_path+'.mp4', fourcc, self.config.fps, (self.image_size*4, self.image_size))
+                audio_input = batch['audio_input'].unsqueeze(0).to(self.device)
+                with torch.no_grad():
+                    batch['audio_emb'] = self.audio_encoder(audio_input, frame_num=self.num_frames).last_hidden_state.squeeze(0).cpu()
             else:
                 self.with_audio = False
                 self.writer = imageio.get_writer(video_path + '.gif', mode='I')
-            self.num_frames = batch['lmk_2d'].shape[0]
+                batch['audio_emb'] = torch.zeros((self.num_frames, 768))
             self.motion_memory = None   # init diffusion memory for motin infilling
             start_id = 0
             while start_id + self.input_motion_length <= self.num_frames:

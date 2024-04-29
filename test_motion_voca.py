@@ -34,7 +34,7 @@ import imageio
 from data_loaders.dataloader_w3d import load_split_for_subject, TestOneMotion
 import ffmpeg
 import pickle
-
+from model.wav2vec import Wav2Vec2Model
 
 os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
 
@@ -71,7 +71,7 @@ class MotionTracker:
         self.max_error = 10.
 
         # diffusion models
-        self.denoise_model, self.diffusion = self.load_diffusion_model_from_ckpt(config, model_cfg)
+        self.load_diffusion_model_from_ckpt(config, model_cfg)
         
         self._create_flame()
         self._setup_renderer()
@@ -195,15 +195,27 @@ class MotionTracker:
     def load_diffusion_model_from_ckpt(self, args, model_cfg):
         logger.info("Creating model and diffusion...")
         args.arch = args.arch[len("diffusion_") :]
-        denoise_model, diffusion = create_model_and_diffusion(args, model_cfg, self.device)
+        self.denoise_model, self.diffusion = create_model_and_diffusion(args, model_cfg, self.device)
 
         logger.info(f"Loading checkpoints from [{args.model_path}]...")
         state_dict = torch.load(args.model_path, map_location="cpu")
-        load_model_wo_clip(denoise_model, state_dict)
+        self.denoise_model.load_state_dict(state_dict, strict=False)
 
-        denoise_model.to(self.device)  # dist_util.dev())
-        denoise_model.eval()  # disable random masking
-        return denoise_model, diffusion
+        self.denoise_model.to(self.device)  # dist_util.dev())
+        self.denoise_model.eval()  # disable random masking
+
+        # create audio encoder tuned in the state_dict
+        self.audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
+        w2v_ckpt = {}
+        for key in state_dict.keys():
+            if key.startswith('audio_encoder.'):
+                k = key.replace("audio_encoder.","")
+                w2v_ckpt[k] = state_dict[key]
+        if len(w2v_ckpt) > 0:
+            self.audio_encoder.load_state_dict(w2v_ckpt, strict=True)
+            logger.info(f"Load Audio Encoder Successfully from CKPT!")
+        self.audio_encoder.to(self.device)
+        self.audio_encoder.eval()
     
     def output_video(self, fps=30):
         utils_visualize.images_to_video(self.output_folder, fps, self.motion_name)
@@ -314,6 +326,7 @@ class MotionTracker:
 
         raster_pred, mesh_pred = self.render_mesh(diff_verts, self.cameras, white=False)
         mesh_mask = (raster_pred.pix_to_face.permute(0, 3, 1, 2) > -1).long()   # (bs, 1, h, w)
+        
         blend_pred = gt_data['image'] * (1 - mesh_mask) + gt_data['image'] * mesh_mask * 0.3 + mesh_pred * 0.7 * mesh_mask  # (bs, 3, h, w)
         
         # landmarks vis
@@ -414,7 +427,8 @@ class MotionTracker:
                 self.input_motion_length,
                 self.config.occlusion_mask_prob,
                 self.config.fps,
-                self.config.exp_name
+                self.config.exp_name,
+                self.audio_encoder
             )
             subject_id = test_motion.subject_id
             motion_id = test_motion.motion_id
@@ -509,7 +523,9 @@ def main():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     
-    split_data = load_split_for_subject(args.dataset, args.dataset_path, args.subject_id, args.split, args.motion_id)
+    args.dataset = 'vocaset'
+    
+    split_data = load_split_for_subject('vocaset', args.dataset_path, args.subject_id, args.split, args.motion_id)
 
     motion_tracker = MotionTracker(args, pretrained_args.model, split_data, 'cuda')
     
