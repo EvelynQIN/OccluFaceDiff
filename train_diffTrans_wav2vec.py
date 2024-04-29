@@ -75,7 +75,7 @@ def main():
     with open(args_path, "w") as fw:
         json.dump(dict(args), fw, indent=4, sort_keys=True) 
     
-    datasets = ['multiface', 'vocaset']
+    datasets = ['vocaset', 'multiface']
     print(f"training on datasets: {datasets}")
     print("creating training data loader...")   
 
@@ -84,7 +84,7 @@ def main():
         "train",
         args.input_motion_length
     )
-    print(f"number of train sequences: {len(train_processed_path['shape'])}")
+    print(f"number of train sequences: {len(train_data['shape'])}")
     train_dataset = TrainDataset(
         train_data,
         args.input_motion_length,

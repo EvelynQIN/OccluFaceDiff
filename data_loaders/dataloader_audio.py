@@ -45,7 +45,7 @@ class TrainDataset(Dataset):
         # cut audio into corresponding position
         start_audio = start_id * self.audio_per_frame 
         end_audio = (start_id+self.input_motion_length) * self.audio_per_frame
-        audio_input = self.split_data['shape'][id][start_audio:end_audio]
+        audio_input = self.split_data['audio_input'][id][start_audio:end_audio]
 
         return {
             'audio_input': audio_input.float(),
