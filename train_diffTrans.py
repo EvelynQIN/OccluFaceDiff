@@ -6,7 +6,7 @@ import numpy as np
 
 import torch
 
-from data_loaders.dataloader_with_pretrained import get_dataloader, load_data, TrainDataset
+from data_loaders.dataloader_MEAD import get_dataloader, load_data, TrainDataset
 
 # from runner.train_mlp import train_step, val_step
 from runner.training_loop import TrainLoop

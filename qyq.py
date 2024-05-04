@@ -1,10 +1,21 @@
-from data_loaders.dataloader_audio import load_data_all
-
-load_data_all(
-    datasets=['multiface', 'vocaset'],
-    split='train'
-)
-        
-                
-                               
+MEAD_subject_split = {
+    # M22+F17
+    "train": [
+        'M003', 'M005', 'M007', 'M009', 'M011', 'M012', 
+        'M013', 'M019', 'M022', 'M023', 'M024', 'M025', 
+        'M026', 'M027', 'M028', 'M029', 'M030', 'M031', 
+        'M032', 'M033', 'M034', 'M035', 
+        'W009', 'W011', 'W014', 'W015', 'W016', 'W018', 
+        'W019', 'W021', 'W023', 'W024', 'W025', 'W026', 
+        'W028', 'W029', 'W033', 'W035', 'W036'],
+    # M5+F3
+    "test": [
+        'M037', 'M039', 'M040', 'M041', 'M042', 
+        'W037', 'W038', 'W040'
+    ]
+}      
+MEAD_sentence_split = {
+        "train": ["%03d" % i for i in range(1, 26)] +  ["%03d" % i for i in range(36, 100)],
+        "test": ["%03d" % i for i in range(26, 36)]
+}        
                 

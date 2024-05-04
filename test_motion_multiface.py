@@ -6,7 +6,7 @@ import torch
 import torchvision
 import torchvision.transforms.functional as F_v
 
-from data_loaders.dataloader_with_pretrained import load_data, TestDataset
+from data_loaders.dataloader_lmk import load_data, TestDataset
 from tqdm import tqdm
 
 from utils import utils_transform, utils_visualize
@@ -38,7 +38,7 @@ from model.FLAME import FLAME, FLAMETex
 from utils.renderer import SRenderY
 from skimage.io import imread
 import imageio
-from data_loaders.dataloader_with_pretrained import load_motion_for_subject, TestDataset
+from data_loaders.dataloader_lmk import load_motion_for_subject, TestDataset
 from model.wav2vec import Wav2Vec2Model
 import ffmpeg
 

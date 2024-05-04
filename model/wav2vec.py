@@ -110,7 +110,7 @@ class Wav2Vec2Model(Wav2Vec2Model):
         hidden_states = self.feature_extractor(input_values)    # (bs, 512, 49)
         hidden_states = hidden_states.transpose(1, 2)   # (bs, 49, 512)
 
-        hidden_states = linear_interpolation(hidden_states, 50, 30, output_len=frame_num)   # (bs, 30, 512)
+        hidden_states = linear_interpolation(hidden_states, 50, 25, output_len=frame_num)   # (bs, 25, 512)
 
         if attention_mask is not None:
             output_lengths = self._get_feat_extract_output_lengths(attention_mask.sum(-1))
