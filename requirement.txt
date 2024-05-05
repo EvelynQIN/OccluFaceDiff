@@ -15,3 +15,5 @@ librosa
 "mmsegmentation>=1.0.0"
 transformers
 pytorch-lightning
+mediapipe
+h5py

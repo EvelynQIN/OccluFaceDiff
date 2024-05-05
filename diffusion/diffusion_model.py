@@ -14,7 +14,7 @@ import torch
 import torch.nn.functional as F
 from utils import utils_transform
 from utils.data_util import batch_orth_proj
-from model.FLAME import FLAME, FLAMETex
+from model.FLAME import FLAME, FLAMETex, FLAME_mediapipe
 from model.deca import ExpressionLossNet
 import numpy as np 
 from utils.renderer import SRenderY
@@ -26,6 +26,7 @@ import sys
 # from external.Visual_Speech_Recognition_for_Multiple_Languages.lipreading.model import Lipreading
 # from external.Visual_Speech_Recognition_for_Multiple_Languages.dataloader.transform import Compose, Normalize, CenterCrop, SpeedRate, Identity
 from configparser import ConfigParser
+from utils.MediaPipeLandmarkLists import *
 
 from diffusion.gaussian_diffusion import (
     GaussianDiffusion,
@@ -41,20 +42,16 @@ def denormalize(value, mean, std):
     return  value * std + mean
 
 def mouth_closure_lmk_loss(pred_lmks, gt_lmks):
-    upper_mouth_lmk_ids = [49, 50, 51, 52, 53, 61, 62, 63]
-    lower_mouth_lmk_ids = [59, 58, 57, 56, 55, 67, 66, 65]
-    diff_pred = (pred_lmks[:, upper_mouth_lmk_ids, :] - pred_lmks[:, lower_mouth_lmk_ids, :])
-    diff_gt = (gt_lmks[:, upper_mouth_lmk_ids, :] - gt_lmks[:, lower_mouth_lmk_ids, :])
-    closure_loss = torch.mean(torch.abs(diff_gt - diff_pred).sum(2))
+    
+    diff_pred = (pred_lmks[:, UPPER_LIP_EM, :] - pred_lmks[:, LOWER_LIP_EM, :]).abs().sum(2)
+    diff_gt = (gt_lmks[:, UPPER_LIP_EM, :] - gt_lmks[:, LOWER_LIP_EM, :]).abs().sum(2)
+    closure_loss = torch.mean(torch.abs(diff_gt - diff_pred))
     return closure_loss
 
 def eye_closure_lmk_loss(pred_lmks, gt_lmks):
-    upper_eyelid_lmk_ids = [37, 38, 43, 44]
-    lower_eyelid_lmk_ids = [41, 40, 47, 46]
-    diff_pred = (pred_lmks[:, upper_eyelid_lmk_ids, :2] - pred_lmks[:, lower_eyelid_lmk_ids, :2])
-    diff_gt = (gt_lmks[:, upper_eyelid_lmk_ids, :2] - gt_lmks[:, lower_eyelid_lmk_ids, :2])
-    closure_loss = torch.mean(torch.abs(diff_gt - diff_pred).sum(2))
-
+    diff_pred = (pred_lmks[:, UPPER_EYELIDS_EM, :2] - pred_lmks[:, LOWER_EYELIDS_EM, :2]).abs().sum(2)
+    diff_gt = (gt_lmks[:, UPPER_EYELIDS_EM, :2] - gt_lmks[:, LOWER_EYELIDS_EM, :2]).abs().sum(2)
+    closure_loss = torch.mean(torch.abs(diff_gt - diff_pred))
     return closure_loss
 
 class DiffusionModel(GaussianDiffusion):
@@ -75,14 +72,15 @@ class DiffusionModel(GaussianDiffusion):
             'pose_loss': 1.0,
             'expr_vel_loss': 0.01,
             'pose_vel_loss': 0.01,
-            'lmk3d_loss': 0.1,
-            'mouth_closure_loss': 0.5
+            'lmk2d_loss': 0.2,
+            'mouth_closure_loss': 0.5,
+            'eye_closure_loss': 0.1
         }
         print(f"[Diffusion] Loss weights used: {self.loss_weight}")
 
     def _create_flame(self):
         print(f"[Diffusion] Load FLAME.")
-        self.flame = FLAME(self.model_cfg).to(self.device)
+        self.flame = FLAME_mediapipe(self.model_cfg).to(self.device)
         
         # flame_vmask_path = "flame_2020/FLAME_masks.pkl"
         # with open(flame_vmask_path, 'rb') as f:
@@ -217,38 +215,18 @@ class DiffusionModel(GaussianDiffusion):
         """
         Computes the l1 loss between the ground truth keypoints and the predicted keypoints
         Inputs:
-        lmk2d_gt  : N x K x 3
+        lmk2d_gt  : N x K x 2
         lmk2d_pred: N x K x 2
         """
-        weights = torch.ones((68,)).cuda()
-        
-        # contour
-        weights[5:7] = 2
-        weights[10:12] = 2
-        
-        # nose points
-        weights[27:36] = 1.5
-        weights[30] = 3
-        weights[31] = 3
-        weights[35] = 3
-        
-        # eye points
-        weights[36:48] = 2
-
-        # set mouth to zero
-        weights[48:68] = 3
-        lmk2d_gt[:,:,2] = weights[None,:] * lmk2d_gt[:,:,2]
-        kp_gt = lmk2d_gt.view(-1, 3)
+        kp_gt = lmk2d_gt.view(-1, 2)
         kp_pred = lmk2d_pred.contiguous().view(-1, 2)
-        vis = kp_gt[:, 2]
-        k = torch.sum(vis) * 2.0 + 1e-8
 
-        dif_abs = torch.abs(kp_gt[:, :2] - kp_pred).sum(1)
+        diff_abs = torch.abs(kp_gt[:, :2] - kp_pred).sum(1)
 
-        return torch.matmul(dif_abs, vis) * 1.0 / k
+        return diff_abs.mean()
 
-    # loss computation between target and prediction where only 3d supervision is available
-    def masked_l2(self, target, model_output, **model_kwargs):
+    # loss computation between target and prediction
+    def masked_l2_3d(self, target, model_output, **model_kwargs):
 
         bs, n, c = target.shape    
 
@@ -314,8 +292,8 @@ class DiffusionModel(GaussianDiffusion):
 
         return loss_dict
         
-    # loss computation between target and prediction where only 2d images are available
-    def masked_l2_w2d(self, target, model_output, **model_kwargs):
+    # loss computation between target and prediction where 2d images are available
+    def masked_l2(self, target, model_output, **model_kwargs):
 
         bs, n, c = target.shape    
 
@@ -343,23 +321,23 @@ class DiffusionModel(GaussianDiffusion):
         
         # batch the output
         shape = model_kwargs['shape'].view(bs*n, -1)
-        R_aa = model_kwargs['R'].view(bs*n, -1)
+        R_aa = model_kwargs['global_pose'].view(bs*n, -1)
         expr_pred = expr_pred.reshape(bs*n, -1)
         jaw_pred_aa = utils_transform.sixd2aa(jaw_pred.reshape(-1, 6))
         pose_pred = torch.cat([R_aa, jaw_pred_aa], dim=-1)
         cam = model_kwargs['cam'].view(bs*n, -1)
         
         # flame decoder
-        verts, landmarks2d, _ = self.flame(
+        _, lmk_pred = self.flame(
             shape_params=shape, 
             expression_params=expr_pred,
             pose_params=pose_pred)
         
         # orthogonal projection
-        landmarks2d = batch_orth_proj(landmarks2d, cam)[:, :, :2]
-        landmarks2d[:, :, 1:] = -landmarks2d[:, :, 1:]
-        trans_verts = batch_orth_proj(verts, cam)
-        trans_verts[:, :, 1:] = -trans_verts[:, :, 1:]
+        lmk_pred = batch_orth_proj(lmk_pred, cam)[:, :, :2]
+        lmk_pred[:, :, 1:] = -lmk_pred[:, :, 1:]
+        # trans_verts = batch_orth_proj(verts, cam)
+        # trans_verts[:, :, 1:] = -trans_verts[:, :, 1:]
 
         # # rendering
         # images = model_kwargs['image'].view(bs*n, *model_kwargs['image'].shape[2:])
@@ -380,10 +358,10 @@ class DiffusionModel(GaussianDiffusion):
         ## --------loss computation -------- ##
         
         # ---- geometric losses ---- #
-        lmk_gt = model_kwargs['lmk_2d'].view(bs*n, *model_kwargs['lmk_2d'].shape[2:])
-        lmk2d_loss = self.batch_lmk2d_loss(landmarks2d, lmk_gt)  
-        eye_closure_loss = eye_closure_lmk_loss(landmarks2d, lmk_gt)
-        mouth_closure_loss = mouth_closure_lmk_loss(landmarks2d, lmk_gt)
+        lmk_gt = model_kwargs['lmk_2d'][:,:,self.flame.landmark_indices_mediapipe].view(bs*n, *lmk_pred.shape[-2:])
+        lmk2d_loss = self.batch_lmk2d_loss(lmk_pred, lmk_gt)  
+        eye_closure_loss = eye_closure_lmk_loss(lmk_pred, lmk_gt)
+        mouth_closure_loss = mouth_closure_lmk_loss(lmk_pred, lmk_gt)
         
         #  # ---- photometric loss ---- #
         # photometric_loss = torch.mean(mask_face_eye * ops['alpha_images'] * (ops['images'] - images).abs())
@@ -422,8 +400,10 @@ class DiffusionModel(GaussianDiffusion):
 
         # lipread_loss = F.mse_loss(lip_features_gt, lip_features_pred)
         
-        loss = 0.2 * lmk2d_loss + 0.5 * mouth_closure_loss + 0.1 * eye_closure_loss \
-            + 1.0 * expr_loss + 1.0 * pose_loss + 0.01 * expr_vel_loss + 0.01 * pose_vel_loss \
+        loss = self.loss_weight['lmk2d_loss'] * lmk2d_loss + self.loss_weight['mouth_closure_loss'] * mouth_closure_loss \
+            + self.loss_weight['eye_closure_loss'] * eye_closure_loss \
+            + self.loss_weight['expr_loss'] * expr_loss + self.loss_weight['pose_loss'] * pose_loss \
+            + self.loss_weight['expr_vel_loss'] * expr_vel_loss + self.loss_weight['pose_vel_loss'] * pose_vel_loss \
             + 0.001 * 0 + 0.5 * 0 + 0.1 * 0\
             
         

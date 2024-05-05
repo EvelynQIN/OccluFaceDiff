@@ -25,11 +25,11 @@ done
 
 echo "Downloading assets to run EMOTE..." 
 
-# echo "Downloading FLAME related assets"
-# wget https://download.is.tue.mpg.de/emote/FLAME.zip -O FLAME.zip
-# echo "Extracting FLAME..."
-# ## unzip without overwriting existing files
-# unzip -n FLAME.zip
+echo "Downloading FLAME related assets"
+wget https://download.is.tue.mpg.de/emote/FLAME.zip -O FLAME.zip
+echo "Extracting FLAME..."
+## unzip without overwriting existing files
+unzip -n FLAME.zip
 
 echo "Downloading FLINT"
 wget https://download.is.tue.mpg.de/emote/MotionPrior.zip 

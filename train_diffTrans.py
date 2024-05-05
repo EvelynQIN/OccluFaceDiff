@@ -6,7 +6,7 @@ import numpy as np
 
 import torch
 
-from data_loaders.dataloader_MEAD import get_dataloader, load_data, TrainDataset
+from data_loaders.dataloader_MEAD import get_dataloader, load_data, TrainMeadDataset
 
 # from runner.train_mlp import train_step, val_step
 from runner.training_loop import TrainLoop
@@ -58,7 +58,7 @@ def main():
     # init wandb log
     if args.wandb_log:
         wandb.init(
-            project="face_animation_from_image",
+            project="face_animation_from_MEAD",
             name=args.arch,
             config=args,
             settings=wandb.Settings(start_method="fork"),
@@ -82,17 +82,21 @@ def main():
         "train",
         args.input_motion_length
     )
+
     print(f"number of train sequences: {len(train_processed_path)}")
-    train_dataset = TrainDataset(
+    train_dataset = TrainMeadDataset(
         args.dataset,
+        args.dataset_path,
         train_processed_path,
         args.input_motion_length,
         args.train_dataset_repeat_times,
         args.no_normalization,
-        args.occlusion_mask_prob,
-        args.mixed_occlusion_prob,
-        args.fps
+        args.fps,
+        args.n_shape,
+        args.n_exp
     )
+
+    train_dataset[0]
 
     train_loader = get_dataloader(
         train_dataset, "train", batch_size=args.batch_size, num_workers=args.num_workers
@@ -107,15 +111,16 @@ def main():
         args.input_motion_length
     )
     print(f"number of test sequences: {len(val_processed_path)}")
-    val_dataset = TrainDataset(
+    val_dataset = TrainMeadDataset(
         args.dataset,
-        val_processed_path,
+        args.dataset_path,
+        train_processed_path,
         args.input_motion_length,
-        5,
+        3,
         args.no_normalization,
-        args.occlusion_mask_prob,
-        args.mixed_occlusion_prob,
-        args.fps
+        args.fps,
+        args.n_shape,
+        args.n_exp
     )
     
     val_loader = get_dataloader(

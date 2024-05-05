@@ -19,6 +19,7 @@ cfg.model.topology_path = os.path.join('flame_2020' , 'head_template_mesh.obj')
 # texture data original from http://files.is.tue.mpg.de/tbolkart/FLAME/FLAME_texture_data.zip
 cfg.model.dense_template_path = os.path.join('flame_2020', 'texture_data_256.npy')
 cfg.model.flame_model_path = os.path.join('flame_2020', 'generic_model.pkl')
+cfg.model.flame_mediapipe_lmk_embedding_path = os.path.join('flame_2020', 'mediapipe_landmark_embedding.npz')
 cfg.model.flame_lmk_embedding_path = os.path.join('flame_2020', 'landmark_embedding.npy')
 cfg.model.face_mask_path = os.path.join('flame_2020', 'uv_face_mask.png')
 cfg.model.face_eye_mask_path = os.path.join('flame_2020', 'uv_face_eye_mask.png')
@@ -28,7 +29,7 @@ cfg.model.tex_type = 'BFM' # BFM, FLAME, albedoMM
 cfg.model.use_texture = False   # whether use predicted texture in renderer
 cfg.model.uv_size = 256
 cfg.model.param_list = ['shape', 'tex', 'exp', 'pose', 'cam', 'light']
-cfg.model.n_shape = 100
+cfg.model.n_shape = 300
 cfg.model.n_tex = 50
 cfg.model.n_exp = 50
 cfg.model.n_cam = 3
@@ -36,6 +37,7 @@ cfg.model.n_pose = 6    # aa representation of neck + jaw
 cfg.model.n_light = 27
 cfg.model.jaw_type = 'aa' # default use axis angle, another option: euler. Note that: aa is not stable in the beginning
 cfg.model.image_size = 224
+
 
 def get_cfg_defaults():
     return cfg.clone()

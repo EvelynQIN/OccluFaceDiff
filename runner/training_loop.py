@@ -87,10 +87,6 @@ class TrainLoop:
         self.device = torch.device("cpu")
         if torch.cuda.is_available() and dist_util.dev() != "cpu":
             self.device = torch.device(dist_util.dev())
-        
-        # # load pretrained model from EMOCA
-        # self.emoca = EMOCA(self.model_cfg)
-        # self.emoca.to(self.device)
 
         self.schedule_sampler_type = "uniform"
         self.schedule_sampler = create_named_schedule_sampler(
@@ -137,10 +133,10 @@ class TrainLoop:
             print(f"Starting training epoch {epoch}")
             self.epoch = epoch
 
-            # if epoch > 0 and epoch % 2 == 0:
-            #     self.model.unfreeze_wav2vec()
-            # else:
-            #     self.model.freeze_wav2vec()
+            if epoch > 0 and epoch % 3 == 0:
+                self.model.unfreeze_wav2vec()
+            else:
+                self.model.freeze_wav2vec()
 
             for batch in tqdm(self.train_loader):
                 local_step += 1
@@ -203,7 +199,8 @@ class TrainLoop:
         #     self.schedule_sampler.update_with_local_losses(t, losses["loss"].detach())
 
         # normalize loss to account for batch accumulation
-        self.mp_trainer.backward(loss_dict['loss'] / self.gradient_accumulation_steps)
+        loss = loss_dict['loss'] / self.gradient_accumulation_steps
+        self.mp_trainer.backward(loss)
         if log_loss:
             loss_dict['loss'] = loss_dict['loss'].detach().item()
             self.log_loss_dict(loss_dict, "train")

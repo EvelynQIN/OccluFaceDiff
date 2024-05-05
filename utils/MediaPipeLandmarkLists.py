@@ -82,3 +82,54 @@ def all_face_landmark_indices(sorted=True):
         face_all.sort()
     face_all = np.array(face_all, dtype=np.int32)
     return face_all
+
+# mediapipe landmark embedding indices
+EMBEDDING_INDICES = [
+    276, 282, 283, 285, 293, 295, 296, 300, 334, 336,  46,  52,  53,
+    55,  63,  65,  66,  70, 105, 107, 249, 263, 362, 373, 374, 380,
+    381, 382, 384, 385, 386, 387, 388, 390, 398, 466, 7,  33, 133,
+    144, 145, 153, 154, 155, 157, 158, 159, 160, 161, 163, 173, 246,
+    168,   6, 197, 195,   5,   4, 129,  98,  97,   2, 326, 327, 358,
+    0,  13,  14,  17,  37,  39,  40,  61,  78,  80,  81,  82,  84,
+    87,  88,  91,  95, 146, 178, 181, 185, 191, 267, 269, 270, 291,
+    308, 310, 311, 312, 314, 317, 318, 321, 324, 375, 402, 405, 409,
+    415]
+
+sorter = np.argsort(EMBEDDING_INDICES)
+
+# upper inner + outer + left corder (inner + outer)
+UPPER_LIP_IDX = [191,  80, 81 , 82 , 13 , 312, 311, 310, 415] + [185,  40,  39,  37, 0, 267, 269, 270, 409] + [308, 291]
+
+# lowr inner + outer + right corder (inner + outer)
+LOWER_LIP_IDX = [ 95,  88, 178, 87 , 14 , 317, 402, 318, 324] + [146,  91, 181,  84, 17, 314, 405, 321, 375] + [78, 61]
+
+# LEFT EYE
+# perspective of the landmarked person
+LEFT_EYE_LEFT_CORNER = 263
+LEFT_EYE_RIGHT_CORNER = 362 
+# the upper and lower eyelid points are in correspondences, ordered from right to left (perspective of the landmarked person)
+LEFT_UPPER_EYELID_INDICES = [398, 384, 385, 386, 387, 388, 466]
+LEFT_LOWER_EYELID_INDICES = [382, 381, 380, 374, 373, 390, 249]
+
+LEFT_UPPER_EYEBROW_INDICES = [336, 296, 334, 293, 300]
+LEFT_LOWER_EYEBROW_INDICES = [285, 295, 282, 283, 276]
+
+# RIGHT EYE
+# perspective of the landmarked person
+RIGHT_EYE_LEFT_CORNER = 133
+RIGHT_EYE_RIGHT_CORNER = 33 
+# the upper and lower eyelid points are in correspondences, ordered from right to left (perspective of the landmarked person)
+RIGHT_UPPER_EYELID_INDICES = [246, 161, 160, 159, 158, 157, 173]
+RIGHT_LOWER_EYELID_INDICES = [7  , 163, 144, 145, 153, 154, 155]
+
+RIGHT_UPPER_EYEBROW_INDICES = [ 70,  63, 105,  66, 107]
+RIGHT_LOWER_EYEBROW_INDICES = [ 46,  53,  52,  65,  55]
+
+UPPER_EYELIDS = np.array(LEFT_UPPER_EYELID_INDICES + RIGHT_UPPER_EYELID_INDICES, dtype=np.int64)
+LOWER_EYELIDS = np.array(LEFT_LOWER_EYELID_INDICES + RIGHT_LOWER_EYELID_INDICES, dtype=np.int64) 
+
+# em correspondances
+UPPER_LIP_EM = sorter[np.searchsorted(EMBEDDING_INDICES, UPPER_LIP_IDX, sorter=sorter)]
+LOWER_LIP_EM = sorter[np.searchsorted(EMBEDDING_INDICES, LOWER_LIP_IDX, sorter=sorter)]
+UPPER_EYELIDS_EM = sorter[np.searchsorted(EMBEDDING_INDICES, UPPER_EYELIDS, sorter=sorter)]
+LOWER_EYELIDS_EM = sorter[np.searchsorted(EMBEDDING_INDICES, LOWER_EYELIDS, sorter=sorter)]

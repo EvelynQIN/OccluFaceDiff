@@ -1,39 +1,39 @@
 save_dir: "./checkpoints" 
 num_epoch: 50
-dataset: "multiface" 
+dataset: "mead_25fps" 
 dataset_path: "./dataset"
 weight_decay: 0.001
-batch_size: 1
-gradient_accumulation_steps: 128
+batch_size: 16
+gradient_accumulation_steps: 4
 lr: 0.0003
 cosine_scheduler: True
 warmup_steps: 100
-device: 0
-num_workers: 8
+device: 0 # -1 if using cpu for test
+num_workers: 4
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
-train_dataset_repeat_times: 50
-input_motion_length: 20
-occlusion_mask_prob: 0.3
+train_dataset_repeat_times: 5
+input_motion_length: 64
 
 cond_mask_prob: 0
-fps: 30
-resume_checkpoint: "checkpoints/Transformer_512d_2l_wpho/model_22.pt"
+fps: 25
+# resume_checkpoint: 
 
 # flame_params
+n_shape: 300
 n_exp: 50 
 n_pose: 6 # jaw pose in 6d
 
 
 # log
-wandb_log: True
+wandb_log: False
 save_interval: 1 
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_512d_2l_0.3occ_joint" 
-latent_dim: 512
+arch: "diffusion_Transformer_512d_cat" 
+latent_dim: 256
 dropout: 0.2
 
 use_mask: True  # use alibi mask
@@ -41,7 +41,7 @@ use_mask: True  # use alibi mask
 # unusable for gru
 ff_size: 1024
 num_enc_layers: 2
-num_heads: 8
+num_heads: 4
 
 # unusable for transformer encoder 
 num_dec_layers: 3
