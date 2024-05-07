@@ -58,7 +58,7 @@ class TrainMeadDataset(Dataset):
         # paths to processed folder
         self.processed_folder = os.path.join(dataset_path, dataset_name, 'processed')
         self.audio_input_folder = os.path.join(self.processed_folder, 'audio_inputs')
-        self.lmk_folder = os.path.join(self.processed_folder,'landmarks_original/mediapipe')
+        self.cropped_folder = os.path.join(self.processed_folder,'images')
         self.reconstruction_folder = os.path.join(self.processed_folder, 'reconstructions/EMICA-MEAD_flame2020')
         self.emotion_folder = os.path.join(self.processed_folder, 'emotions/resnet50')
        
@@ -66,25 +66,25 @@ class TrainMeadDataset(Dataset):
         return len(self.split_data) * self.train_dataset_repeat_times
     
     def _get_lmk_mediapipe(self, motion_path, start_id):
-        lmk_path = os.path.join(self.lmk_folder, motion_path, 'landmarks.pkl')
-        with open(lmk_path, 'rb') as f:
-            lmk_2d = pickle.load(f)[start_id:start_id+self.input_motion_length]
+        """ get mediapipe landmarks normlized to [-1, 1]
+        """
+        lmk_path = os.path.join(self.cropped_folder, motion_path, 'cropped_frames.hdf5')
+        with h5py.File(lmk_path, "r") as f:
+            lmk_2d = torch.from_numpy(f['lmk_2d'][start_id:start_id+self.input_motion_length]).float()
 
-        # validity check
-        landmark_validity = np.ones((len(lmk_2d), 1), dtype=np.float32)
-        for i in range(len(lmk_2d)): 
-            if len(lmk_2d[i]) == 0: # dropped detection
-                lmk_2d[i] = np.zeros((MEDIAPIPE_LANDMARK_NUMBER, 2))
-                landmark_validity[i] = 0.
-            else: # multiple faces detected or one face detected
-                lmk_2d[i] = lmk_2d[i][0] # just take the first one for now
+        # # validity check
+        # landmark_validity = np.ones((len(lmk_2d), 1), dtype=np.float32)
+        # for i in range(len(lmk_2d)): 
+        #     if len(lmk_2d[i]) == 0: # dropped detection
+        #         lmk_2d[i] = np.zeros((MEDIAPIPE_LANDMARK_NUMBER, 2))
+        #         landmark_validity[i] = 0.
+        #     else: # multiple faces detected or one face detected
+        #         lmk_2d[i] = lmk_2d[i][0] # just take the first one for now
+        # lmk_2d = np.stack(lmk_2d, axis=0)
 
-        lmk_2d = np.stack(lmk_2d, axis=0)
         if not self.use_iris:
             lmk_2d = lmk_2d[:,:468] # exclude pupil parts
 
-        # normalize to [-1, 1]
-        lmk_2d = lmk_2d / self.image_size * 2 - 1
         return torch.from_numpy(lmk_2d).float() # (n,478,2)
 
     def _get_audio_input(self, motion_path, start_id):
@@ -180,19 +180,17 @@ class TrainMeadDataset(Dataset):
 def get_split_MEAD(split):
 
     MEAD_subject_split = {
-    # M22+F17
-    "train": [
-        'M003', 'M005', 'M007', 'M009', 'M011', 'M012', 
-        'M013', 'M019', 'M022', 'M023', 'M024', 'M025', 
-        'M026', 'M027', 'M028', 'M029', 'M030', 'M031', 
-        'M032', 'M033', 'M034', 'M035', 
-        'W009', 'W011', 'W014', 'W015', 'W016', 'W018', 
-        'W019', 'W021', 'W023', 'W024', 'W025', 'W026', 
-        'W028', 'W029', 'W033', 'W035', 'W036'],
-    # M5+F3
+    # 38 subjects
+    "train": ['M011', 'M012', 'M013', 'M019', 'M022', 
+              'M023', 'M024', 'M025', 'M026', 'M027', 
+              'M028', 'M029', 'M030', 'M031', 'M033', 
+              'M034', 'M037', 'M039', 'M040', 'M041', 
+              'W009', 'W014', 'W015', 'W016', 'W018', 
+              'W019', 'W023', 'W024', 'W025', 'W026', 
+              'W028', 'W029', 'W033', 'W035', 'W036', 
+              'W037', 'W038', 'W040'],
     "test": [
-        'M037', 'M039', 'M040', 'M041', 'M042', 
-        'W037', 'W038', 'W040']
+        'M003', 'M005']
     }      
     
     MEAD_sentence_split = {
@@ -219,34 +217,18 @@ def load_data(dataset, dataset_path, split, input_motion_length):
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
         MEAD_subject_split, MEAD_sentence_split = get_split_MEAD(split)
-        with open(os.path.join(processed_folder, 'metadata.pkl'), 'rb') as f:
-            version = pickle.load(f)
+        with open(os.path.join(processed_folder, 'video_list_woimg.pkl'), 'rb') as f:
             video_list = pickle.load(f)
-            video_metas = pickle.load(f)
-        audio_folder = os.path.join(processed_folder, 'audio_inputs')
-        lmk_folder = os.path.join(processed_folder,'landmarks_original/mediapipe')
         motion_list = []
-        for i, path in enumerate(video_list):
-            path_sep = str(path).split('/')
-            path_sep[-1] = path_sep[-1][:-4] # sent_id w/o .mp4
-            motion_path = '/'.join(path_sep[:1] + path_sep[2:]) # sbj/view/emotion/level/sent
-            sbj = path_sep[0]
-            emotion, level, sent = path_sep[-3:]
-            audio_path = os.path.join(audio_folder, f'{sbj}/{emotion}/{level}/{sent}.pt')
-
-            # check split and audio existenence
+        for video_id, num_frames in video_list.items():
+            # check split and motion length
+            sbj, view, emotion, level, sent = video_id.split('/')
             if sbj not in MEAD_subject_split or \
                 sent not in MEAD_sentence_split or \
-                not os.path.exists(os.path.join(lmk_folder, motion_path, 'landmarks.pkl')) or \
-                not os.path.exists(audio_path):
+                num_frames < input_motion_length:
                 continue 
 
-            # check motion length
-            num_frames = int(video_metas[i]['num_frames'])
-            if num_frames < input_motion_length:
-                continue
-
-            motion_list.append((motion_path, num_frames))
+            motion_list.append((video_id, num_frames))
 
         motion_list = np.array(motion_list)
 

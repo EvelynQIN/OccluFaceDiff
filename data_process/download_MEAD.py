@@ -1,7 +1,12 @@
 import os  
 import sys 
-
-def download_from_folder(asset_path, access_token, to_path, download_video=False):
+""" Work around to solve google drive download issue
+Go to OAuth 2.0 Playground https://developers.google.com/oauthplayground/
+In the Select the Scope box, paste https://www.googleapis.com/auth/drive.readonly
+Click Authorize APIs and then Exchange authorization code for tokens
+Copy the Access token
+"""
+def download_from_folder(asset_path, access_token, to_path, download_asset='video'):
     """
     Args:
         asset_path: path to the fild ids txt (get from gdown --folder)
@@ -20,13 +25,13 @@ def download_from_folder(asset_path, access_token, to_path, download_video=False
             if not os.path.exists(folder_path):
                 os.makedirs(folder_path)
         else:
+            if os.path.exists(f"{folder_path}/video"):
+                continue
             file_id, file_name = line_list[-2:]
             print(f"{file_id} _ {file_name}")
-            if not download_video and 'video' in file_name:
+            if download_asset not in file_name:
                 continue
             file_dist = os.path.join(folder_path, file_name)
-            if os.path.exists(file_dist):
-                continue
             command = f"curl -H \"{authorization_keys}\" https://www.googleapis.com/drive/v3/files/{file_id}?alt=media -o {file_dist}"
             os.system(command)
 
@@ -38,17 +43,20 @@ def unzip_assets(data_folder, asset_name='audio'):
         to_folder = os.path.join(subject.path, asset_name)
         if os.path.exists(to_folder):
             continue 
-        os.system(
-            f"tar -xvf {asset_path} -C {subject.path}"
-        )
-        os.system(f"rm {asset_path}")
+        if asset_name == 'video':
+            os.system(
+                f"tar -xvf {asset_path} -C {subject.path} video/front"
+            )
+        else:
+            os.system(
+                f"tar -xvf {asset_path} -C {subject.path}"
+            )
+        # os.system(f"rm {asset_path}")
         
 if __name__ == "__main__":
     asset_path = "dataset/MEAD/meta/files_id.txt"
-    access_token = "ya29.a0AXooCgvdWwY-PLjM0SG9A3OM99wj9yqVnbskHkd0QhSvUwrvjyGyg-7nimFNQp6v1G3b7fTAiSBriCtm5hOQ1Aga42fYvhEYVF8-OUtnuOk66diNK57waMppWTtevDx-q_-yYnod2bOnfd5PTk2Cv7Hh9IWRFjYVWhvEaCgYKATYSARMSFQHGX2MirMjNEzdQgfJIiWGQ17P7KQ0171"
+    access_token = "ya29.a0AXooCgslAoaGwIMBmq2dA0v4Pjs09yvxFIiPKNZZh_EJbquRaCeUumXJGtAqyytUiynteULYfqSPHVjUFAwZD8ECkoI0Ui2_ejparlWgxcNhFJ2s5lN_2I-SuR4aiQn5IVRvGWI3YqjQd6jQax74Gk9S-KixuhYYr7hdaCgYKAZQSARMSFQHGX2Mi_Fy2gGCHDJRaCFLcFglVQw0171"
     to_path = "dataset/MEAD"
-    download_video = False
-    # download_from_folder(asset_path, access_token, to_path, download_video)
-    
-    unzip_assets(to_path, asset_name="audio")
-    # unzip_assets(to_path, asset_name="video")
+    download_asset = 'video'
+    download_from_folder(asset_path, access_token, to_path, download_asset)
+    unzip_assets(to_path, asset_name=download_asset)

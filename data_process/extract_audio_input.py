@@ -48,7 +48,10 @@ def preoprocess_audio(datafolder, to_folder):
     print(len(empty_audio_list))
     with open(anomalous_path, 'wb') as f:
         pickle.dump(empty_audio_list, f)
+
 if __name__ == "__main__":
+
+    # extract audio_input and save it as .pt file
     datafolder = 'dataset/MEAD'
     to_folder = 'dataset/mead_25fps/processed/audio_inputs'
     preoprocess_audio(datafolder, to_folder)

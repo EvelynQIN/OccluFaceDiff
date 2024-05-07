@@ -46,6 +46,7 @@ class TrainLoop:
         self.lr = args.lr
         self.log_interval = args.log_interval
         self.save_interval = args.save_interval
+        self.freeze_audio_encoder_interval = args.freeze_audio_encoder_interval
         self.resume_checkpoint = args.resume_checkpoint
         self.load_optimizer = args.load_optimizer
         self.use_fp16 = False
@@ -133,7 +134,7 @@ class TrainLoop:
             print(f"Starting training epoch {epoch}")
             self.epoch = epoch
 
-            if epoch > 0 and epoch % 3 == 0:
+            if epoch > 0 and epoch % self.freeze_audio_encoder_interval == 0:
                 self.model.unfreeze_wav2vec()
             else:
                 self.model.freeze_wav2vec()

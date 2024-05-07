@@ -369,6 +369,13 @@ def add_training_options(parser):
         type=float,
         help="Probability for adding random occlusion mask.",
     )
+    
+    group.add_argument(
+        "--freeze_audio_encoder_interval",
+        default=1,
+        type=int,
+        help="Unfreeze audio encoder every i epoch.",
+    )
 
 def add_sampling_options(parser):
     group = parser.add_argument_group("sampling")

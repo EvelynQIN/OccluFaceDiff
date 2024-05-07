@@ -18,6 +18,7 @@ input_motion_length: 64
 
 cond_mask_prob: 0
 fps: 25
+freeze_audio_encoder_interval: 3
 # resume_checkpoint: 
 
 # flame_params
