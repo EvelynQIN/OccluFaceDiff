@@ -58,7 +58,7 @@ class TrainMeadDataset(Dataset):
         # paths to processed folder
         self.processed_folder = os.path.join(dataset_path, dataset_name, 'processed')
         self.audio_input_folder = os.path.join(self.processed_folder, 'audio_inputs')
-        self.cropped_folder = os.path.join(self.processed_folder,'images')
+        self.cropped_landmark_folder = os.path.join(self.processed_folder,'cropped_landmarks')
         self.reconstruction_folder = os.path.join(self.processed_folder, 'reconstructions/EMICA-MEAD_flame2020')
         self.emotion_folder = os.path.join(self.processed_folder, 'emotions/resnet50')
        
@@ -68,7 +68,7 @@ class TrainMeadDataset(Dataset):
     def _get_lmk_mediapipe(self, motion_path, start_id):
         """ get mediapipe landmarks normlized to [-1, 1]
         """
-        lmk_path = os.path.join(self.cropped_folder, motion_path, 'cropped_frames.hdf5')
+        lmk_path = os.path.join(self.cropped_landmark_folder, motion_path, 'landmarks_mediapipe.hdf5')
         with h5py.File(lmk_path, "r") as f:
             lmk_2d = torch.from_numpy(f['lmk_2d'][start_id:start_id+self.input_motion_length]).float()
 
@@ -220,7 +220,7 @@ def load_data(dataset, dataset_path, split, input_motion_length):
         with open(os.path.join(processed_folder, 'video_list_woimg.pkl'), 'rb') as f:
             video_list = pickle.load(f)
         motion_list = []
-        for video_id, num_frames in video_list.items():
+        for video_id, num_frames in video_list:
             # check split and motion length
             sbj, view, emotion, level, sent = video_id.split('/')
             if sbj not in MEAD_subject_split or \
