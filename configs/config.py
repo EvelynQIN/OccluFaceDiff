@@ -38,6 +38,9 @@ cfg.model.n_light = 27
 cfg.model.jaw_type = 'aa' # default use axis angle, another option: euler. Note that: aa is not stable in the beginning
 cfg.model.image_size = 224
 
+# diffusion
+cfg.model.train_stage = 1 # training stage of diffusion [1 / 2]
+
 
 def get_cfg_defaults():
     return cfg.clone()

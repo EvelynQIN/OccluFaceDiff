@@ -80,8 +80,8 @@ class FaceTransformer(nn.Module):
         self.use_mask = use_mask
         if self.use_mask:
             print(f"[{self.tag}] Using alibi mask for decoder.")
-        self.latent_dim_condition = latent_dim
-        self.latent_dim_transformer = latent_dim * 2
+        self.latent_dim_condition = latent_dim // 2
+        self.latent_dim_transformer = latent_dim
 
         self.ff_size = ff_size
         self.num_enc_layers = num_enc_layers

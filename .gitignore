@@ -15,6 +15,7 @@ face_segmentation/deeplabv3plus_r101_512x512_face-occlusion-93ec6695.pth
 dataset
 pretrained
 flame_2020
+external
 
 # folders
 checkpoints/
@@ -25,9 +26,9 @@ processed_data/
 vis_result/
 outputs/
 euler/
+external/
 flame_2020/
 pretrained/
 videos/
-external/
 processed/
 face_motion_videos/

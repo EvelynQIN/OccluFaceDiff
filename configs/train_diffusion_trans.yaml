@@ -3,11 +3,11 @@ num_epoch: 50
 dataset: "mead_25fps" 
 dataset_path: "./dataset"
 weight_decay: 0.001
-batch_size: 32
-gradient_accumulation_steps: 4
+batch_size: 16
+gradient_accumulation_steps: 8
 lr: 0.0001
 cosine_scheduler: True
-warmup_steps: 100
+warmup_steps: 10
 device: 0 # -1 if using cpu for test
 num_workers: 4
 diffusion_steps: 1000 
@@ -20,7 +20,7 @@ cond_mask_prob: 0
 audio_mask_prob: 0.2
 fps: 25
 freeze_audio_encoder_interval: 5
-# resume_checkpoint: 
+resume_checkpoint: checkpoints/Transformer_256d_cat_mediapipelmk_8l/model_4.pt
 
 # flame_params
 n_shape: 300
@@ -36,14 +36,14 @@ save_interval: 1
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_512d_cat_mediapipelmk_8l" 
+arch: "diffusion_Transformer_256d_cat_mediapipelmk_8l" 
 latent_dim: 256
 dropout: 0.2
 
 use_mask: True  # use alibi mask
 
 # unusable for gru
-ff_size: 1024
+ff_size: 512
 num_enc_layers: 2
 num_heads: 4
 
