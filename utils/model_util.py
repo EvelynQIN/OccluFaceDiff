@@ -70,32 +70,23 @@ def get_transformer_args(args):
         "dataset": args.dataset,
         "use_mask": args.use_mask,
         "cond_mask_prob": args.cond_mask_prob,
+        "audio_mask_prob": args.audio_mask_prob,
         "n_exp": args.n_exp,
         "n_pose": args.n_pose,
         
    }
-
-def get_cam_args(args):
-    return {
-        "lmk2d_dim": args.lmk2d_dim,
-        "n_shape": args.n_shape,
-        "output_feature_dim": args.output_nfeat,
-        "latent_dim": args.latent_dim,
-        "ckpt_path": args.ckpt_path,
-    }
 
 def get_mlp_args(args):
 
     return {
         "lmk2d_dim": args.lmk2d_dim,
         "cond_latent_dim": args.cond_latent_dim,
-        "exp_num_layers": args.exp_num_layers,
-        "exp_latent_dim": args.exp_latent_dim,
-        "pose_latent_dim": args.pose_latent_dim,
-        "pose_num_layers": args.pose_num_layers,
+        "num_layers": args.num_layers,
+        "input_latent_dim": args.input_latent_dim,
         "dropout": args.dropout,
         "dataset": args.dataset,
         "cond_mask_prob": args.cond_mask_prob,
+        "audio_mask_prob": args.audio_mask_prob,
         "input_motion_length": args.input_motion_length,
         "n_exp": args.n_exp,
         "n_pose": args.n_pose,

@@ -130,6 +130,7 @@ class TrainMeadDataset(Dataset):
         jaw_6d = utils_transform.aa2sixd(code_dict['jaw'])
         code_dict['target'] = torch.cat([jaw_6d, code_dict['exp']], dim=-1)
         code_dict.pop('exp', None)
+        code_dict.pop('jaw', None)
 
         return code_dict 
     

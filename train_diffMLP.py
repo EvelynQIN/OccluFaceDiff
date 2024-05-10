@@ -1,4 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. All Rights Reserved
 import json
 import os
 import random
@@ -7,9 +6,8 @@ import numpy as np
 
 import torch
 
-from data_loaders.dataloader_w3d import get_dataloader, load_data, TrainDataset
-from model.FLAME import FLAME
-from model.networks import PureMLP
+from data_loaders.dataloader_MEAD import get_dataloader, load_data, TrainMeadDataset
+
 # from runner.train_mlp import train_step, val_step
 from runner.training_loop import TrainLoop
 
@@ -50,8 +48,8 @@ def main():
     cfg_path = args.config_path
     args = Config(default_cfg_path=cfg_path, **kwargs)
 
-    pretrained_args = get_cfg_defaults()
-
+    default_cfg = get_cfg_defaults()
+    
     set_deterministic(args.seed)
 
     model_type = args.arch.split('_')[0]
@@ -60,11 +58,11 @@ def main():
     # init wandb log
     if args.wandb_log:
         wandb.init(
-            project="face_animation_from_image",
+            project="face_animation_from_MEAD",
             name=args.arch,
             config=args,
             settings=wandb.Settings(start_method="fork"),
-            dir="./wandb"
+            dir="./"
         )
     
     if args.save_dir is None:
@@ -77,52 +75,61 @@ def main():
     with open(args_path, "w") as fw:
         json.dump(dict(args), fw, indent=4, sort_keys=True) 
     
-    train_image_path, train_processed_path = load_data(
+    print("creating training data loader...")    
+    train_processed_path = load_data(
         args.dataset,
         args.dataset_path,
         "train",
+        args.input_motion_length
     )
-    train_dataset = TrainDataset(
+
+    print(f"number of train sequences: {len(train_processed_path)}")
+    train_dataset = TrainMeadDataset(
         args.dataset,
-        train_image_path,
+        args.dataset_path,
         train_processed_path,
         args.input_motion_length,
         args.train_dataset_repeat_times,
         args.no_normalization,
-        args.occlusion_mask_prob,
-        args.mixed_occlusion_prob,
-        args.fps
+        args.fps,
+        args.n_shape,
+        args.n_exp,
+        args.load_tex,
+        args.use_iris
     )
-    
+
     train_loader = get_dataloader(
         train_dataset, "train", batch_size=args.batch_size, num_workers=args.num_workers
     )
     
     # val data loader
     print("creating val data loader...")
-    val_image_path, val_processed_path = load_data(
+    val_processed_path = load_data(
         args.dataset,
         args.dataset_path,
         "test",
+        args.input_motion_length
     )
-    
-    val_dataset = TrainDataset(
+    print(f"number of test sequences: {len(val_processed_path)}")
+    val_dataset = TrainMeadDataset(
         args.dataset,
-        val_image_path, 
-        val_processed_path,
+        args.dataset_path,
+        train_processed_path,
         args.input_motion_length,
-        5,
+        2,
         args.no_normalization,
-        args.occlusion_mask_prob,
-        args.mixed_occlusion_prob,
-        args.fps
+        args.fps,
+        args.n_shape,
+        args.n_exp,
+        args.load_tex,
+        args.use_iris
     )
     
     val_loader = get_dataloader(
         val_dataset, "val", batch_size=args.batch_size, num_workers=args.num_workers
     )
 
-    train_diffusion_model(args, pretrained_args.model, train_loader, val_loader)
+    train_diffusion_model(args, default_cfg.model, train_loader, val_loader)
 
 if __name__ == "__main__":
     main()

@@ -185,19 +185,11 @@ def add_mlp_options(parser):
     )
     
     group.add_argument(
-        "--pose_num_layers", default=8, type=int, help="Number of layers of the pose branch."
+        "--num_layers", default=8, type=int, help="Number of layers of the diffMLP motion branch."
     )
     
     group.add_argument(
-        "--exp_num_layers", default=8, type=int, help="Number of layers of the expression branch."
-    )
-    
-    group.add_argument(
-        "--pose_latent_dim", default=512, type=int, help="latent dimension of the pose branch."
-    )
-    
-    group.add_argument(
-        "--exp_latent_dim", default=512, type=int, help="latent dimension of the expression branch."
+        "--input_latent_dim", default=512, type=int, help="latent dimension of the diffMLP motion branch."
     )
 
     group.add_argument(
@@ -209,6 +201,14 @@ def add_mlp_options(parser):
         default=0.0,
         type=float,
         help="The probability of masking the condition during training."
+        " For classifier-free guidance learning.",
+    )
+
+    group.add_argument(
+        "--audio_mask_prob",
+        default=0.0,
+        type=float,
+        help="The probability of masking the audio condition during training."
         " For classifier-free guidance learning.",
     )
 

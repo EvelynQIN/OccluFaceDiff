@@ -10,6 +10,7 @@ human_body_prior
 *.png 
 *.hdf5
 *.gif
+*.tar.gz
 face_segmentation/deeplabv3plus_r101_512x512_face-occlusion-93ec6695.pth
 dataset
 pretrained

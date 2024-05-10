@@ -153,6 +153,7 @@ class VideoProcessor:
         video_id = motion_id[:5] + "video/" + motion_id[5:]
         print(video_id)
         to_fname = os.path.join(self.to_folder, motion_id, 'cropped_frames.hdf5')
+        lmk_fname = os.path.join('dataset/mead_25fps/processed/cropped_landmarks', motion_id, 'landmarks_mediapipe.hdf5')
         if os.path.exists(to_fname):
             return True 
         # load the detected landmark
@@ -162,6 +163,7 @@ class VideoProcessor:
             return True
 
         Path(to_fname).parent.mkdir(exist_ok=True, parents=True)
+        Path(lmk_fname).parent.mkdir(exist_ok=True, parents=True)
         video_path = os.path.join(self.video_folder, f"{video_id}.mp4")
         video = cv2.VideoCapture()
 
@@ -217,6 +219,11 @@ class VideoProcessor:
             f.create_dataset('img_masks', data=seg_list)
         f.close()
 
+        f = h5py.File(lmk_fname, 'w')
+        f.create_dataset('lmk_2d', data=lmk_list)
+        f.create_dataset('valid_frames_idx', data=np.array(valid_frames_idx))
+        f.close()
+
         torch.cuda.empty_cache()
         return True
 
@@ -248,13 +255,13 @@ if __name__ == "__main__":
 
     # mead subject to process with images
     # mead_subjects_to_do_img = ['W014', 'W029','W037']
-    mead_subjects_to_do_wo_img = ['M013', 'M019', 'M024', 'M025', 'M028', 'M029', 'M033', 'M037', 'M039', 'W009', 'W014', 'W015', 'W016', 'W019', 'W023', 'W025', 'W026', 'W028', 'W033', 'W035', 'W036', 'W038', 'W040']
+    # mead_subjects_to_do_wo_img = ['M013', 'M019', 'M024', 'M025', 'M028', 'M029', 'M033', 'M037', 'M039', 'W009', 'W014', 'W015', 'W016', 'W019', 'W023', 'W025', 'W026', 'W028', 'W033', 'W035', 'W036', 'W038', 'W040']
 
-    process_subjects = mead_subjects_to_do_wo_img[10:]
+    process_subjects = ['W029','W037']
 
     video_list = []
     print(f"process subjects: {process_subjects}")
     for subject in process_subjects:
         video_list.extend(get_video_list_for_subject("dataset/mead_25fps/processed/videos_25fps", subject))
     video_list.sort()
-    video_processor.process_all_videos(video_list, f"batch_5_woimg")
+    video_processor.process_all_videos(video_list, f"batch_6_wimg")

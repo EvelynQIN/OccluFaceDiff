@@ -72,7 +72,8 @@ class DiffusionModel(GaussianDiffusion):
             'pose_loss': 1.0,
             'expr_vel_loss': 0.01,
             'pose_vel_loss': 0.01,
-            'lmk3d_loss': 0.2,
+            'lmk3d_loss': 0,
+            'lmk2d_loss': 0.2,
             'mouth_closure_loss': 0.5
         }
         print(f"[Diffusion] Loss weights used: {self.loss_weight}")
@@ -367,7 +368,7 @@ class DiffusionModel(GaussianDiffusion):
         
         # ---- geometric losses ---- #
         lmk_gt = model_kwargs['lmk_2d'][:,:,self.flame.landmark_indices_mediapipe].view(bs*n, *lmk_pred.shape[-2:])
-        # lmk2d_loss = self.batch_lmk2d_loss(lmk_pred, lmk_gt)  
+        lmk2d_loss = self.batch_lmk2d_loss(lmk_pred, lmk_gt)  
         lmk3d_loss = torch.mean(torch.norm(lmk3d_pred - lmk3d_gt, p=2, dim=-1))
         # eye_closure_loss = eye_closure_lmk_loss(lmk_pred, lmk_gt)
         mouth_closure_loss = mouth_closure_lmk_loss(lmk_pred, lmk_gt)
@@ -409,10 +410,10 @@ class DiffusionModel(GaussianDiffusion):
 
         # lipread_loss = F.mse_loss(lip_features_gt, lip_features_pred)
         
-        loss = self.loss_weight['lmk3d_loss'] * lmk3d_loss + self.loss_weight['mouth_closure_loss'] * mouth_closure_loss \
+        loss = self.loss_weight['lmk2d_loss'] * lmk2d_loss + self.loss_weight['mouth_closure_loss'] * mouth_closure_loss \
             + self.loss_weight['expr_loss'] * expr_loss + self.loss_weight['pose_loss'] * pose_loss \
             + self.loss_weight['expr_vel_loss'] * expr_vel_loss + self.loss_weight['pose_vel_loss'] * pose_vel_loss \
-            + 0.001 * 0 + 0.5 * 0 + 0.1 * 0\
+            + self.loss_weight['lmk3d_loss'] * lmk3d_loss
             
         
         loss_dict = {
@@ -423,6 +424,7 @@ class DiffusionModel(GaussianDiffusion):
             'expr_vel_loss': expr_vel_loss.detach().item(),
             'pose_vel_loss': pose_vel_loss.detach().item(),
             'lmk3d_loss': lmk3d_loss.detach().item(),
+            'lmk2d_loss': lmk2d_loss.detach().item(),
             'mouth_closure_loss': mouth_closure_loss.detach().item(),
             # 'eye_closure_loss': eye_closure_loss.detach().item(),
             # 'photometric_loss': photometric_loss.detach().item(),

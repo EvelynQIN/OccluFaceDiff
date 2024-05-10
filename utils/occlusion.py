@@ -17,9 +17,13 @@ class MediaPipeFaceOccluder(object):
             'right_eye': 0.2,
             'mouth': 0.3,
             'random': 0.15,
+            'contour': 0.1
         }
+        self.mask_all_prob = 0.3
+        self.mask_frame_prob = 0.1
         self.image_size = 224
-        print(f"[Face Occluder] Init occluder with probability: {self.occlusion_regions_prob}")
+        print(f"[Face Occluder] Init occluder with probability: all - {self.mask_all_prob}; frame - {self.mask_frame_prob}")
+        print(f"[Face Occluder] Init occluder with regional probability: {self.occlusion_regions_prob}")
     
     def occlude_img_batch(self, lmk_2d, img_mask, occlusion_type, frame_id):
         n, h, w = img_mask.shape
@@ -43,7 +47,7 @@ class MediaPipeFaceOccluder(object):
             img_mask[frame_id,top:bottom, left:right] = 0
         elif occlusion_type == 'upper':
             eye_idx = left_eye_eyebrow_landmark_indices() + right_eye_eyebrow_landmark_indices()
-            bottom = torch.max(lmk_2d[:,idx, 1])
+            bottom = torch.max(lmk_2d[:,eye_idx, 1])
             img_mask[frame_id,:bottom,:] = 0
         elif occlusion_type == 'bottom':
             img_mask[frame_id, 112:,:] = 0
@@ -68,16 +72,15 @@ class MediaPipeFaceOccluder(object):
                     lmk_mask[i,j] = 0
         return lmk_mask
     
-    def get_lmk_occlusion_mask(self, lmk_2d):
+    def get_lmk_occlusion_mask_from_img(self, lmk_2d):
         n, v = lmk_2d.shape[:2]
         # occlusion all visual cues:
-        if np.random.rand() < 0.1:
+        p = np.random.rand()
+        if p < self.mask_all_prob:
             lmk_mask = torch.zeros(n,v)
             return lmk_mask 
-        
-        # occlusion random frames
-        if np.random.rand() < 0.1:
-            lmk_mask = torch.zeros(n,v)
+        elif p < self.mask_all_prob + self.mask_frame_prob:
+            lmk_mask = torch.ones(n,v)
             frame_id = torch.randint(low=0, high=n, size=(n // 2,))
             lmk_mask[frame_id,:] = 0
             return lmk_mask
@@ -96,6 +99,32 @@ class MediaPipeFaceOccluder(object):
                 if occ_region == 'all':
                     break
         lmk_mask = self.get_lmk_mask_from_img_mask(img_mask, kpts)
+        return lmk_mask
+    
+    def get_lmk_occlusion_mask(self, lmk_2d):
+        n, v = lmk_2d.shape[:2]
+        # occlusion all visual cues:
+        p = np.random.rand()
+        if p < self.mask_all_prob:
+            lmk_mask = torch.zeros(n,v)
+            return lmk_mask 
+        elif p < self.mask_all_prob + self.mask_frame_prob:
+            lmk_mask = torch.ones(n,v)
+            frame_id = torch.randint(low=0, high=n, size=(n // 2,))
+            lmk_mask[frame_id,:] = 0
+            return lmk_mask
+        
+        # occlude random regions for consecutive frames
+        sid = torch.randint(low=0, high=n-25, size=(1,))[0]
+        occ_num_frames = torch.randint(low=25, high=n-sid+1, size=(1,))[0]
+        frame_id = torch.arange(sid, sid+occ_num_frames)
+        lmk_mask = torch.ones(n, v)
+        for occ_region, occ_prob in self.occlusion_regions_prob.items():
+            prob = np.random.rand()
+            if prob < occ_prob:
+                lmk_mask = self.occlude_lmk_batch(lmk_2d, lmk_mask, occ_region, frame_id)
+                if occ_region == 'all':
+                    break
         return lmk_mask
 
     def occlude_lmk_batch(self, lmk_2d, lmk_mask, region, frame_id):
@@ -130,7 +159,7 @@ class MediaPipeFaceOccluder(object):
             lmk_mask[whole_mask] = 0
         elif region == "mouth": 
             mouth_center = torch.mean(lmk_2d[frame_id, 13:15], dim=1).unsqueeze(1) # (nc, 1, 2)
-            dw, dh = 0.15 + 0.1 * torch.rand(2) # ~uniform(0.15, 0.25)
+            dw, dh = 0.2 + 0.3 * torch.rand(2) # ~uniform(0.2, 0.5)
             dist_to_center = (lmk_2d[frame_id] - mouth_center).abs() # (nc, V, 2)
             mask = (dist_to_center[...,0] < dw) & (dist_to_center[...,1] < dh)  # (nc, V)
             whole_mask = torch.zeros(n, v).bool()
@@ -169,85 +198,6 @@ class MediaPipeFaceOccluder(object):
         else: 
             raise ValueError(f"Invalid region {region}")
         return lmk_mask
-
-    # def bounding_box(self, landmarks, region): 
-    #     landmarks = landmarks[:, :2]
-    #     if region == "all":
-    #         left = np.min(landmarks[:, 0])
-    #         right = np.max(landmarks[:, 0])
-    #         top = np.min(landmarks[:, 1])
-    #         bottom = np.max(landmarks[:, 1])
-    #     elif region == "left_eye": 
-    #         left = np.min(landmarks[self.left_eye, 0])
-    #         right = np.max(landmarks[self.left_eye, 0])
-    #         top = np.min(landmarks[self.left_eye, 1])
-    #         bottom = np.max(landmarks[self.left_eye, 1])
-    #     elif region == "right_eye": 
-    #         left = np.min(landmarks[self.right_eye, 0])
-    #         right = np.max(landmarks[self.right_eye, 0])
-    #         top = np.min(landmarks[self.right_eye, 1])
-    #         bottom = np.max(landmarks[self.right_eye, 1])
-    #     elif region == "mouth": 
-    #         left = np.min(landmarks[self.mouth, 0])
-    #         right = np.max(landmarks[self.mouth, 0])
-    #         top = np.min(landmarks[self.mouth, 1])
-    #         bottom = np.max(landmarks[self.mouth, 1])
-    #     else: 
-    #         raise ValueError(f"Invalid region {region}")
-
-    #     width = right - left
-    #     height = bottom - top
-    #     center_x = left + width / 2
-    #     center_y = top + height / 2
-        
-    #     center = np.stack([center_x, center_y], axis=1).round().astype(np.int32)
-    #     size = np.stack([width, height], axis=1).round().astype(np.int32)
-
-    #     bb = np.array([left, right, top, bottom], dtype = np.int32)
-    #     sizes = np.concatenate([center, size])
-    #     return bb, sizes
-    
-    # def bounding_box_batch(self, landmarks, region): 
-    #     assert landmarks.ndim == 3
-    #     landmarks = landmarks[:, :, :2]
-    #     if region == "all":
-    #         left = np.min(landmarks[:,:, 0], axis=1)
-    #         right = np.max(landmarks[:,:, 0], axis=1)
-    #         top = np.min(landmarks[:,:, 1], axis=1)
-    #         bottom = np.max(landmarks[:,:, 1], axis=1)
-    #     elif region == "left_eye": 
-    #         left = np.min(landmarks[:,self.left_eye, 0], axis=1)
-    #         right = np.max(landmarks[:,self.left_eye, 0], axis=1)
-    #         top = np.min(landmarks[:,self.left_eye, 1], axis=1)
-    #         bottom = np.max(landmarks[:,self.left_eye, 1], axis=1)
-    #     elif region == "right_eye": 
-    #         left = np.min(landmarks[:,self.right_eye, 0], axis=1)
-    #         right = np.max(landmarks[:,self.right_eye, 0], axis=1)
-    #         top = np.min(landmarks[:,self.right_eye, 1], axis=1)
-    #         bottom = np.max(landmarks[:,self.right_eye, 1], axis=1)
-    #     elif region == "mouth": 
-    #         left = np.min(landmarks[:,self.mouth, 0], axis=1)
-    #         right = np.max(landmarks[:,self.mouth, 0], axis=1)
-    #         top = np.min(landmarks[:,self.mouth, 1], axis=1)
-    #         bottom = np.max(landmarks[:,self.mouth, 1], axis=1)
-    #     else: 
-    #         raise ValueError(f"Invalid region {region}")
-        
-    #     width = right - left
-    #     height = bottom - top
-    #     centers_x = left + width / 2
-    #     centers_y = top + height / 2
-    #     bb = np.stack([left, right, top, bottom], axis=1).round().astype(np.int32)
-    #     sizes = np.stack([centers_x, centers_y, width, height], axis=1).round().astype(np.int32)
-    #     return bb, sizes
-
-    # def occlude(self, image, region, landmarks=None, bounding_box=None):
-    #     assert landmarks is not None and bounding_box is not None, "Specify either landmarks or bounding_box"
-    #     if landmarks is not None: 
-    #         bounding_box = self.bounding_box(landmarks, region) 
-        
-    #     image[bounding_box[2]:bounding_box[3], bounding_box[0]:bounding_box[1], ...] = 0 
-    #     return image
 
     # def occlude_batch(self, image, region, landmarks=None, bounding_box_batch=None
     #         , start_frame=None, end_frame=None, validity=None): 
