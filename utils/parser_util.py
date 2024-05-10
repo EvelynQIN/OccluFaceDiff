@@ -146,6 +146,12 @@ def add_transformer_options(parser):
         " For classifier-free guidance learning.",
     )
     group.add_argument(
+        "--audio_mask_prob",
+        default=0.0,
+        type=float,
+        help="The probability of masking all the audio input.",
+    )
+    group.add_argument(
         "--use_mask", default=True, type=bool, help="whether to use alibi casual mask for decoder self attention."
     )
     group.add_argument(
@@ -227,6 +233,9 @@ def add_data_options(parser):
         default=None,
         choices=[
             "FaMoS",
+            "multiface",
+            "mead_25fps",
+            "vocaset"
         ],
         type=str,
         help="Dataset name (choose from list).",
@@ -268,6 +277,14 @@ def add_data_options(parser):
 
     group.add_argument(
         "--fps", default=30, type=int, help="fps of the motion sequence."
+    )
+
+    group.add_argument(
+        "--load_tex", action="store_true", help="whether load tex from emica reconstruction."
+    )
+
+    group.add_argument(
+        "--use_iris", action="store_true", help="whether use iris lmks from mediapipe."
     )
     
 
@@ -528,26 +545,39 @@ def add_test_options(parser):
         type=str,
         help="name of the experiment.",
     )
-
-    group.add_argument(
-        "--motion_id",
-        default=None,
-        type=str,
-        help="name of the motion sequence.",
-    )
     
     group.add_argument(
         "--subject_id",
-        default="",
+        default=None,
         type=str,
-        help="name of the subject.",
+        help="subject id.",
     )
-    
+
     group.add_argument(
-        "--occlusion_mask_prob",
-        default=0,
-        type=float,
-        help="occlusion probability.",
+        "--level",
+        default=None,
+        type=str,
+        help="emotion level.",
+    )
+
+    group.add_argument(
+        "--sent",
+        default=None,
+        type=str,
+        help="sent id in MEAD [3 digit].",
+    )
+
+    group.add_argument(
+        "--emotion",
+        default=None,
+        type=str,
+        help="emotion id in MEAD.",
+    )
+
+    group.add_argument(
+        "--vis",
+        action="store_true",
+        help="whether to visualize the output.",
     )
 
     

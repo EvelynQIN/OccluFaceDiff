@@ -313,7 +313,7 @@ def plot_verts(image, kpts, color = 'r'):
     image = image.copy()
     for i in range(kpts.shape[0]):
         st = kpts[i, :2]
-        image = cv2.circle(image,(int(st[0]), int(st[1])), 1, c, 2)  
+        image = cv2.circle(image,(int(st[0]), int(st[1])), 1, c, 1)  
 
     return image
 
@@ -342,9 +342,10 @@ def tensor_vis_landmarks(images, landmarks, gt_landmarks=None, color = 'g', isSc
             if gt_landmarks is not None:
                 image_landmarks = plot_verts(image_landmarks, gt_landmarks_np[i], 'r')
         else:
-            image_landmarks = plot_verts(image, predicted_landmark, color)
             if gt_landmarks is not None:
-                image_landmarks = plot_verts(image_landmarks, gt_landmarks_np[i], 'r')
+                image_landmarks = plot_verts(image, gt_landmarks_np[i], 'r')
+            image_landmarks = plot_verts(image_landmarks, predicted_landmark, color)
+            
         vis_landmarks.append(image_landmarks)
 
     vis_landmarks = np.stack(vis_landmarks)

@@ -93,10 +93,10 @@ def main():
         args.no_normalization,
         args.fps,
         args.n_shape,
-        args.n_exp
+        args.n_exp,
+        args.load_tex,
+        args.use_iris
     )
-
-    train_dataset[0]
 
     train_loader = get_dataloader(
         train_dataset, "train", batch_size=args.batch_size, num_workers=args.num_workers
@@ -120,7 +120,9 @@ def main():
         args.no_normalization,
         args.fps,
         args.n_shape,
-        args.n_exp
+        args.n_exp,
+        args.load_tex,
+        args.use_iris
     )
     
     val_loader = get_dataloader(

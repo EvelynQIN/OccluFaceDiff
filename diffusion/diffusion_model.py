@@ -72,9 +72,8 @@ class DiffusionModel(GaussianDiffusion):
             'pose_loss': 1.0,
             'expr_vel_loss': 0.01,
             'pose_vel_loss': 0.01,
-            'lmk2d_loss': 0.2,
-            'mouth_closure_loss': 0.5,
-            'eye_closure_loss': 0.1
+            'lmk3d_loss': 0.2,
+            'mouth_closure_loss': 0.5
         }
         print(f"[Diffusion] Loss weights used: {self.loss_weight}")
 
@@ -301,18 +300,18 @@ class DiffusionModel(GaussianDiffusion):
         
         # parse the output and target
         jaw_pred, expr_pred = model_output[...,:6], model_output[...,6:]
-        jaw_deca, expr_deca = target[...,:6], target[...,6:]
+        jaw_gt, expr_gt = target[...,:6], target[...,6:]
 
         # l2 loss on flame parameters w.r.t deca's output             
-        pose_loss = F.mse_loss(jaw_pred, jaw_deca)
-        expr_loss = F.mse_loss(expr_pred, expr_deca)
+        pose_loss = F.mse_loss(jaw_pred, jaw_gt)
+        expr_loss = F.mse_loss(expr_pred, expr_gt)
         
         # velocity loss
         pose_vel_loss = torch.mean(
-            ((jaw_pred[:,1:] - jaw_pred[:,:-1]) - (jaw_deca[:,1:] - jaw_deca[:,:-1])) ** 2
+            ((jaw_pred[:,1:] - jaw_pred[:,:-1]) - (jaw_gt[:,1:] - jaw_gt[:,:-1])) ** 2
         )
         expr_vel_loss = torch.mean(
-            ((expr_pred[:,1:] - expr_pred[:,:-1]) - (expr_deca[:,1:] - expr_deca[:,:-1])) ** 2
+            ((expr_pred[:,1:] - expr_pred[:,:-1]) - (expr_gt[:,1:] - expr_gt[:,:-1])) ** 2
         )
         
         # # jitter loss for temporal smoothness
@@ -326,15 +325,24 @@ class DiffusionModel(GaussianDiffusion):
         jaw_pred_aa = utils_transform.sixd2aa(jaw_pred.reshape(-1, 6))
         pose_pred = torch.cat([R_aa, jaw_pred_aa], dim=-1)
         cam = model_kwargs['cam'].view(bs*n, -1)
+
+        expr_gt = expr_gt.reshape(bs*n, -1)
+        jaw_gt_aa = utils_transform.sixd2aa(jaw_gt.reshape(-1, 6))
+        pose_gt = torch.cat([R_aa, jaw_gt_aa], dim=-1)
         
         # flame decoder
-        _, lmk_pred = self.flame(
+        _, lmk3d_pred = self.flame(
             shape_params=shape, 
             expression_params=expr_pred,
             pose_params=pose_pred)
         
+        _, lmk3d_gt = self.flame(
+            shape_params=shape, 
+            expression_params=expr_gt,
+            pose_params=pose_gt)
+        
         # orthogonal projection
-        lmk_pred = batch_orth_proj(lmk_pred, cam)[:, :, :2]
+        lmk_pred = batch_orth_proj(lmk3d_pred, cam)[:, :, :2]
         lmk_pred[:, :, 1:] = -lmk_pred[:, :, 1:]
         # trans_verts = batch_orth_proj(verts, cam)
         # trans_verts[:, :, 1:] = -trans_verts[:, :, 1:]
@@ -359,8 +367,9 @@ class DiffusionModel(GaussianDiffusion):
         
         # ---- geometric losses ---- #
         lmk_gt = model_kwargs['lmk_2d'][:,:,self.flame.landmark_indices_mediapipe].view(bs*n, *lmk_pred.shape[-2:])
-        lmk2d_loss = self.batch_lmk2d_loss(lmk_pred, lmk_gt)  
-        eye_closure_loss = eye_closure_lmk_loss(lmk_pred, lmk_gt)
+        # lmk2d_loss = self.batch_lmk2d_loss(lmk_pred, lmk_gt)  
+        lmk3d_loss = torch.mean(torch.norm(lmk3d_pred - lmk3d_gt, p=2, dim=-1))
+        # eye_closure_loss = eye_closure_lmk_loss(lmk_pred, lmk_gt)
         mouth_closure_loss = mouth_closure_lmk_loss(lmk_pred, lmk_gt)
         
         #  # ---- photometric loss ---- #
@@ -400,8 +409,7 @@ class DiffusionModel(GaussianDiffusion):
 
         # lipread_loss = F.mse_loss(lip_features_gt, lip_features_pred)
         
-        loss = self.loss_weight['lmk2d_loss'] * lmk2d_loss + self.loss_weight['mouth_closure_loss'] * mouth_closure_loss \
-            + self.loss_weight['eye_closure_loss'] * eye_closure_loss \
+        loss = self.loss_weight['lmk3d_loss'] * lmk3d_loss + self.loss_weight['mouth_closure_loss'] * mouth_closure_loss \
             + self.loss_weight['expr_loss'] * expr_loss + self.loss_weight['pose_loss'] * pose_loss \
             + self.loss_weight['expr_vel_loss'] * expr_vel_loss + self.loss_weight['pose_vel_loss'] * pose_vel_loss \
             + 0.001 * 0 + 0.5 * 0 + 0.1 * 0\
@@ -414,9 +422,9 @@ class DiffusionModel(GaussianDiffusion):
             # 'pose_jitter': pose_jitter.detach().item(),
             'expr_vel_loss': expr_vel_loss.detach().item(),
             'pose_vel_loss': pose_vel_loss.detach().item(),
-            'lmk2d_loss': lmk2d_loss.detach().item(),
+            'lmk3d_loss': lmk3d_loss.detach().item(),
             'mouth_closure_loss': mouth_closure_loss.detach().item(),
-            'eye_closure_loss': eye_closure_loss.detach().item(),
+            # 'eye_closure_loss': eye_closure_loss.detach().item(),
             # 'photometric_loss': photometric_loss.detach().item(),
             # 'emotion_loss': emotion_loss.detach().item(),
             # 'lipread_loss' : lipread_loss.detach().item(),

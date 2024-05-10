@@ -88,7 +88,7 @@ class Pytorch3dRasterizer(nn.Module):
         return pixel_vals
 
 class SRenderY(nn.Module):
-    def __init__(self, image_size, obj_filename, uv_size=256):
+    def __init__(self, image_size, obj_filename, uv_size=256, v_mask=None):
         super(SRenderY, self).__init__()
         self.image_size = image_size
         self.uv_size = uv_size
@@ -96,9 +96,20 @@ class SRenderY(nn.Module):
         self.rasterizer = Pytorch3dRasterizer(image_size)
         self.uv_rasterizer = Pytorch3dRasterizer(uv_size)
         verts, faces, aux = load_obj(obj_filename)
-        uvcoords = aux.verts_uvs[None, ...]      # (N, V, 2)
-        uvfaces = faces.textures_idx[None, ...] # (N, F, 3)
-        faces = faces.verts_idx[None,...]
+        V = verts.shape[0]
+
+        if v_mask is not None:
+            mask = torch.BoolTensor([False] * V)
+            mask[v_mask] = True
+            face_mask = mask[faces.verts_idx].all(dim=1)
+            uvcoords = aux.verts_uvs[None, ...]      # (N, V, 2)
+            uvfaces = faces.textures_idx[face_mask][None, ...] # (N, F, 3)
+            faces = faces.verts_idx[face_mask][None,...]
+            self.register_buffer('face_mask', face_mask.long()[None,:])
+        else:
+            uvcoords = aux.verts_uvs[None, ...]      # (N, V, 2)
+            uvfaces = faces.textures_idx[None, ...] # (N, F, 3)
+            faces = faces.verts_idx[None,...]
 
         # faces
         dense_triangles = data_util.generate_triangles(uv_size, uv_size)
@@ -115,7 +126,7 @@ class SRenderY(nn.Module):
         self.register_buffer('face_uvcoords', face_uvcoords)
 
         # shape colors, for rendering shape overlay
-        colors = torch.tensor([180, 180, 180])[None, None, :].repeat(1, faces.max()+1, 1).float()/255.
+        colors = torch.tensor([180, 180, 180])[None, None, :].repeat(1, V, 1).float()/255.
         face_colors = data_util.face_vertices(colors, faces)
         self.register_buffer('face_colors', face_colors)
 
@@ -261,7 +272,6 @@ class SRenderY(nn.Module):
         shading = normals_dot_lights[:,:,:,None]*light_intensities[:,:,None,:]
         return shading.mean(1)
 
-
     def render_shape(self, vertices, transformed_vertices, colors = None, images=None, detail_normal_images=None, 
                 lights=None, return_grid=False, uv_detail_normals=None, h=None, w=None, return_pos=False):
         '''
@@ -300,6 +310,7 @@ class SRenderY(nn.Module):
         transformed_face_normals = data_util.face_vertices(transformed_normals, self.faces.expand(batch_size, -1, -1))
         if colors is None:
             colors = self.face_colors.expand(batch_size, -1, -1, -1)
+
         attributes = torch.cat([colors, 
                         transformed_face_normals.detach(), 
                         face_vertices.detach(), 

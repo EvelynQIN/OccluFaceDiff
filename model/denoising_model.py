@@ -91,6 +91,7 @@ class FaceTransformer(nn.Module):
         self.activation = activation
 
         self.cond_mask_prob = kwargs.get('cond_mask_prob', 0.)
+        self.audio_mask_prob = kwargs.get('audio_mask_prob', 0.)
         self.arch = arch
         
         ### layers
@@ -153,7 +154,7 @@ class FaceTransformer(nn.Module):
         """
         bs = audio_emb.shape[0]
         mask = torch.bernoulli(
-            torch.ones(bs, device=audio_emb.device) * 0.2
+            torch.ones(bs, device=audio_emb.device) * self.audio_mask_prob
         )
         mask = mask.view(bs, 1, 1)
         # 1-> use null_cond, 0-> use real cond

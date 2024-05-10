@@ -12,15 +12,92 @@ class MediaPipeFaceOccluder(object):
         # self.face_all = all_face_landmark_indices()
         self.face_center = torch.LongTensor(face_center_landmark_indices())
         self.occlusion_regions_prob = {
-            'contour': 0.7,
             'all': 0.1,
             'left_eye': 0.2,
             'right_eye': 0.2,
             'mouth': 0.3,
             'random': 0.15,
         }
+        self.image_size = 224
         print(f"[Face Occluder] Init occluder with probability: {self.occlusion_regions_prob}")
     
+    def occlude_img_batch(self, lmk_2d, img_mask, occlusion_type, frame_id):
+        n, h, w = img_mask.shape
+
+        if occlusion_type == 'all':
+            img_mask[frame_id,:,:] = 0
+        elif occlusion_type == 'left_eye':
+            idx = left_eye_eyebrow_landmark_indices()
+            scale_x, scale_y = torch.rand(2) * 3 + 0.9
+            left, right, top, bottom = bbox_from_lmk(lmk_2d, idx, scale_x, scale_y)
+            img_mask[frame_id,top:bottom, left:right] = 0
+        elif occlusion_type == 'right_eye':
+            idx = right_eye_eyebrow_landmark_indices()
+            scale_x, scale_y = torch.rand(2) * 3 + 0.9
+            left, right, top, bottom = bbox_from_lmk(lmk_2d, idx, scale_x, scale_y)
+            img_mask[frame_id, top:bottom, left:right] = 0
+        elif occlusion_type == 'mouth':
+            idx = mouth_landmark_indices()
+            scale_x, scale_y = torch.rand(2) * 3 + 0.9
+            left, right, top, bottom = bbox_from_lmk(lmk_2d, idx, scale_x, scale_y)
+            img_mask[frame_id,top:bottom, left:right] = 0
+        elif occlusion_type == 'upper':
+            eye_idx = left_eye_eyebrow_landmark_indices() + right_eye_eyebrow_landmark_indices()
+            bottom = torch.max(lmk_2d[:,idx, 1])
+            img_mask[frame_id,:bottom,:] = 0
+        elif occlusion_type == 'bottom':
+            img_mask[frame_id, 112:,:] = 0
+        elif occlusion_type == 'left':
+            img_mask[frame_id,:,:112] = 0
+        elif occlusion_type == 'right':
+            img_mask[frame_id,:,112:] = 0
+        elif occlusion_type == 'random':
+            x, y, w, h = torch.randint(low=40, high=180,size = (4,))
+            img_mask[frame_id, y:y+h, x:x+w] = 0
+        else:
+            raise ValueError("Occlusion region not supported!")
+        return img_mask
+    
+    def get_lmk_mask_from_img_mask(self, img_mask, kpts):
+        n, v = kpts.shape[:2]
+        lmk_mask = torch.ones((n,v))
+        for i in range(n):
+            for j in range(v):
+                x, y = kpts[i,j]
+                if x<0 or x >=self.image_size or y<0 or y>=self.image_size or img_mask[i,y,x]==0:
+                    lmk_mask[i,j] = 0
+        return lmk_mask
+    
+    def get_lmk_occlusion_mask(self, lmk_2d):
+        n, v = lmk_2d.shape[:2]
+        # occlusion all visual cues:
+        if np.random.rand() < 0.1:
+            lmk_mask = torch.zeros(n,v)
+            return lmk_mask 
+        
+        # occlusion random frames
+        if np.random.rand() < 0.1:
+            lmk_mask = torch.zeros(n,v)
+            frame_id = torch.randint(low=0, high=n, size=(n // 2,))
+            lmk_mask[frame_id,:] = 0
+            return lmk_mask
+        
+        # occlude random regions for consecutive frames
+        kpts = (lmk_2d.clone() * 112 + 112).long()
+        img_mask = torch.ones((n,self.image_size,self.image_size))
+
+        sid = torch.randint(low=0, high=n-25, size=(1,))[0]
+        occ_num_frames = torch.randint(low=25, high=n-sid+1, size=(1,))[0]
+        frame_id = torch.arange(sid, sid+occ_num_frames)
+        for occ_region, occ_prob in self.occlusion_regions_prob.items():
+            prob = np.random.rand()
+            if prob < occ_prob:
+                img_mask = self.occlude_img_batch(kpts, img_mask, occ_region, frame_id)
+                if occ_region == 'all':
+                    break
+        lmk_mask = self.get_lmk_mask_from_img_mask(img_mask, kpts)
+        return lmk_mask
+
     def occlude_lmk_batch(self, lmk_2d, lmk_mask, region, frame_id):
         """ Randomly mask 2d landmarks
         Args:
@@ -204,3 +281,72 @@ def sizes_to_bb_batch(sizes):
     top = sizes[:, 1] - sizes[:, 3]
     bottom = sizes[:, 1] + sizes[:, 3]
     return np.stack([left, right, top, bottom], axis=1)
+
+def test_mediapipe_lmk_occlussion(lmk_mask, occlusion_type):
+    n, v = lmk_mask.shape
+    if occlusion_type == 'non_occ':
+        return lmk_mask 
+    elif occlusion_type == 'left_eye':
+        idx = left_eye_eyebrow_landmark_indices()
+        lmk_mask[:,idx] = 0
+    elif occlusion_type == 'right_eye':
+        idx = right_eye_eyebrow_landmark_indices()
+        lmk_mask[:,idx] = 0
+    elif occlusion_type == 'mouth':
+        idx = mouth_landmark_indices()
+        lmk_mask[:,idx] = 0
+    return lmk_mask
+
+def bbox_from_lmk(lmk_2d, idx, scale_x=None, scale_y=None):
+    left = torch.min(lmk_2d[:,idx, 0]) 
+    right = torch.max(lmk_2d[:,idx, 0])
+    top = torch.min(lmk_2d[:,idx, 1])
+    bottom = torch.max(lmk_2d[:,idx, 1])
+    
+    if scale_x is None:
+        scale_x = np.random.rand() * 0.6 + 0.9
+    if scale_y is None:
+        scale_y = np.random.rand() * 0.6 + 0.9
+    dx = ((right - left ) / 2 * scale_x).long()
+    dy = ((bottom - top ) / 2 * scale_y).long()
+    centers_x = (left + right) // 2
+    centers_y = (top + bottom) // 2
+
+    left = torch.clamp(centers_x - dx, min=0, max=224)
+    right = torch.clamp(centers_x + dx, min=0, max=224)
+    top = torch.clamp(centers_y - dy, min=0, max=224)
+    bottom = torch.clamp(centers_y + dy, min=0, max=224)
+
+    return [left, right, top, bottom]
+
+def get_test_img_occlusion_mask(img_mask, lmk_2d, occlusion_type):
+    n, h, w = img_mask.shape
+    if occlusion_type == 'non_occ':
+        return img_mask
+    elif occlusion_type == 'all':
+        img_mask[:,:,:] = 0
+    elif occlusion_type == 'left_eye':
+        idx = left_eye_eyebrow_landmark_indices()
+        left, right, top, bottom = bbox_from_lmk(lmk_2d, idx)
+        img_mask[:,top:bottom, left:right] = 0
+    elif occlusion_type == 'right_eye':
+        idx = right_eye_eyebrow_landmark_indices()
+        left, right, top, bottom = bbox_from_lmk(lmk_2d, idx)
+        img_mask[:,top:bottom, left:right] = 0
+    elif occlusion_type == 'mouth':
+        idx = mouth_landmark_indices()
+        left, right, top, bottom = bbox_from_lmk(lmk_2d, idx)
+        img_mask[:,top:bottom, left:right] = 0
+    elif occlusion_type == 'upper':
+        eye_idx = left_eye_eyebrow_landmark_indices() + right_eye_eyebrow_landmark_indices()
+        bottom = torch.max(lmk_2d[:,idx, 1])
+        img_mask[:,:bottom,:] = 0
+    elif occlusion_type == 'bottom':
+        img_mask[:,112:,:] = 0
+    elif occlusion_type == 'left':
+        img_mask[:,:,:112] = 0
+    elif occlusion_type == 'right':
+        img_mask[:,:,112:] = 0
+    elif occlusion_type == 'downsample_frames':
+        img_mask[::2,:,:] = 0
+    return img_mask

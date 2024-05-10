@@ -97,6 +97,7 @@ EMBEDDING_INDICES = [
 
 sorter = np.argsort(EMBEDDING_INDICES)
 
+# LIP
 # upper inner + outer + left corder (inner + outer)
 UPPER_LIP_IDX = [191,  80, 81 , 82 , 13 , 312, 311, 310, 415] + [185,  40,  39,  37, 0, 267, 269, 270, 409] + [308, 291]
 
