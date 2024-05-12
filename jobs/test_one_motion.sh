@@ -1,1 +1,1 @@
-python3 test_motion_mead_lmk.py --model_path checkpoints/Transformer_512d_cat_mediapipelmk/model_50.pt --subject_id 'M003' --level 'level_2' --sent 028 --input_motion_length 64 --sld_wind_size 25 --exp_name non_occ --vis
+python3 test_motion_mead_lmk.py --model_path checkpoints/Transformer_512d_cat_mediapipelmk/model_50.pt --subject_id 'M003' --level 'level_2' --sent 029 --input_motion_length 64 --sld_wind_size 25 --exp_name non_occ --vis

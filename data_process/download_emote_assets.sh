@@ -25,16 +25,16 @@ done
 
 echo "Downloading assets to run EMOTE..." 
 
-echo "Downloading FLAME related assets"
-wget https://download.is.tue.mpg.de/emote/FLAME.zip -O FLAME.zip
-echo "Extracting FLAME..."
-## unzip without overwriting existing files
-unzip -n FLAME.zip
+# echo "Downloading FLAME related assets"
+# wget https://download.is.tue.mpg.de/emote/FLAME.zip -O FLAME.zip
+# echo "Extracting FLAME..."
+# ## unzip without overwriting existing files
+# unzip -n FLAME.zip
 
-echo "Downloading FLINT"
-wget https://download.is.tue.mpg.de/emote/MotionPrior.zip 
-echo "Extracting FLINT..."
-unzip -n MotionPrior.zip
+# echo "Downloading FLINT"
+# wget https://download.is.tue.mpg.de/emote/MotionPrior.zip 
+# echo "Extracting FLINT..."
+# unzip -n MotionPrior.zip
 
 # echo "Downloading static emotion feature extractor" 
 
@@ -45,10 +45,10 @@ unzip -n MotionPrior.zip
 # unzip -n ResNet50.zip
 # cd ../..
 
-echo "Downloading Video Emotion Recognition net"
-wget https://download.is.tue.mpg.de/emote/VideoEmotionRecognition.zip 
-echo "Extracting Video Emotion Recognition net"
-unzip -n VideoEmotionRecognition.zip
+# echo "Downloading Video Emotion Recognition net"
+# wget https://download.is.tue.mpg.de/emote/VideoEmotionRecognition.zip 
+# echo "Extracting Video Emotion Recognition net"
+# unzip -n VideoEmotionRecognition.zip
 
 # echo "Downloading EMOTE..."
 # wget https://download.is.tue.mpg.de/emote/TalkingHead.zip
@@ -56,11 +56,8 @@ unzip -n VideoEmotionRecognition.zip
 # unzip -n TalkingHead.zip
 
 echo "Assets for EMOTE downloaded and extracted."
-
-# mkdir data 
-# cd data
-# echo "Downloading example test data"
-# wget https://download.is.tue.mpg.de/emote/EMOTE_test_example_data.zip -O EMOTE_test_example_data.zip
-# unzip -n EMOTE_test_example_data.zip
-# echo "Example test data downloaded and extracted."
-# cd ../../inferno_apps/TalkingHead/demos
+cd ../dataset
+echo "Downloading example test data"
+wget https://download.is.tue.mpg.de/emote/EMOTE_test_example_data.zip -O EMOTE_test_example_data.zip
+unzip -n EMOTE_test_example_data.zip
+echo "Example test data downloaded and extracted."

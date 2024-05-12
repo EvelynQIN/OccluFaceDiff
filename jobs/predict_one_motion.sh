@@ -1,3 +1,1 @@
-python3 predict.py --model_path checkpoints/Transformer_512d_2l_wpho/model_22.pt --save_folder vis_result --exp_name non_occ --video_path face_motion_videos/with_audio/man_speech_wexpr.mp4 --input_motion_length 20 --sld_wind_size 15 --with_audio
-python3 predict.py --model_path checkpoints/Transformer_512d_2l_halfocc_1-5lr/model_26.pt --save_folder vis_result --exp_name non_occ --video_path face_motion_videos/with_audio/man_wglass_speech.mp4 --input_motion_length 20 --sld_wind_size 15 --with_audio
-python3 predict.py --model_path checkpoints/Transformer_512d_2l_0.5halfocc/model_29.pt --save_folder vis_result --exp_name hand_occ --video_path face_motion_videos/occ/male_hand.mp4 --input_motion_length 20 --sld_wind_size 15
+python3 predict.py --model_path checkpoints/Transformer_512d_cat_mediapipelmk/model_50.pt --save_folder vis_result --exp_name non_occ --video_path dataset/in_the_wild/videos/male_2_speak.mp4 --input_motion_length 64 --sld_wind_size 25 --with_audio

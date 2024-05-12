@@ -2,9 +2,10 @@ import argparse
 import os
 import numpy as np
 import torch
+from torch import nn
 from tqdm import tqdm 
 import glob
-from utils.data_util import landmarks_interpolate
+from utils.data_util import linear_interpolate_landmarks, point2bbox, point2transform
 from skimage.transform import estimate_transform, warp, resize, rescale
 import face_alignment 
 import cv2 
@@ -13,181 +14,231 @@ from transformers import Wav2Vec2Processor
 import librosa
 from model.wav2vec import Wav2Vec2Model
 from mmseg.apis import inference_model, init_model
-from moviepy.editor import VideoFileClip
+import h5py
+from utils.mediapipe_landmark_detection import MediapipeDetector
+from model.deca import EMOCA
+from collections import defaultdict
+from utils import utils_transform
 
 class VideoProcessor:
-    def __init__(self, config=None, image_folder='./outputs'):
+    def __init__(self, model_cfg, config=None, data_folder='dataset/in_the_wild'):
         self.device = 'cuda:0'
         self.config = config
         self.fps = config.fps 
         self.image_size = config.image_size
-        self.scale = config.scale 
-        self.image_folder = image_folder
+        self.scale = 1.35
+        self.data_folder = data_folder
         self.K = config.input_motion_length # motion length to chunk
-        
-        # landmark detector
-        face_detector_kwargs = {
-            'back_model': False
-        }
+        self.wav_per_frame = int(16000 / self.fps)
 
-        self.face_detector = face_alignment.FaceAlignment(
-            face_alignment.LandmarksType.TWO_D, 
-            flip_input=False,
-            face_detector='blazeface',    # support detectors ['dlib', 'blazeface', 'cfd]
-            face_detector_kwargs = face_detector_kwargs,
-            device=self.device,)
-        logger.info("Use Face Alignment Predictor for 2d LMK Detection.")
+        self.face_detector = MediapipeDetector()
+        logger.info("Use Mediapipe Predictor for 2d LMK Detection.")
         
         # image segmentator 
         config_file = 'face_segmentation/deeplabv3plus_r101_512x512_face-occlusion.py'
         checkpoint_file = 'face_segmentation/deeplabv3plus_r101_512x512_face-occlusion-93ec6695.pth'
-        self.segmentator = init_model(config_file, checkpoint_file, device=self.device)
+        self.seg_model = init_model(config_file, checkpoint_file, device=self.device)
         logger.info("Use mmseg for Face Segmentation.")
 
-        # wav2vec
+        model_cfg.n_shape = 100
+        self.emoca = EMOCA(model_cfg)
+        self.emoca.to(self.device)
+
+        # wav2vec processor
         self.audio_processor = Wav2Vec2Processor.from_pretrained(
             "facebook/wav2vec2-base-960h") 
-        self.wav2vec = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
-        self.wav2vec.feature_extractor._freeze_parameters()
-        self.wav2vec.to(self.device)
-
-    def crop_face(self, landmarks):
+        
+    def warp_image_from_lmk(self, landmarks, img):    
         left = np.min(landmarks[:, 0])
         right = np.max(landmarks[:, 0])
         top = np.min(landmarks[:, 1])
         bottom = np.max(landmarks[:, 1])
-        old_size = (right - left + bottom - top) / 2
-        center = np.array([right - (right - left) / 2.0, bottom - (bottom - top) / 2.0])  # + old_size*0.1])
+
+        old_size = (right - left + bottom - top) / 2 * 1.1
+        center_x = right - (right - left) / 2.0 
+        center_y = bottom - (bottom - top) / 2.0
+        center = np.array([center_x, center_y])
 
         size = int(old_size * self.scale)
 
-        # crop image
-        src_pts = np.array([[center[0] - size / 2, center[1] - size / 2], [center[0] - size / 2, center[1] + size / 2],
-                            [center[0] + size / 2, center[1] - size / 2]])
-        DST_PTS = np.array([[0, 0], [0, self.image_size - 1], [self.image_size - 1, 0]])
-        tform = estimate_transform('similarity', src_pts, DST_PTS)
+        tform = point2transform(center, size, self.image_size, self.image_size)
+        output_shape = (self.image_size, self.image_size)
+        dst_image = warp(img, tform.inverse, output_shape=output_shape, order=3)
+        dst_landmarks = tform(landmarks[:, :2])
 
-        return tform
+        return dst_image, dst_landmarks
 
-    def video_to_frames(self):
+    def downsample_video(self):
         video_path = self.config.video_path
         if not os.path.exists(video_path):
             logger.error(f'Video path {video_path} not existed!')
             exit(1) 
-        video_name = os.path.split(video_path)[1].split('.')[0]
-        frame_dst = os.path.join(self.image_folder, video_name)
-        if not os.path.exists(frame_dst):
-            os.makedirs(frame_dst)
-            os.system(f'ffmpeg -i {video_path} -vf fps={self.fps} -q:v 1 {frame_dst}/%05d.png')
-            if self.config.with_audio:
-                audio_path = os.path.join(frame_dst, 'audio.wav')
-                os.system("ffmpeg -i {} {} -y".format(video_path, audio_path))
-        
-        self.audio_path = os.path.join(frame_dst, 'audio.wav')
-        self.image_paths = sorted(glob.glob(f'{frame_dst}/*.png'))
-        self.num_frames = len(self.image_paths)
-        logger.info(f"Motion Len = {self.num_frames}")
-
-        if self.config.with_audio:
-            speech_array, sampling_rate = librosa.load(self.audio_path, sr=16000)
-            audio_values = np.squeeze(
-                self.audio_processor(
-                    speech_array, 
-                    return_tensors='pt', 
-                    padding="longest",
-                    sampling_rate=sampling_rate).input_values)
-            audio_input = audio_values.float().unsqueeze(0).to(self.device)
-            with torch.no_grad():
-                self.audio_emb = self.wav2vec(audio_input, frame_num = self.num_frames).last_hidden_state.squeeze(0).cpu()
-        else:
-            self.audio_emb = torch.zeros(self.num_frames, 768)
+        self.video_name = os.path.split(video_path)[1].split('.')[0]
+        self.processed_dst = os.path.join(self.data_folder, self.video_name)
+        self.audio_path = os.path.join(self.processed_dst, 'audio.wav')
+        self.video_path = os.path.join(self.processed_dst, 'video_25fps.mp4')
+        if not os.path.exists(self.processed_dst):
+            os.makedirs(self.processed_dst)
+            os.system(f'ffmpeg -i {video_path} -r {self.fps} {self.video_path}')
+            os.system("ffmpeg -i {} {} -y".format(video_path, self.audio_path))
     
-    def detection_lmks(self):
-        lmk68 = []
+    def landmark_detection(self):
+        logger.info(f"Start landmark detection.")
+        lmks = []
         null_face_cnt = 0
-        for img_path in tqdm(self.image_paths):
-            frame = cv2.imread(img_path)
-            h, w, _ = frame.shape
-            lmks, scores, bbox = self.face_detector.get_landmarks_from_image(
-                cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), return_bboxes=True, return_landmark_score=True)
-            if bbox is None:
+        video = cv2.VideoCapture()
+        if not video.open(self.video_path):
+            logger.error(f"Cannot open {self.video_path}!")
+            exit(1)
+        while True:
+            _, frame = video.read()
+            if frame is None:
+                break
+            lmk_2d = self.face_detector.detect(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            if lmk_2d is None:
                 null_face_cnt += 1
-                lmk68.append(None)
-            else:
-                lmk68.append(lmks[0])
-        
+            lmks.append(lmk_2d)
+        video.release()
         # linear interpolate the missing landmarks
-        self.lmk68 = landmarks_interpolate(lmk68)
+        valid_frames_idx, landmarks = linear_interpolate_landmarks(lmks)
+        self.landmarks = np.stack(landmarks)[:,:,:2]   # (n, V, 2)
+        self.valid_frames_idx = valid_frames_idx
         logger.info(f"There are {null_face_cnt} frames detected null faces.")
 
-    def process_frame(self, frame, kpt):
-        """segmentation mask for the given frame
-        Args:
-            frame: BGR image array
-            kpt: (68, 2)
-        """
-        h, w = frame.shape[:2]
-        # crop information
-        tform = self.crop_face(kpt)
-        cropped_kpt = np.dot(tform.params, np.hstack([kpt, np.ones([kpt.shape[0],1])]).T).T
-        cropped_image = warp(frame, tform.inverse, output_shape=(self.image_size, self.image_size))
-        cropped_image_rgb = cropped_image.transpose(2,0,1)[[2,1,0],:,:] # (3, 224, 224) in RGB
+    def process_one_video(self):
 
-        # occlusion information 
-        seg_output = inference_model(self.segmentator, (cropped_image * 255).astype(np.uint8))
-        seg_mask = np.asanyarray(seg_output.pred_sem_seg.values()[0].to('cpu')).squeeze(0)   # (224, 224)
+        self.processed_fname = os.path.join(self.processed_dst, 'processed.hdf5')
+        if os.path.exists(self.processed_fname):
+            logger.info(f"Video alreadly processed!")
+            return
 
-        # get lmk occlusion info from seg_mask
-        lmk_mask = np.ones(68)
-        for i in range(68):
-            x, y = kpt[i]
-            if x < 0 or x >= self.image_size or y < 0 or y >= self.image_size or seg_mask[int(y),int(x)] == 0:
-                lmk_mask[i] = 0
+        self.landmark_detection()
+        # read the audio input and preprocess it
+        speech_array, sampling_rate = librosa.load(self.audio_path, sr=16000)
+        audio_input = np.squeeze(self.audio_processor(
+                speech_array, 
+                return_tensors=None, 
+                padding="longest",
+                sampling_rate=sampling_rate).input_values)
+        
+        video = cv2.VideoCapture()
+        if not video.open(self.video_path):
+            logger.error(f"Cannot open {self.video_path}!")
+            exit(1)
+        
+        lmk_list = []
+        frame_list = []
+        seg_list = []
 
-        # kpt normalization
-        cropped_kpt[:,:2] = cropped_kpt[:,:2]/self.image_size * 2  - 1
-        return cropped_kpt, cropped_image_rgb, seg_mask, lmk_mask
+        frame_id = 0
+        while True:
+            _, frame = video.read()
+            if frame is None:
+                break
+            dst_image, dst_landmarks = self.warp_image_from_lmk(self.landmarks[frame_id], frame)
+
+            # normalize landmarks to [-1, 1]
+            dst_landmarks = dst_landmarks / self.image_size * 2 - 1
+            lmk_list.append(dst_landmarks)  # (V, 2)
+
+            dst_image = (dst_image * 255.).astype(np.uint8) # (h, w, 3)
+            # perform image segmentation to the warped image
+            result = inference_model(self.seg_model, dst_image)
+            seg_mask = np.asanyarray(result.pred_sem_seg.values()[0].cpu()).squeeze(0)  # (h, w)
+            seg_list.append(seg_mask)
+
+            dst_image = (dst_image[:,:,[2,1,0]] / 255.).transpose(2, 0, 1)   # (3, h, w) in RGB float
+            frame_list.append(dst_image)
+            frame_id += 1
+        video.release()
+        frame_list = np.stack(frame_list)   # (n, 3, 224, 224)
+        seg_list = np.stack(seg_list)   # (n, 224, 224)
+        lmk_list = np.stack(lmk_list)   # (n, V, 2)
+
+        
+        f = h5py.File(self.processed_fname, 'w')
+        f.create_dataset('lmk_2d', data=lmk_list)
+        f.create_dataset('valid_frames_idx', data=np.array(self.valid_frames_idx))
+        f.create_dataset('image', data=frame_list)
+        f.create_dataset('img_mask', data=seg_list)
+        f.create_dataset('audio_input', data=audio_input)
+        f.close()
+    
+    def run_emoca(self):
+
+        self.emoca_rec_fname = os.path.join(self.processed_dst, 'emoca.pt')
+        if os.path.exists(self.emoca_rec_fname):
+            logger.info(f"Emoca already run on this video.")
+            return
+
+        with h5py.File(self.processed_fname, 'r') as f:
+            image = torch.from_numpy(f['image'][:]).float()
+        
+        n_frames = image.shape[0]
+        emoca_code = defaultdict(list)
+        for i in range(0, n_frames, 20):
+            batch = image[i:i+20].to(self.device)
+            emoca_batch = self.emoca(batch)
+            for key in emoca_batch:
+                emoca_code[key].append(emoca_batch[key].to('cpu'))
+        for key in emoca_code:
+            emoca_code[key] = torch.cat(emoca_code[key], dim=0)
+        
+        emoca_code['jaw'] = emoca_code['pose'][...,3:]
+        emoca_code['global_pose'] = emoca_code['pose'][...,:3]
+        emoca_code.pop('pose', None)
+        torch.save(emoca_code, self.emoca_rec_fname)
+    
+    def _get_lmk_mask_from_img_mask(self, img_mask, lmks):
+        kpts = (lmks.clone() * 112 + 112).long()
+        n, v = kpts.shape[:2]
+        lmk_mask = torch.ones((n,v))
+        for i in range(n):
+            for j in range(v):
+                x, y = kpts[i,j]
+                if x<0 or x >=self.image_size or y<0 or y>=self.image_size or img_mask[i,y,x]==0:
+                    lmk_mask[i,j] = 0
+        return lmk_mask
 
     def preprocess_video(self):
-        self.video_to_frames()
-        self.detection_lmks()
+        self.downsample_video()
+        self.process_one_video()
+        self.run_emoca()
+
+    def get_processed_data(self):
+        # get emoca code
+        data_dict = torch.load(self.emoca_rec_fname)
+        data_dict['shape'] = data_dict['shape'][...,:self.config.n_shape]
+        data_dict['exp'] = data_dict['exp'][...,:self.config.n_exp]
+
+        # get processed data
+        with h5py.File(self.processed_fname, 'r') as f:
+            for key in f:
+                data_dict[key] = torch.from_numpy(f[key][:]).float()
         
-    def prepare_chunk_motion(self, start_id):
-
-        # prepare test data for one motion chunk of length self.K due to memory limit
-        imgs = []
-        lmk_2d = []
-        face_masks = []
-        lmk_masks = []
-
-        for i in range(start_id, min(self.num_frames, start_id+self.K)):
-            img_path = self.image_paths[i]
-            kpt = self.lmk68[i]
-            frame = cv2.imread(img_path)
-            cropped_kpt, cropped_image_rgb, seg_mask, lmk_mask = self.process_frame(frame, kpt)
-            face_masks.append(seg_mask)
-            imgs.append(cropped_image_rgb)
-            lmk_2d.append(cropped_kpt)
-            lmk_masks.append(lmk_mask)
+        if not self.config.use_iris:
+            data_dict['lmk_2d'] = data_dict['lmk_2d'][:,:468]
+        num_frames = data_dict['lmk_2d'].shape[0]
         
-        imgs = np.stack(imgs)
-        lmk_2d = np.stack(lmk_2d)
-        face_masks = np.stack(face_masks)
-        lmk_masks = np.stack(lmk_masks)
+        remain_audio_len = num_frames * self.wav_per_frame - len(data_dict['audio_input'])
 
-        return {
-            'image': torch.from_numpy(imgs).float(), # (n, 3, 224, 224)
-            'lmk_2d': torch.from_numpy(lmk_2d).float(), # (n, 68, 3)
-            'img_mask': torch.from_numpy(face_masks).float(), # (n, 224, 224)
-            'lmk_mask': torch.from_numpy(lmk_masks).float(),   # (n, 68)
-            'audio_emb': self.audio_emb[start_id:start_id + self.K]  # (N, 768)
-        }
-
-if __name__ == "__main__":
-    video_processor = VideoProcessor()
-    output = video_processor.run('videos/justin.mp4')
-    for k in output:
-        if k == 'frame_id':
-            print(f'{k}:', len(output[k]))
+        if remain_audio_len > 0:
+            data_dict['audio_input'] = nn.functional.pad(
+                data_dict['audio_input'], (0, remain_audio_len))
         else:
-            print(f'{k}:', output[k].shape)
+            # trim the audio to align with the video
+            data_dict['audio_input'] = data_dict['audio_input'][:num_frames * self.wav_per_frame]
+        
+        data_dict['audio_input'] = data_dict['audio_input'].reshape(num_frames, -1)
+
+        # compose target 
+        jaw_6d = utils_transform.aa2sixd(data_dict['jaw'])
+        data_dict['target'] = torch.cat([jaw_6d, data_dict['exp']], dim=-1)
+        data_dict.pop('exp', None)
+        data_dict.pop('jaw', None)
+
+        data_dict['lmk_mask'] = self._get_lmk_mask_from_img_mask(data_dict['img_mask'], data_dict['lmk_2d'])
+
+        data_dict['lmk_mask'][:] = 1.0
+
+        return data_dict, self.video_name, self.audio_path

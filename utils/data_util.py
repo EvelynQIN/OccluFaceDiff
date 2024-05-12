@@ -248,26 +248,45 @@ def linear_interpolate(landmarks, start_idx, stop_idx):
         landmarks[start_idx+idx] = start_landmarks + idx/float(stop_idx-start_idx) * delta
     return landmarks
 
-def landmarks_interpolate(landmarks):
+def linear_interpolate_landmarks(landmarks):
     """landmarks_interpolate.
 
     :param landmarks: List, the raw landmark (in-place)
 
     """
-    valid_frames_idx = [idx for idx, _ in enumerate(landmarks) if _ is not None]
+    valid_frames_idx = []
+    for idx, res in enumerate(landmarks):
+        if res is not None:
+            valid_frames_idx.append(idx)
+            landmarks[idx] = landmarks[idx][:,:2]
+
     if not valid_frames_idx:
-        return None
+        return valid_frames_idx, landmarks
+
     for idx in range(1, len(valid_frames_idx)):
         if valid_frames_idx[idx] - valid_frames_idx[idx - 1] == 1:
             continue
         else:
             print(f'linear interpolate {idx}')
             landmarks = linear_interpolate(landmarks, valid_frames_idx[idx - 1], valid_frames_idx[idx])
-    valid_frames_idx = [idx for idx, _ in enumerate(landmarks) if _ is not None]
-    # -- Corner case: keep frames at the beginning or at the end failed to be detected.
+    # -- Corner case: keep frames at the beginning or at the end failed to be detected. (pad the two end with the side detection)
     if valid_frames_idx:
         landmarks[:valid_frames_idx[0]] = [landmarks[valid_frames_idx[0]]] * valid_frames_idx[0]
         landmarks[valid_frames_idx[-1]:] = [landmarks[valid_frames_idx[-1]]] * (len(landmarks) - valid_frames_idx[-1])
-    valid_frames_idx = [idx for idx, _ in enumerate(landmarks) if _ is not None]
-    assert len(valid_frames_idx) == len(landmarks), "not every frame has landmark"
-    return landmarks
+
+    return valid_frames_idx, landmarks
+
+### same processing as EMOCA
+def point2bbox(center, size):
+    size2 = size / 2
+
+    src_pts = np.array(
+        [[center[0] - size2, center[1] - size2], [center[0] - size2, center[1] + size2],
+         [center[0] + size2, center[1] - size2]])
+    return src_pts
+
+def point2transform(center, size, target_size_height, target_size_width):
+    src_pts = point2bbox(center, size)
+    dst_pts = np.array([[0, 0], [0, target_size_width - 1], [target_size_height - 1, 0]])
+    tform = estimate_transform('similarity', src_pts, dst_pts)
+    return tform

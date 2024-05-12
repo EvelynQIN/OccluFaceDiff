@@ -30,6 +30,7 @@ cfg.model.use_texture = False   # whether use predicted texture in renderer
 cfg.model.uv_size = 256
 cfg.model.param_list = ['shape', 'tex', 'exp', 'pose', 'cam', 'light']
 cfg.model.n_shape = 300
+cfg.model.n_shape_emoca = 100
 cfg.model.n_tex = 50
 cfg.model.n_exp = 50
 cfg.model.n_cam = 3

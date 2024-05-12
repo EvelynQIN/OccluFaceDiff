@@ -476,18 +476,19 @@ def add_predict_options(parser):
         type=str,
         help="Path to model####.pt file to be sampled.",
     )
-    
-    group.add_argument(
-        "--exp_name",
-        type=str,
-        help="name of the experiment.",
-    )
 
     
     group.add_argument(
         "--with_audio",
         action="store_true",
         help="whether the input with audio.",
+    )
+
+    group.add_argument(
+        "--exp_name",
+        type=str,
+        default='',
+        help='expriment name of the prediction'
     )
     
     # for in_the_wild mode #
@@ -578,6 +579,12 @@ def add_test_options(parser):
         "--vis",
         action="store_true",
         help="whether to visualize the output.",
+    )
+
+    group.add_argument(
+        "--with_audio",
+        action="store_true",
+        help="whether the input with audio.",
     )
 
     
