@@ -95,11 +95,11 @@ class DiffusionModel(GaussianDiffusion):
                 'pose_loss': 1.0,
                 'expr_vel_loss': 0.01,
                 'pose_vel_loss': 0.01,
-                'lmk3d_loss': 0,
+                'lmk3d_loss': 0.1,
                 'lmk2d_loss': 0.2,
                 'mouth_closure_loss': 0.5,
-                'emotion_loss': 0,
-                'lipread_loss': 0
+                'emotion_loss': 0.001,
+                'lipread_loss': 0.002
             }
             print(f"[Diffusion] Loss weights used: {self.loss_weight}")
         else:
@@ -190,14 +190,18 @@ class DiffusionModel(GaussianDiffusion):
         """ function adapted from https://github.com/mpc001/Visual_Speech_Recognition_for_Multiple_Languages"""
 
         mouth_sequence = []
-
         landmarks = landmarks * 112 + 112
+
         for frame_idx,frame in enumerate(images):
             window_margin = min(self._window_margin // 2, frame_idx, len(landmarks) - 1 - frame_idx)
             smoothed_landmarks = landmarks[frame_idx-window_margin:frame_idx + window_margin + 1].mean(dim=0)
+
             smoothed_landmarks += landmarks[frame_idx].mean(dim=0) - smoothed_landmarks.mean(dim=0)
 
             center_x, center_y = torch.mean(smoothed_landmarks[self._lip_idx], dim=0)
+
+            if center_x is None:
+                center_x, center_y = torch.mean(landmarks[self._lip_idx], dim=0)
 
             center_x = center_x.round()
             center_y = center_y.round()
@@ -231,7 +235,7 @@ class DiffusionModel(GaussianDiffusion):
                 raise Exception('too much bias in width')
 
             mouth = img[...,int(center_y - height): int(center_y + height),
-                        int(center_x - width): int(center_x + round(width))]
+                    int(center_x - width): int(center_x + round(width))]
 
             mouth_sequence.append(mouth)
             
@@ -324,7 +328,7 @@ class DiffusionModel(GaussianDiffusion):
             trans_verts[:, :, 1:] = -trans_verts[:, :, 1:]
 
             # rendering
-            light = model_kwargs['light'].view(bs*n, *model_kwargs['light'].shape[2:])
+            light = model_kwargs['light'].view(bs*n, 9, 3)
             
             # if not using texture, default to gray
             if self.model_cfg.use_texture:

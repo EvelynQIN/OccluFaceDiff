@@ -135,4 +135,4 @@ LOWER_LIP_EM = sorter[np.searchsorted(EMBEDDING_INDICES, LOWER_LIP_IDX, sorter=s
 UPPER_EYELIDS_EM = sorter[np.searchsorted(EMBEDDING_INDICES, UPPER_EYELIDS, sorter=sorter)]
 LOWER_EYELIDS_EM = sorter[np.searchsorted(EMBEDDING_INDICES, LOWER_EYELIDS, sorter=sorter)]
 
-LIP_EM = UPPER_LIP_EM + LOWER_LIP_EM
+LIP_EM = np.concatenate([UPPER_LIP_EM,LOWER_LIP_EM])

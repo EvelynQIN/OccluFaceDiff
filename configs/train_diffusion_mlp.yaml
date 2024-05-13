@@ -5,10 +5,10 @@ dataset_path: "./dataset"
 weight_decay: 0.0005
 batch_size: 32
 gradient_accumulation_steps: 4
-lr: 0.0002
+lr: 0.0003
 device: 0 
-num_workers: 4 
-train_dataset_repeat_times: 30
+num_workers: 1 
+train_dataset_repeat_times: 20
 input_motion_length: 64
 diffusion_steps: 1000 
 lr_anneal_steps: 20000
@@ -40,10 +40,10 @@ log_interval: 1
 lmk2d_dim: 936  # 68x2
 cond_latent_dim: 256
 input_latent_dim: 128
-num_layers:  8
+num_layers:  4
 dropout: 0.0
 
-arch: "diffusion_DiffMLP_8l_128d" 
+arch: "diffusion_DiffMLP_4l_128d" 
 
 # diffusion target size
 n_exp: 50

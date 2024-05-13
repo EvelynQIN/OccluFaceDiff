@@ -16,13 +16,18 @@ def extract_lmk_from_image(images_folder, audio_input_folder, out_folder):
                         processed_fname = os.path.join(sent.path, 'cropped_frames.hdf5')
                         if not os.path.exists(processed_fname):
                             continue
+                        
+                        out_subfolder = os.path.join(out_folder, subject.name, view, emotion.name, level.name, sent.name)
+                        if not os.path.exists(out_subfolder):
+                            os.makedirs(out_subfolder)
+                        out_fname = os.path.join(out_subfolder, 'landmarks_mediapipe.hdf5')
+                        if os.path.exists(out_fname):
+                            continue
 
                         with h5py.File(processed_fname,'r') as f:
                             lmk_2d = f['lmk_2d'][:]
                             valid_frames_idx = f['valid_frames_idx'][:]
-                        out_subfolder = os.path.join(out_folder, subject.name, view, emotion.name, level.name, sent.name)
-                        os.makedirs(out_subfolder)
-                        out_fname = os.path.join(out_subfolder, 'landmarks_mediapipe.hdf5')
+                        
                         out_file = h5py.File(out_fname, 'w')
                         out_file.create_dataset('lmk_2d', data=lmk_2d)
                         out_file.create_dataset('valid_frames_idx', data=valid_frames_idx)
