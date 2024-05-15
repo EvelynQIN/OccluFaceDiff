@@ -12,6 +12,17 @@ class MediaPipeFaceOccluder(object):
         # self.face_all = all_face_landmark_indices()
         self.face_center = torch.LongTensor(face_center_landmark_indices())
         self.occlusion_regions_prob = {
+<<<<<<< HEAD
+            'all': 0.05,
+            'left_eye': 0.05,
+            'right_eye': 0.05,
+            'mouth': 0.5,
+            'random': 0.05,
+            'contour': 0.05
+        }
+        self.mask_all_prob = 0.1
+        self.mask_frame_prob = 0.1
+=======
             'all': 0.1,
             'left_eye': 0.2,
             'right_eye': 0.2,
@@ -21,6 +32,7 @@ class MediaPipeFaceOccluder(object):
         }
         self.mask_all_prob = 0.1
         self.mask_frame_prob = 0.05
+>>>>>>> 821afd87dbd4fe0090a7741d588d6b2d43f7045a
         self.image_size = 224
         print(f"[Face Occluder] Init occluder with probability: all - {self.mask_all_prob}; frame - {self.mask_frame_prob}")
         print(f"[Face Occluder] Init occluder with regional probability: {self.occlusion_regions_prob}")
@@ -144,7 +156,7 @@ class MediaPipeFaceOccluder(object):
             lmk_mask[frame_id,:] = 0
         elif region == "left_eye": 
             left_eye_center = lmk_2d[frame_id, 27].unsqueeze(1) # (nc, 1, 2)
-            dw, dh = 0.15 + 0.1 * torch.rand(2) # ~uniform(0.15, 0.25)
+            dw, dh = 0.2 + 0.4 * torch.rand(2) # ~uniform(0.15, 0.25)
             dist_to_center = (lmk_2d[frame_id] - left_eye_center).abs() # (nc, V, 2)
             mask = (dist_to_center[...,0] < dw) & (dist_to_center[...,1] < dh)  # (nc, V)
             whole_mask = torch.zeros(n, v).bool()
@@ -152,7 +164,7 @@ class MediaPipeFaceOccluder(object):
             lmk_mask[whole_mask] = 0
         elif region == "right_eye": 
             right_eye_center = lmk_2d[frame_id, 257].unsqueeze(1) # (nc, 1, 2)
-            dw, dh = 0.15 + 0.1 * torch.rand(2) # ~uniform(0.15, 0.25)
+            dw, dh = 0.2 + 0.4 * torch.rand(2) # ~uniform(0.15, 0.25)
             dist_to_center = (lmk_2d[frame_id] - right_eye_center).abs() # (nc, V, 2)
             mask = (dist_to_center[...,0] < dw) & (dist_to_center[...,1] < dh)  # (nc, V)
             whole_mask = torch.zeros(n, v).bool()
@@ -160,7 +172,7 @@ class MediaPipeFaceOccluder(object):
             lmk_mask[whole_mask] = 0
         elif region == "mouth": 
             mouth_center = torch.mean(lmk_2d[frame_id, 13:15], dim=1).unsqueeze(1) # (nc, 1, 2)
-            dw, dh = 0.2 + 0.3 * torch.rand(2) # ~uniform(0.2, 0.5)
+            dw, dh = 0.2 + 0.4 * torch.rand(2) # ~uniform(0.2, 0.5)
             dist_to_center = (lmk_2d[frame_id] - mouth_center).abs() # (nc, V, 2)
             mask = (dist_to_center[...,0] < dw) & (dist_to_center[...,1] < dh)  # (nc, V)
             whole_mask = torch.zeros(n, v).bool()
@@ -169,7 +181,7 @@ class MediaPipeFaceOccluder(object):
         elif region == "random": 
             center_lmk_id = torch.randint(low=0, high=468, size=(1,))[0]
             random_center = lmk_2d[frame_id, center_lmk_id].unsqueeze(1)    # (nc, 1, 2)
-            dw, dh = 0.1 + 0.5 * torch.rand(2)  # ~uniform(0.1, 0.6)
+            dw, dh = 0.2 + 0.4 * torch.rand(2)  # ~uniform(0.1, 0.6)
             dist_to_center = (lmk_2d[frame_id] - random_center).abs() # (nc, V, 2)
             mask = (dist_to_center[...,0] < dw) & (dist_to_center[...,1] < dh)  # (nc, V)
             whole_mask = torch.zeros(n, v).bool()
@@ -289,8 +301,9 @@ def get_test_img_occlusion_mask(img_mask, lmk_2d, occlusion_type):
         left, right, top, bottom = bbox_from_lmk(lmk_2d, idx)
         img_mask[:,top:bottom, left:right] = 0
     elif occlusion_type == 'upper':
-        eye_idx = left_eye_eyebrow_landmark_indices() + right_eye_eyebrow_landmark_indices()
-        bottom = torch.max(lmk_2d[:,idx, 1])
+        eye_idx = np.concatenate([left_eye_eyebrow_landmark_indices(),right_eye_eyebrow_landmark_indices()])
+        eye_idx = torch.from_numpy(eye_idx).long()
+        bottom = torch.max(lmk_2d[:,eye_idx, 1])
         img_mask[:,:bottom,:] = 0
     elif occlusion_type == 'bottom':
         img_mask[:,112:,:] = 0
