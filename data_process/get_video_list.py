@@ -21,10 +21,12 @@ def get_video_list_from_images(images_folder, audio_input_folder):
                         if not os.path.exists(processed_fname):
                             continue
                         with h5py.File(processed_fname,'r') as f:
+                            if 'images' not in f:
+                                continue
                             num_frames = f['lmk_2d'].shape[0]
                         video_list[video_id] = num_frames
     print(f"there are {len(video_list)} sequences")
-    with open('dataset/mead_25fps/processed/video_list_woimg.pkl', 'wb') as f:
+    with open('dataset/mead_25fps/processed/video_list_wimg.pkl', 'wb') as f:
         pickle.dump(sorted(video_list.items()), f)
 
 if __name__ == '__main__':

@@ -25,7 +25,7 @@ resume_checkpoint: checkpoints/Transformer_512d_cat_mediapipelmk_res_mouthocc_0.
 n_shape: 300
 n_exp: 50 
 n_pose: 6 # jaw pose in 6d
-load_tex: False
+load_tex: True
 use_iris: False
 
 

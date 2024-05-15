@@ -12,6 +12,7 @@ class MediaPipeFaceOccluder(object):
         # self.face_all = all_face_landmark_indices()
         self.face_center = torch.LongTensor(face_center_landmark_indices())
         self.occlusion_regions_prob = {
+<<<<<<< HEAD
             'all': 0.05,
             'left_eye': 0.05,
             'right_eye': 0.05,
@@ -21,6 +22,17 @@ class MediaPipeFaceOccluder(object):
         }
         self.mask_all_prob = 0.1
         self.mask_frame_prob = 0.1
+=======
+            'all': 0.1,
+            'left_eye': 0.2,
+            'right_eye': 0.2,
+            'mouth': 0.3,
+            'random': 0.2,
+            'contour': 0.1
+        }
+        self.mask_all_prob = 0.1
+        self.mask_frame_prob = 0.05
+>>>>>>> 821afd87dbd4fe0090a7741d588d6b2d43f7045a
         self.image_size = 224
         print(f"[Face Occluder] Init occluder with probability: all - {self.mask_all_prob}; frame - {self.mask_frame_prob}")
         print(f"[Face Occluder] Init occluder with regional probability: {self.occlusion_regions_prob}")
@@ -72,7 +84,7 @@ class MediaPipeFaceOccluder(object):
                     lmk_mask[i,j] = 0
         return lmk_mask
     
-    def get_lmk_occlusion_mask_from_img(self, lmk_2d):
+    def get_lmk_occlusion_mask_from_img(self, lmk_2d, img_mask=None):
         n, v = lmk_2d.shape[:2]
         # occlusion all visual cues:
         p = np.random.rand()
@@ -87,7 +99,8 @@ class MediaPipeFaceOccluder(object):
         
         # occlude random regions for consecutive frames
         kpts = (lmk_2d.clone() * 112 + 112).long()
-        img_mask = torch.ones((n,self.image_size,self.image_size))
+        if img_mask is None:
+            img_mask = torch.ones((n,self.image_size,self.image_size))
 
         sid = torch.randint(low=0, high=n-25, size=(1,))[0]
         occ_num_frames = torch.randint(low=25, high=n-sid+1, size=(1,))[0]
