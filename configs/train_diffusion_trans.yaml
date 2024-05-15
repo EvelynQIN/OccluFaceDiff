@@ -1,26 +1,26 @@
 save_dir: "./checkpoints" 
-num_epoch: 100
+num_epoch: 200
 dataset: "mead_25fps" 
 dataset_path: "./dataset"
 weight_decay: 0.001
 batch_size: 16
 gradient_accumulation_steps: 8
-lr: 0.0001
+lr: 0.00005
 cosine_scheduler: True
-warmup_steps: 500
+warmup_steps: 100
 device: 0 # -1 if using cpu for test
 num_workers: 4
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
-train_dataset_repeat_times: 10
+train_dataset_repeat_times: 20
 input_motion_length: 64
 
 cond_mask_prob: 0
 audio_mask_prob: 0.2
 fps: 25
-freeze_audio_encoder_interval: 3
-resume_checkpoint: checkpoints/Transformer_512d_cat_mediapipelmk/model_50.pt
+freeze_audio_encoder_interval: 1
+resume_checkpoint: checkpoints/Transformer_512d_cat_mediapipelmk_res_mouthocc_0.5/model_100.pt
 # flame_params
 n_shape: 300
 n_exp: 50 
@@ -31,11 +31,11 @@ use_iris: False
 
 # log
 wandb_log: True
-save_interval: 3 
+save_interval: 1
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_512d_cat_mediapipelmk_res" 
+arch: "diffusion_Transformer_512d_cat_mediapipelmk_res_mouthocc_0.5" 
 latent_dim: 512
 dropout: 0.2
 
