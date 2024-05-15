@@ -148,17 +148,20 @@ class FaceTransformer(nn.Module):
         else:
             return cond
     
-    def mask_audio_cond(self, audio_emb):
+    def mask_audio_cond(self, audio_input):
         """
-        audio_emb: [bs, n, c]
+        audio_emb: [bs, c]
         """
-        bs = audio_emb.shape[0]
+        bs = audio_input.shape[0]
         mask = torch.bernoulli(
-            torch.ones(bs, device=audio_emb.device) * self.audio_mask_prob
+            torch.ones(bs, device=audio_input.device) * self.audio_mask_prob
         )
-        mask = mask.view(bs, 1, 1)
+        if len(audio_input.shape) == 2:
+            mask = mask.view(bs, 1)
+        else:
+            mask = mask.view(bs, 1, 1)
         # 1-> use null_cond, 0-> use real cond
-        return audio_emb * (1.0 - mask)
+        return audio_input * (1.0 - mask)
 
     def freeze_wav2vec(self):
         self.audio_encoder.freeze_encoder()
@@ -183,11 +186,8 @@ class FaceTransformer(nn.Module):
         # image_cond = self.image_process(image_cond) # [seqlen, bs, d]
         vis_cond = self.lmk_process(lmk_2d.reshape(bs, n, -1))  # [seqlen, bs, d]
         
-        audio_emb = self.audio_encoder(audio_input, frame_num=n).last_hidden_state
-        
-        audio_cond = self.mask_audio_cond(
-            self.audio_process(audio_emb)
-        )
+        audio_cond = self.audio_encoder(audio_input, frame_num=n).last_hidden_state
+        audio_cond = self.mask_audio_cond(self.audio_process(audio_cond))
         
         # # if concat
         cond_emb = torch.cat([vis_cond, audio_cond], dim=-1)

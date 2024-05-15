@@ -127,6 +127,7 @@ class TrainLoop:
         )
         self.opt.load_state_dict(state_dict)
     
+    # @profile
     def run_loop(self):
         local_step = 0
         for epoch in range(self.resume_epoch+1, self.num_epochs+1):
@@ -148,7 +149,6 @@ class TrainLoop:
                 for k in batch:
                     if k != 'target':
                         model_kwargs[k] = batch[k]
-
                 grad_update = True if local_step % self.gradient_accumulation_steps == 0 else False 
                 self.run_step(target, grad_update, **model_kwargs)
             if epoch == self.num_epochs or epoch % self.save_interval == 0:
@@ -175,7 +175,7 @@ class TrainLoop:
         else:
             self.forward_backward(batch, log_loss=False, **model_kwargs)
         # # free gpu memory
-        del batch
+        del batch, model_kwargs
         torch.cuda.empty_cache()
         # gc.collect()
 

@@ -54,13 +54,14 @@ def eye_closure_lmk_loss(pred_lmks, gt_lmks):
     closure_loss = torch.mean(torch.abs(diff_gt - diff_pred))
     return closure_loss
 
+
 class DiffusionModel(GaussianDiffusion):
     def __init__(
         self,
         **kwargs,
     ):
         super(DiffusionModel, self).__init__(**kwargs,)
-
+    
     def _setup(self):
         self.train_stage = self.model_cfg.train_stage
         print(f"[Diffusion] Set up training stage {self.train_stage}")
@@ -75,8 +76,8 @@ class DiffusionModel(GaussianDiffusion):
                 'pose_loss': 1.0,
                 'expr_vel_loss': 0.01,
                 'pose_vel_loss': 0.01,
-                'lmk3d_loss': 0,
-                'lmk2d_loss': 0.2,
+                'lmk3d_loss': 0.2,
+                'lmk2d_loss': 0,
                 'mouth_closure_loss': 0.5,
                 'emotion_loss': 0,
                 'lipread_loss': 0
@@ -98,8 +99,8 @@ class DiffusionModel(GaussianDiffusion):
                 'lmk3d_loss': 0.1,
                 'lmk2d_loss': 0.2,
                 'mouth_closure_loss': 0.5,
-                'emotion_loss': 0.001,
-                'lipread_loss': 0.002
+                'emotion_loss': 0.0005,
+                'lipread_loss': 0.005
             }
             print(f"[Diffusion] Loss weights used: {self.loss_weight}")
         else:
@@ -185,65 +186,91 @@ class DiffusionModel(GaussianDiffusion):
             Normalize(mean, std),
             Identity()]
         )
-    
-    def cut_mouth(self, images, landmarks, convert_grayscale=True):
-        """ function adapted from https://github.com/mpc001/Visual_Speech_Recognition_for_Multiple_Languages"""
 
-        mouth_sequence = []
-        landmarks = landmarks * 112 + 112
+    def cut_mouth_vectorized(
+        self,
+        images, 
+        landmarks, 
+        convert_grayscale=True
+        ):
+                
+        with torch.no_grad():
 
-        for frame_idx,frame in enumerate(images):
-            window_margin = min(self._window_margin // 2, frame_idx, len(landmarks) - 1 - frame_idx)
-            smoothed_landmarks = landmarks[frame_idx-window_margin:frame_idx + window_margin + 1].mean(dim=0)
+            landmarks = landmarks * 112 + 112
+            # #1) smooth the landmarks with temporal convolution
+            # landmarks are of shape (T, 68, 2) 
+            landmarks_t = landmarks.reshape(*landmarks.shape[:2], -1)   # （bs, t, 468x2）
+            # make temporal dimension last 
+            landmarks_t = landmarks_t.permute(0, 2, 1)  # (bs, 468x2, t)
 
-            smoothed_landmarks += landmarks[frame_idx].mean(dim=0) - smoothed_landmarks.mean(dim=0)
+            # smooth with temporal convolution
+            temporal_filter = torch.ones(self._window_margin, device=images.device) / self._window_margin
+            # pad the the landmarks 
+            landmarks_t_padded = F.pad(landmarks_t, (self._window_margin // 2, self._window_margin // 2), mode='replicate')
+            # convolve each channel separately with the temporal filter
+            num_channels = landmarks_t.shape[1]
+            smooth_landmarks_t = F.conv1d(landmarks_t_padded, 
+                temporal_filter.unsqueeze(0).unsqueeze(0).expand(num_channels,1,temporal_filter.numel()), 
+                groups=num_channels, padding='valid'
+            )
+            smooth_landmarks_t = smooth_landmarks_t[..., 0:landmarks_t.shape[-1]]
 
-            center_x, center_y = torch.mean(smoothed_landmarks[self._lip_idx], dim=0)
+            # reshape back to the original shape 
+            smooth_landmarks_t = smooth_landmarks_t.permute(0, 2, 1).view(landmarks.shape)
+            smooth_landmarks_t = smooth_landmarks_t + landmarks.mean(dim=2, keepdims=True) - smooth_landmarks_t.mean(dim=2, keepdims=True)
 
-            if center_x is None:
-                center_x, center_y = torch.mean(landmarks[self._lip_idx], dim=0)
+            # #2) get the mouth landmarks
+            mouth_landmarks_t = smooth_landmarks_t[..., self._lip_idx, :]
+            
+            # #3) get the mean of the mouth landmarks
+            mouth_landmarks_mean_t = mouth_landmarks_t.mean(dim=-2, keepdims=True)
+        
+            # #4) get the center of the mouth
+            center_x_t = mouth_landmarks_mean_t[..., 0]
+            center_y_t = mouth_landmarks_mean_t[..., 1]
 
-            center_x = center_x.round()
-            center_y = center_y.round()
-
+            # #5) use grid_sample to crop the mouth in every image 
+            # create the grid
             height = self._crop_height//2
             width = self._crop_width//2
 
-            threshold = 5
+            # torch.arange(0, mouth_crop_width, device=images.device)
 
-            if convert_grayscale:
-                img = F_v.rgb_to_grayscale(frame).squeeze()
-            else:
-                img = frame
+            grid = torch.stack(torch.meshgrid(torch.linspace(-height, height, self._crop_height).to(images.device) / 112,
+                                            torch.linspace(-width, width, self._crop_width).to(images.device) / 112 ), 
+                               dim=-1)
+            grid = grid[..., [1, 0]]
+            grid = grid.unsqueeze(0).unsqueeze(0).repeat(*images.shape[:2], 1, 1, 1)    # (bs, n, 1, 9, 2)
 
-            if center_y - height < 0:
-                center_y = height
-            if center_y - height < 0 - threshold:
-                raise Exception('too much bias in height')
-            if center_x - width < 0:
-                center_x = width
-            if center_x - width < 0 - threshold:
-                raise Exception('too much bias in width')
+            # normalize the center to [-1, 1]
+            center_x_t = (center_x_t - 112) / 112
+            center_y_t = (center_y_t - 112) / 112
 
-            if center_y + height > img.shape[-2]:
-                center_y = img.shape[-2] - height
-            if center_y + height > img.shape[-2] + threshold:
-                raise Exception('too much bias in height')
-            if center_x + width > img.shape[-1]:
-                center_x = img.shape[-1] - width
-            if center_x + width > img.shape[-1] + threshold:
-                raise Exception('too much bias in width')
+            center_xy =  torch.cat([center_x_t, center_y_t ], dim=-1).unsqueeze(-2).unsqueeze(-2)
+            if center_xy.ndim != grid.ndim:
+                center_xy = center_xy.unsqueeze(-2)
+            assert grid.ndim == center_xy.ndim, f"grid and center_xy have different number of dimensions: {grid.ndim} and {center_xy.ndim}"
+            grid = grid + center_xy
+        B, T = images.shape[:2]
+        images = images.view(B*T, *images.shape[2:])
+        grid = grid.view(B*T, *grid.shape[2:])
 
-            mouth = img[...,int(center_y - height): int(center_y + height),
-                    int(center_x - width): int(center_x + round(width))]
+        if convert_grayscale: 
+            images = F_v.rgb_to_grayscale(images)
+        
+            image_crops = F.grid_sample(
+                images, 
+                grid,  
+                align_corners=True, 
+                padding_mode='zeros',
+                mode='bicubic'
+            )
+        
+        # image_crops = image_crops.view(B, T, *image_crops.shape[1:])
 
-            mouth_sequence.append(mouth)
-            
-            del img
-
-        mouth_sequence = torch.stack(mouth_sequence,dim=0)
-        return mouth_sequence
-
+        # if convert_grayscale:
+        #     image_crops = image_crops#.squeeze(1)
+        return image_crops.squeeze(1)   # (bs*t, 96, 96)
     
     def batch_lmk2d_loss(self, lmk2d_pred, lmk2d_gt):
         """
@@ -260,6 +287,7 @@ class DiffusionModel(GaussianDiffusion):
         return diff_abs.mean()
         
     # loss computation between target and prediction where 2d images are available
+    # @profile
     def masked_l2(self, target, model_output, **model_kwargs):
 
         bs, n, c = target.shape    
@@ -324,6 +352,7 @@ class DiffusionModel(GaussianDiffusion):
         lipread_loss = 0
 
         if self.train_stage == 2:
+
             trans_verts = batch_orth_proj(verts_pred, cam)
             trans_verts[:, :, 1:] = -trans_verts[:, :, 1:]
 
@@ -338,6 +367,7 @@ class DiffusionModel(GaussianDiffusion):
                 albedo = torch.ones([bs*n, 3, self.model_cfg.uv_size, self.model_cfg.uv_size], device=light.device) * 0.5
 
             images = model_kwargs['image'].view(bs*n, *model_kwargs['image'].shape[2:])
+
             pred_render_img = self.render(verts_pred, trans_verts, albedo, light)['images']
             
             #  # ---- photometric loss ---- #
@@ -347,21 +377,26 @@ class DiffusionModel(GaussianDiffusion):
         
             # # ---- emotion loss from EMOCA ---- #
             with torch.no_grad():
-                emotion_features_pred = self.expression_net(pred_render_img)
                 emotion_features_gt = self.expression_net(images)
+            emotion_features_pred = self.expression_net(pred_render_img)
+
             emotion_loss = F.mse_loss(emotion_features_pred, emotion_features_gt)
 
         
             # ---- lipread loss ---- #
             # first crop the mouths of the input and rendered faces and then calculate the distance of features 
-            mouths_gt = self.cut_mouth(images, lmk_gt[...,:2])
-            mouths_pred = self.cut_mouth(pred_render_img, lmk_pred[...,:2])
-            mouths_gt = self.mouth_transform(mouths_gt)
+            images = images.view(bs,n, *images.shape[1:])
+            lmk_gt = lmk_gt.view(bs, n, *lmk_gt.shape[1:])
+            lmk_pred = lmk_pred.view(bs, n, *lmk_pred.shape[1:])
+            pred_render_img = pred_render_img.view(bs, n, *pred_render_img.shape[1:])
+            mouths_gt = self.cut_mouth_vectorized(images, lmk_gt[...,:2])   # (bs*t, 96, 96)
+            mouths_pred = self.cut_mouth_vectorized(pred_render_img, lmk_pred[...,:2])
+            mouths_gt = self.mouth_transform(mouths_gt) # (bs*t, 88, 88)
             mouths_pred = self.mouth_transform(mouths_pred)
 
-            # # # ---- resize back to BxKx1xHxW (grayscale input for lipread net) ---- #
-            mouths_gt = mouths_gt.view(bs, n, mouths_gt.shape[-2], mouths_gt.shape[-1])
-            mouths_pred = mouths_pred.view(bs, n, mouths_gt.shape[-2], mouths_gt.shape[-1])
+            # # # ---- resize back to BxNx1xHxW (grayscale input for lipread net) ---- #
+            mouths_gt = mouths_gt.view(bs, n, *mouths_gt.shape[1:]) # (bs, n, 88, 88)
+            mouths_pred = mouths_pred.view(bs, n, *mouths_pred.shape[1:]) # (bs, n, 88, 88)
 
             with torch.no_grad():
                 lip_features_gt = self.lip_reader.model.encoder(
@@ -370,20 +405,18 @@ class DiffusionModel(GaussianDiffusion):
                     extract_resnet_feats=True
                 )
                 
-                lip_features_pred = self.lip_reader.model.encoder(
-                    mouths_pred,
-                    None,
-                    extract_resnet_feats=True
-                )
+            lip_features_pred = self.lip_reader.model.encoder(
+                mouths_pred,
+                None,
+                extract_resnet_feats=True
+            )
 
             lipread_loss = F.mse_loss(lip_features_gt, lip_features_pred)
-        
         loss = self.loss_weight['lmk2d_loss'] * lmk2d_loss + self.loss_weight['mouth_closure_loss'] * mouth_closure_loss \
             + self.loss_weight['expr_loss'] * expr_loss + self.loss_weight['pose_loss'] * pose_loss \
             + self.loss_weight['expr_vel_loss'] * expr_vel_loss + self.loss_weight['pose_vel_loss'] * pose_vel_loss \
             + self.loss_weight['lmk3d_loss'] * lmk3d_loss \
             + self.loss_weight['emotion_loss'] * emotion_loss + self.loss_weight['lipread_loss'] * lipread_loss
-        
         loss_dict = {
             'expr_loss': expr_loss.detach().item(),
             'pose_loss': pose_loss.detach().item(),
