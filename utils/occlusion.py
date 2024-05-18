@@ -12,30 +12,19 @@ class MediaPipeFaceOccluder(object):
         # self.face_all = all_face_landmark_indices()
         self.face_center = torch.LongTensor(face_center_landmark_indices())
         self.occlusion_regions_prob = {
-<<<<<<< HEAD
             'all': 0.05,
             'left_eye': 0.05,
             'right_eye': 0.05,
             'mouth': 0.5,
-            'random': 0.05,
+            'random': 0.1,
             'contour': 0.05
         }
         self.mask_all_prob = 0.1
         self.mask_frame_prob = 0.1
-=======
-            'all': 0.1,
-            'left_eye': 0.2,
-            'right_eye': 0.2,
-            'mouth': 0.3,
-            'random': 0.2,
-            'contour': 0.1
-        }
-        self.mask_all_prob = 0.1
-        self.mask_frame_prob = 0.05
->>>>>>> 821afd87dbd4fe0090a7741d588d6b2d43f7045a
         self.image_size = 224
         print(f"[Face Occluder] Init occluder with probability: all - {self.mask_all_prob}; frame - {self.mask_frame_prob}")
         print(f"[Face Occluder] Init occluder with regional probability: {self.occlusion_regions_prob}")
+    
     
     def occlude_img_batch(self, lmk_2d, img_mask, occlusion_type, frame_id):
         n, h, w = img_mask.shape
@@ -284,6 +273,9 @@ def bbox_from_lmk(lmk_2d, idx, scale_x=None, scale_y=None):
 
 def get_test_img_occlusion_mask(img_mask, lmk_2d, occlusion_type):
     n, h, w = img_mask.shape
+    sid = torch.randint(low=0, high=n-25, size=(1,))[0]
+    occ_num_frames = torch.randint(low=25, high=n-sid+1, size=(1,))[0]
+    frame_id = torch.arange(sid, sid+occ_num_frames)
     if occlusion_type == 'non_occ':
         return img_mask
     elif occlusion_type == 'all':
@@ -299,7 +291,7 @@ def get_test_img_occlusion_mask(img_mask, lmk_2d, occlusion_type):
     elif occlusion_type == 'mouth':
         idx = mouth_landmark_indices()
         left, right, top, bottom = bbox_from_lmk(lmk_2d, idx)
-        img_mask[:,top:bottom, left:right] = 0
+        img_mask[frame_id,top:bottom, left:right] = 0
     elif occlusion_type == 'upper':
         eye_idx = np.concatenate([left_eye_eyebrow_landmark_indices(),right_eye_eyebrow_landmark_indices()])
         eye_idx = torch.from_numpy(eye_idx).long()

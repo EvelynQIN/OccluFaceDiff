@@ -77,7 +77,7 @@ class DiffusionModel(GaussianDiffusion):
                 'pose_vel_loss': 0.01,
                 'lmk3d_loss': 0.5,
                 'lmk2d_loss': 0,
-                'mouth_closure_loss': 0.5,
+                'mouth_closure_loss': 0.1,
                 'emotion_loss': 0,
                 'lipread_loss': 0
             }

@@ -1,31 +1,31 @@
 save_dir: "./checkpoints" 
-num_epoch: 200
+num_epoch: 100
 dataset: "mead_25fps" 
 dataset_path: "./dataset"
 weight_decay: 0.001
 batch_size: 16
-gradient_accumulation_steps: 8
-lr: 0.00005
-cosine_scheduler: True
+gradient_accumulation_steps: 1
+lr: 0.0001
+cosine_scheduler: False
 warmup_steps: 100
 device: 0 # -1 if using cpu for test
 num_workers: 4
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
-train_dataset_repeat_times: 20
+train_dataset_repeat_times: 10
 input_motion_length: 64
 
 cond_mask_prob: 0
-audio_mask_prob: 0.2
+audio_mask_prob: 0.1
 fps: 25
-freeze_audio_encoder_interval: 1
-resume_checkpoint: checkpoints/Transformer_512d_cat_mediapipelmk_res_mouthocc_0.5/model_100.pt
+freeze_audio_encoder_interval: 3
+# resume_checkpoint: checkpoints/Transformer_512d_cat_mediapipelmk_iter_train/model_1.pt
 # flame_params
 n_shape: 300
 n_exp: 50 
 n_pose: 6 # jaw pose in 6d
-load_tex: True
+load_tex: False
 use_iris: False
 
 
@@ -35,16 +35,16 @@ save_interval: 1
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_512d_cat_mediapipelmk_res_mouthocc_0.5" 
-latent_dim: 512
+arch: "diffusion_Transformer_256d_cat_mediapipelmk_iter_train_Film" 
+latent_dim: 256
 dropout: 0.2
 
 use_mask: True  # use alibi mask
 
 # unusable for gru
-ff_size: 1024
-num_enc_layers: 2
+ff_size: 512
+num_enc_layers: 4
 num_heads: 4
 
 # unusable for transformer encoder 
-num_dec_layers: 3
+num_dec_layers: 6

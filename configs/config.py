@@ -40,7 +40,7 @@ cfg.model.jaw_type = 'aa' # default use axis angle, another option: euler. Note 
 cfg.model.image_size = 224
 
 # diffusion
-cfg.model.train_stage = 2 # training stage of diffusion [1 / 2]
+cfg.model.train_stage = 1 # training stage of diffusion [1 / 2]
 
 
 def get_cfg_defaults():

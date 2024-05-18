@@ -114,7 +114,7 @@ def main():
     val_dataset = TrainMeadDataset(
         args.dataset,
         args.dataset_path,
-        train_processed_path,
+        val_processed_path,
         args.input_motion_length,
         3,
         args.no_normalization,

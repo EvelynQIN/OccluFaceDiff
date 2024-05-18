@@ -50,7 +50,7 @@ def create_model_and_diffusion(args, model_cfg, device):
     elif "Enc" in arch:
         denoise_model = denoising_model.TransformerEncoder(**get_transformer_args(args))
     elif "Trans" in arch:
-        denoise_model = denoising_model.FaceTransformer(**get_transformer_args(args))
+        denoise_model = denoising_model.FaceTransformerFiLM(**get_transformer_args(args))
     elif "MLP" in arch:
         denoise_model = MultiBranchMLP(**get_mlp_args(args))
     else:

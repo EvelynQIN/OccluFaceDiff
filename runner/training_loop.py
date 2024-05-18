@@ -17,6 +17,7 @@ import gc
 from diffusion.fp16_util import MixedPrecisionTrainer
 from diffusion.resample import create_named_schedule_sampler
 from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from utils.scheduler import WarmupCosineSchedule
 from tqdm import tqdm
 from utils import dist_util
@@ -24,6 +25,7 @@ import wandb
 # from model.deca import EMOCA
 # from utils import utils_transform
 from memory_profiler import profile
+from utils.occlusion import MediaPipeFaceOccluder
 
 # training loop for the diffusion given "model" as the denoising model
 class TrainLoop:
@@ -80,7 +82,7 @@ class TrainLoop:
             self.mp_trainer.master_params, lr=self.lr, weight_decay=self.weight_decay
         )
         if self.args.cosine_scheduler:
-            self.scheduler = WarmupCosineSchedule(self.opt, warmup_steps=args.warmup_steps, t_total=self.num_steps)
+            self.scheduler = CosineAnnealingWarmRestarts(self.opt, T_0=5, T_mult=2, eta_min=1e-6)   # WarmupCosineSchedule(self.opt, warmup_steps=args.warmup_steps, t_total=self.num_steps)
         
         if self.resume_epoch and self.load_optimizer:
             self._load_optimizer_state()
@@ -98,6 +100,9 @@ class TrainLoop:
         self.ddp_model = self.model 
 
         self.loss_keys = None
+
+        # apply random mask during training
+        self.occluder = MediaPipeFaceOccluder()
 
     def _load_and_sync_parameters(self):
         resume_checkpoint = self.resume_checkpoint
@@ -134,13 +139,38 @@ class TrainLoop:
             print(f"Starting training epoch {epoch}")
             self.epoch = epoch
 
-            if epoch > 0 and epoch % self.freeze_audio_encoder_interval == 0:
-                self.model.unfreeze_wav2vec()
-            else:
+            # focus on visual signals without mouth & all occ type
+            if epoch % self.freeze_audio_encoder_interval == 0:
                 self.model.freeze_wav2vec()
+                self.occlusion_regions_prob = {
+                    'all': 0.0,
+                    'left_eye': 0.2,
+                    'right_eye': 0.2,
+                    'mouth': 0.,
+                    'random': 0.2,
+                    'contour': 0.15
+                }
+                self.mask_all_prob = 0.
+                self.mask_frame_prob = 0.05
+            # focus on combining audio signals with only mouth & all occ type
+            else:
+                self.model.unfreeze_wav2vec()
+                self.occlusion_regions_prob = {
+                    'all': 0.2,
+                    'left_eye': 0,
+                    'right_eye': 0,
+                    'mouth': 0.8,
+                    'random': 0.,
+                    'contour': 0.1
+                }
+                self.mask_all_prob = 0.4
+                self.mask_frame_prob = 0.1
 
             for batch in tqdm(self.train_loader):
                 local_step += 1
+                # generate random occlusion mask
+                batch['lmk_mask'] = self.occluder.get_lmk_occlusion_mask(batch['lmk_2d'][0]).unsqueeze(0).repeat(self.batch_size, 1, 1)   # (bs, t, v)
+
                 for k in batch:
                     batch[k] = batch[k].to(self.device)
                 target = batch['target']
@@ -167,8 +197,8 @@ class TrainLoop:
             self.forward_backward(batch, log_loss=True, **model_kwargs)
             self.mp_trainer.optimize(self.opt)
             if self.args.cosine_scheduler:
-                self.scheduler.step()
-                self.lr = self.scheduler.get_last_lr()[0]
+                self.scheduler.step(self.epoch - self.resume_epoch - 1 + self.step / self.steps_per_epoch)
+                self.lr = self.opt.param_groups[-1]['lr']  # self.scheduler.get_last_lr()[0]
             else:
                 self._step_lr()
             self.mp_trainer.zero_grad()
@@ -219,6 +249,7 @@ class TrainLoop:
         with torch.no_grad():
             for batch in tqdm(self.val_loader):
                 eval_steps += 1
+                batch['lmk_mask'] = self.occluder.get_lmk_occlusion_mask(batch['lmk_2d'][0]).unsqueeze(0).repeat(self.batch_size, 1, 1)   # (bs, t, v)
                 for k in batch:
                     batch[k] = batch[k].to(self.device)
                 target = batch['target']

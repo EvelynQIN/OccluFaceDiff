@@ -47,7 +47,7 @@ class TrainMeadDataset(Dataset):
         self.wav_per_frame = int(sampling_rate / self.fps)
 
         # apply occlusion
-        self.occluder = MediaPipeFaceOccluder()
+        # self.occluder = MediaPipeFaceOccluder()
 
         # image process
         self.image_size = 224 
@@ -173,8 +173,8 @@ class TrainMeadDataset(Dataset):
         batch = self._get_emica_codes(motion_path, start_id)
         batch['lmk_2d'] = self._get_lmk_mediapipe(motion_path, start_id)
         batch['audio_input'] = self._get_audio_input(motion_path, start_id)
-        batch['image'] = self._get_images(motion_path, start_id)
-        batch['lmk_mask'] = self.occluder.get_lmk_occlusion_mask(batch['lmk_2d'])
+        # batch['image'] = self._get_images(motion_path, start_id)
+        # batch['lmk_mask'] = self.occluder.get_lmk_occlusion_mask(batch['lmk_2d'])
         # for key in batch:
         #     print(f"shape of {key}: {batch[key].shape}")
         
@@ -377,7 +377,7 @@ def load_test_data(
         level_list = ['level_1', 'level_2', 'level_3']
     if sent_list is None:
         sent_list = MEAD_sentence_split
-    with open(os.path.join(processed_folder, 'video_list_wimg.pkl'), 'rb') as f:
+    with open(os.path.join(processed_folder, 'video_list_woimg.pkl'), 'rb') as f:
         video_list = pickle.load(f)
     motion_list = []
     for video_id, num_frames in video_list:
@@ -414,7 +414,7 @@ def load_data(dataset, dataset_path, split, input_motion_length):
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
         MEAD_subject_split, MEAD_sentence_split = get_split_MEAD(split)
-        with open(os.path.join(processed_folder, 'video_list_wimg.pkl'), 'rb') as f:
+        with open(os.path.join(processed_folder, 'video_list_woimg.pkl'), 'rb') as f:
             video_list = pickle.load(f)
         motion_list = []
         for video_id, num_frames in video_list:
