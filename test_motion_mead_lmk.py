@@ -170,7 +170,7 @@ class MotionTracker:
 
         logger.info(f"Loading checkpoints from [{args.model_path}]...")
         state_dict = torch.load(args.model_path, map_location="cpu")
-        self.denoise_model.load_state_dict(state_dict, strict=False)
+        self.denoise_model.load_state_dict(state_dict, strict=True)
 
         self.denoise_model.to(self.device)  # dist_util.dev())
         self.denoise_model.eval()  # disable random masking

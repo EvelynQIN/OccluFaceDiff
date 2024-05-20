@@ -26,6 +26,8 @@ import wandb
 # from utils import utils_transform
 from memory_profiler import profile
 from utils.occlusion import MediaPipeFaceOccluder
+from model.motion_prior import L2lVqVae
+from munch import Munch, munchify
 
 # training loop for the diffusion given "model" as the denoising model
 class TrainLoop:
@@ -104,6 +106,9 @@ class TrainLoop:
         # apply random mask during training
         self.occluder = MediaPipeFaceOccluder()
 
+        # load the motion prior
+        self._load_flint_encoder()
+
     def _load_and_sync_parameters(self):
         resume_checkpoint = self.resume_checkpoint
 
@@ -132,6 +137,17 @@ class TrainLoop:
         )
         self.opt.load_state_dict(state_dict)
     
+    def _load_flint_encoder(self):
+        ckpt_path = self.model_cfg.flint_ckpt_path
+        f = open(self.model_cfg.flint_config_path)
+        cfg = Munch.fromYAML(f)
+        flint = L2lVqVae(cfg)
+        flint.load_model_from_checkpoint(ckpt_path)
+        self.flint_encoder = flint.motion_encoder.to(self.device)
+        print(f"[FLINT Encoder] Loaded and Frozen.")
+        self.flint_encoder.requires_grad_(False)
+        self.flint_encoder.eval()
+    
     # @profile
     def run_loop(self):
         local_step = 0
@@ -145,13 +161,13 @@ class TrainLoop:
                 self.model.freeze_wav2vec()
                 self.occlusion_regions_prob = {
                     'all': 0.1,
-                    'left_eye': 0.2,
-                    'right_eye': 0.2,
-                    'mouth': 0.,
-                    'random': 0.2,
-                    'contour': 0.15
+                    'left_eye': 0.3,
+                    'right_eye': 0.3,
+                    'mouth': 0.05,
+                    'random': 0.3,
+                    'contour': 0.3
                 }
-                self.mask_all_prob = 0.
+                self.mask_all_prob = 0.1
                 self.mask_frame_prob = 0.1
             # focus on combining audio signals with only mouth & all occ type
             else:
@@ -162,9 +178,9 @@ class TrainLoop:
                     'right_eye': 0.,
                     'mouth': 0.6,
                     'random': 0.,
-                    'contour': 0.2
+                    'contour': 0.3
                 }
-                self.mask_all_prob = 0.2
+                self.mask_all_prob = 0.3
                 self.mask_frame_prob = 0.1
 
             for batch in tqdm(self.train_loader):
@@ -174,13 +190,12 @@ class TrainLoop:
 
                 for k in batch:
                     batch[k] = batch[k].to(self.device)
-                target = batch['target']
-                model_kwargs = {}
-                for k in batch:
-                    if k != 'target':
-                        model_kwargs[k] = batch[k]
+                motion_target = torch.cat([batch['exp'], batch['jaw']], dim=-1)
+
+                target = self.flint_encoder(motion_target)  # (bs, n//8, 128)
+
                 grad_update = True if local_step % self.gradient_accumulation_steps == 0 else False 
-                self.run_step(target, grad_update, **model_kwargs)
+                self.run_step(target, grad_update, **batch)
 
             if epoch == self.num_epochs or epoch % self.save_interval == 0:
                 self.save()
@@ -254,25 +269,22 @@ class TrainLoop:
                 batch['lmk_mask'] = self.occluder.get_lmk_occlusion_mask(batch['lmk_2d'][0]).unsqueeze(0).repeat(self.batch_size, 1, 1)   # (bs, t, v)
                 for k in batch:
                     batch[k] = batch[k].to(self.device)
-                target = batch['target']
-                model_kwargs = {}
-                for k in batch:
-                    if k != 'target':
-                        model_kwargs[k] = batch[k]
+                motion_target = torch.cat([batch['exp'], batch['jaw']], dim=-1)
+                target = self.flint_encoder(motion_target)  # (bs, n//8, 128)
                 t, weights = self.schedule_sampler.sample(target.shape[0], dist_util.dev())
                 compute_losses = functools.partial(
                     self.diffusion.training_losses,
                     self.ddp_model,
                     target,
                     t,
-                    model_kwargs
+                    batch
                 )
 
                 loss_dict = compute_losses()
                 loss_dict['loss'] = loss_dict['loss'].detach().item()
                 for k in val_loss:
                     val_loss[k] +=  loss_dict[k]
-                del batch, model_kwargs, loss_dict
+                del batch
                 # torch.cuda.empty_cache()
                 
             for k in val_loss:

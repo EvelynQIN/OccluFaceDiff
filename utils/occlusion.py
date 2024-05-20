@@ -117,8 +117,8 @@ class MediaPipeFaceOccluder(object):
             return lmk_mask
         
         # occlude random regions for consecutive frames
-        sid = torch.randint(low=0, high=n-25, size=(1,))[0]
-        occ_num_frames = torch.randint(low=25, high=n-sid+1, size=(1,))[0]
+        sid = torch.randint(low=0, high=n-30, size=(1,))[0]
+        occ_num_frames = torch.randint(low=30, high=n-sid+1, size=(1,))[0]
         frame_id = torch.arange(sid, sid+occ_num_frames)
         lmk_mask = torch.ones(n, v)
         for occ_region, occ_prob in self.occlusion_regions_prob.items():
@@ -273,8 +273,8 @@ def bbox_from_lmk(lmk_2d, idx, scale_x=None, scale_y=None):
 
 def get_test_img_occlusion_mask(img_mask, lmk_2d, occlusion_type):
     n, h, w = img_mask.shape
-    sid = torch.randint(low=0, high=n-25, size=(1,))[0]
-    occ_num_frames = torch.randint(low=25, high=n-sid+1, size=(1,))[0]
+    sid = torch.randint(low=0, high=n-30, size=(1,))[0]
+    occ_num_frames = torch.randint(low=30, high=n-sid+1, size=(1,))[0]
     frame_id = torch.arange(sid, sid+occ_num_frames)
     if occlusion_type == 'non_occ':
         return img_mask
@@ -291,7 +291,7 @@ def get_test_img_occlusion_mask(img_mask, lmk_2d, occlusion_type):
     elif occlusion_type == 'mouth':
         idx = mouth_landmark_indices()
         left, right, top, bottom = bbox_from_lmk(lmk_2d, idx)
-        img_mask[frame_id,top:bottom, left:right] = 0
+        img_mask[:,top:bottom, left:right] = 0
     elif occlusion_type == 'upper':
         eye_idx = np.concatenate([left_eye_eyebrow_landmark_indices(),right_eye_eyebrow_landmark_indices()])
         eye_idx = torch.from_numpy(eye_idx).long()

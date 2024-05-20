@@ -61,7 +61,7 @@ class L2lEncoder(nn.Module):
         super().__init__()
         self.config = cfg
         self.sizes = sizes
-        size = 53
+        size = 103
         dim = self.config.feature_dim
 
         # self.squasher = nn.Sequential(*layers) 
@@ -91,7 +91,7 @@ class L2lEncoder(nn.Module):
         )
 
     def get_input_dim(self):
-        return 53
+        return 103
         # return input_dim
 
     def forward(self, inputs, **kwargs):
@@ -138,13 +138,13 @@ class L2lEncoderWithGaussianHead(L2lEncoder):
         self.N.loc = self.N.loc.to(self.logvar.weight.device)
         self.N.scale = self.N.scale.to(self.logvar.weight.device)
 
-    def to(self, *args, device=None, **kwargs):
-        super().to(*args, device=None, **kwargs)
-        self.N.loc.to(device)
-        self.N.scale.to(device)
-        self.mean = self.mean.to(device)
-        self.logvar = self.logvar.to(device)
-        return self
+    # def to(self, *args, device=None, **kwargs):
+    #     super().to(*args, device=None, **kwargs)
+    #     self.N.loc.to(device)
+    #     self.N.scale.to(device)
+    #     self.mean = self.mean.to(device)
+    #     self.logvar = self.logvar.to(device)
+    #     return self
     
     def forward(self, inputs, **kwargs):
         if self.N.loc.device != self.logvar.weight.device:

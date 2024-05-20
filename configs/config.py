@@ -32,7 +32,7 @@ cfg.model.param_list = ['shape', 'tex', 'exp', 'pose', 'cam', 'light']
 cfg.model.n_shape = 300
 cfg.model.n_shape_emoca = 100
 cfg.model.n_tex = 50
-cfg.model.n_exp = 50
+cfg.model.n_exp = 100
 cfg.model.n_cam = 3
 cfg.model.n_pose = 6    # aa representation of neck + jaw
 cfg.model.n_light = 27
@@ -41,7 +41,8 @@ cfg.model.image_size = 224
 
 # diffusion
 cfg.model.train_stage = 1 # training stage of diffusion [1 / 2]
-
+cfg.model.flint_ckpt_path = 'pretrained/MotionPrior/models/FLINTv2/checkpoints/model-epoch=0758-val/loss_total=0.113977119327.ckpt'
+cfg.model.flint_config_path = 'pretrained/MotionPrior/models/FLINTv2/cfg.yaml'
 
 def get_cfg_defaults():
     return cfg.clone()
