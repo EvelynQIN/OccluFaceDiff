@@ -82,7 +82,7 @@ class TrainLoop:
             self.mp_trainer.master_params, lr=self.lr, weight_decay=self.weight_decay
         )
         if self.args.cosine_scheduler:
-            self.scheduler = CosineAnnealingWarmRestarts(self.opt, T_0=5, T_mult=2, eta_min=1e-6)   # WarmupCosineSchedule(self.opt, warmup_steps=args.warmup_steps, t_total=self.num_steps)
+            self.scheduler = CosineAnnealingWarmRestarts(self.opt, T_0=15, T_mult=1, eta_min=1e-6)   # WarmupCosineSchedule(self.opt, warmup_steps=args.warmup_steps, t_total=self.num_steps)
         
         if self.resume_epoch and self.load_optimizer:
             self._load_optimizer_state()
@@ -141,13 +141,13 @@ class TrainLoop:
             self.epoch = epoch
 
             # focus on visual signals without mouth & all occ type
-            if epoch % self.freeze_audio_encoder_interval >= 3:
+            if epoch % self.freeze_audio_encoder_interval == 0:
                 self.model.freeze_wav2vec()
                 self.occlusion_regions_prob = {
                     'all': 0.1,
                     'left_eye': 0.2,
                     'right_eye': 0.2,
-                    'mouth': 0.,
+                    'mouth': 0.3,
                     'random': 0.2,
                     'contour': 0.15
                 }
@@ -160,7 +160,7 @@ class TrainLoop:
                     'all': 0.2,
                     'left_eye': 0.,
                     'right_eye': 0.,
-                    'mouth': 0.6,
+                    'mouth': 0.8,
                     'random': 0.,
                     'contour': 0.2
                 }

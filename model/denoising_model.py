@@ -587,7 +587,7 @@ class FaceTransformerFLINT(nn.Module):
         self.use_mask = use_mask
         if self.use_mask:
             print(f"[{self.tag}] Using alibi mask for encoder.")
-        self.latent_dim_condition = latent_dim // 2
+        self.latent_dim_condition = latent_dim // 3
         self.latent_dim_transformer_encoder = latent_dim
         self.latent_dim_transformer_decoder = latent_dim // 2
 
@@ -615,7 +615,7 @@ class FaceTransformerFLINT(nn.Module):
         self.audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
         self.audio_encoder.feature_extractor._freeze_parameters()
         audio_feature_dim = 768
-        self.audio_process = InputProcess(audio_feature_dim, self.latent_dim_condition)
+        self.audio_process = InputProcess(audio_feature_dim, self.latent_dim_condition * 2)
        
         self.input_process = InputProcess(self.input_feats, self.latent_dim_transformer_decoder)
         self.sequence_pos_encoder = PositionalEncoding(self.latent_dim_transformer_encoder, self.dropout)

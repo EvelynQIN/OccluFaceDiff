@@ -252,12 +252,6 @@ class TestMeadDataset(Dataset):
         code_dict['shape'] = code_dict['shape'][:,:self.n_shape]
         code_dict['exp'] = code_dict['exp'][:,:self.n_exp]
 
-        # compose target 
-        jaw_6d = utils_transform.aa2sixd(code_dict['jaw'])
-        code_dict['target'] = torch.cat([jaw_6d, code_dict['exp']], dim=-1)
-        code_dict.pop('exp', None)
-        code_dict.pop('jaw', None)
-
         return code_dict 
     
     def _get_emotion_features(self, motion_path):
@@ -320,8 +314,8 @@ def get_split_MEAD(split):
     }      
     
     MEAD_sentence_split = {
-        "train": ["%03d" % i for i in range(1, 26)] +  ["%03d" % i for i in range(36, 100)],
-        "test": ["%03d" % i for i in range(26, 36)]
+        "train": [i for i in range(10, 200)],
+        "test": [i for i in range(0, 10)]
     }    
 
     return MEAD_subject_split[split], MEAD_sentence_split[split]
@@ -340,6 +334,7 @@ def load_test_data(
         motion_list: list of motion path (sbj/view/emotion/level/sent)
     """
     processed_folder = os.path.join(dataset_path, dataset, 'processed')
+    video_id_to_sent_id = np.load(os.path.join(dataset_path, dataset, 'processed/video_id_to_sent_id.npy'), allow_pickle=True)[()]
         
     folder_path = os.path.join(processed_folder, 'split')
     if not os.path.exists(folder_path):
@@ -357,8 +352,9 @@ def load_test_data(
     for video_id, num_frames in video_list:
         # check split and motion length
         sbj, view, emotion, level, sent = video_id.split('/')
+        sent_id = video_id_to_sent_id[video_id]
         if sbj not in subjects or \
-            sent not in sent_list or \
+            sent_id not in sent_list or \
             level not in level_list:
             continue 
         if emotion_list and emotion not in emotion_list:
@@ -378,6 +374,7 @@ def load_data(dataset, dataset_path, split, input_motion_length):
         motion_list: list of motion path (sbj/view/emotion/level/sent)
     """
     processed_folder = os.path.join(dataset_path, dataset, 'processed')
+    video_id_to_sent_id = np.load(os.path.join(dataset_path, dataset, 'processed/video_id_to_sent_id.npy'), allow_pickle=True)[()]
         
     folder_path = os.path.join(processed_folder, 'split')
     if not os.path.exists(folder_path):
@@ -389,8 +386,9 @@ def load_data(dataset, dataset_path, split, input_motion_length):
     for video_id, num_frames in video_list:
         # check split and motion length
         sbj, view, emotion, level, sent = video_id.split('/')
+        sent_id = video_id_to_sent_id[video_id]
         if sbj not in MEAD_subject_split or \
-            sent not in MEAD_sentence_split or \
+            sent_id not in MEAD_sentence_split or \
             num_frames < input_motion_length:
             continue 
 
