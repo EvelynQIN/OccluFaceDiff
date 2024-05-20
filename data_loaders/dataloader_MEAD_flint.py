@@ -378,32 +378,26 @@ def load_data(dataset, dataset_path, split, input_motion_length):
         motion_list: list of motion path (sbj/view/emotion/level/sent)
     """
     processed_folder = os.path.join(dataset_path, dataset, 'processed')
-    motion_split_path = os.path.join(processed_folder, f'split/motion_list_{split}.npy')
-
-    if os.path.exists(motion_split_path):
-        motion_list = np.load(motion_split_path, allow_pickle=True)[()]
         
-    else:
-        folder_path = os.path.join(processed_folder, 'split')
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-        MEAD_subject_split, MEAD_sentence_split = get_split_MEAD(split)
-        with open(os.path.join(processed_folder, 'video_list_woimg.pkl'), 'rb') as f:
-            video_list = pickle.load(f)
-        motion_list = []
-        for video_id, num_frames in video_list:
-            # check split and motion length
-            sbj, view, emotion, level, sent = video_id.split('/')
-            if sbj not in MEAD_subject_split or \
-                sent not in MEAD_sentence_split or \
-                num_frames < input_motion_length:
-                continue 
+    folder_path = os.path.join(processed_folder, 'split')
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+    MEAD_subject_split, MEAD_sentence_split = get_split_MEAD(split)
+    with open(os.path.join(processed_folder, 'video_list_woimg.pkl'), 'rb') as f:
+        video_list = pickle.load(f)
+    motion_list = []
+    for video_id, num_frames in video_list:
+        # check split and motion length
+        sbj, view, emotion, level, sent = video_id.split('/')
+        if sbj not in MEAD_subject_split or \
+            sent not in MEAD_sentence_split or \
+            num_frames < input_motion_length:
+            continue 
 
-            motion_list.append((video_id, num_frames))
+        motion_list.append((video_id, num_frames))
 
-        motion_list = np.array(motion_list)
+    motion_list = np.array(motion_list)
 
-        np.save(motion_split_path, motion_list)
 
     return  motion_list
 
