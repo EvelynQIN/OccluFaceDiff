@@ -27,6 +27,8 @@ from external.Visual_Speech_Recognition_for_Multiple_Languages.lipreading.model 
 from external.Visual_Speech_Recognition_for_Multiple_Languages.dataloader.transform import Compose, Normalize, CenterCrop, SpeedRate, Identity
 from configparser import ConfigParser
 from utils.MediaPipeLandmarkLists import *
+from model.motion_prior import L2lVqVae
+from munch import Munch, munchify
 
 from diffusion.gaussian_diffusion import (
     GaussianDiffusion,
@@ -62,6 +64,17 @@ class DiffusionModel(GaussianDiffusion):
     ):
         super(DiffusionModel, self).__init__(**kwargs,)
     
+    def _load_flint_decoder(self):
+        ckpt_path = self.model_cfg.flint_ckpt_path
+        f = open(self.model_cfg.flint_config_path)
+        cfg = Munch.fromYAML(f)
+        flint = L2lVqVae(cfg)
+        flint.load_model_from_checkpoint(ckpt_path)
+        self.flint_decoder = flint.motion_decoder.to(self.device)
+        print(f"[FLINT Decoder] Load and Frozen.")
+        self.flint_decoder.requires_grad_(False)
+        self.flint_decoder.eval()
+    
     def _setup(self):
         self.train_stage = self.model_cfg.train_stage
         print(f"[Diffusion] Set up training stage {self.train_stage}")
@@ -69,20 +82,17 @@ class DiffusionModel(GaussianDiffusion):
         # at train stage 1, only optimize over mesh verts
         if self.train_stage == 1:
             self._create_flame()
+            self._load_flint_decoder()
 
             # set up loss weight
             self.loss_weight = {
-                'expr_loss': 1.0,
-                'pose_loss': 1.0,
-                'expr_vel_loss': 0.01,
-                'pose_vel_loss': 0.01,
-<<<<<<< HEAD
-                'lmk3d_loss': 0.2,
-=======
-                'lmk3d_loss': 0.5,
->>>>>>> b3293a90ae96ef3428a63cbe4f7497cfedcf53b1
-                'lmk2d_loss': 0,
-                'mouth_closure_loss': 0.1,
+                'expr_loss': 0.,
+                'pose_loss': 0.,
+                'latent_rec_loss': 1.0,
+                'mesh_verts_loss': 0.5,
+                'lmk3d_loss': 0.,
+                'lmk2d_loss': 0.01,
+                'mouth_closure_loss': 0.01,
                 'emotion_loss': 0,
                 'lipread_loss': 0
             }
@@ -91,6 +101,7 @@ class DiffusionModel(GaussianDiffusion):
         # at train stage 2, optimize over rendering loss
         elif self.train_stage == 2:
             self._create_flame()
+            self._load_flint_decoder()
             self._setup_renderer()
             self._load_evalnet()
 
@@ -292,27 +303,29 @@ class DiffusionModel(GaussianDiffusion):
         
     # loss computation between target and prediction where 2d images are available
     # @profile
-    def masked_l2(self, target, model_output, **model_kwargs):
-
-        bs, n, c = target.shape    
+    def masked_l2(self, target, model_output, **model_kwargs):  
 
         loss_dict = {}
         
-        # parse the output and target
-        jaw_pred, expr_pred = model_output[...,:6], model_output[...,6:]
-        jaw_gt, expr_gt = target[...,:6], target[...,6:]
-
-        # l2 loss on flame parameters w.r.t deca's output             
-        pose_loss = F.mse_loss(jaw_pred, jaw_gt)
-        expr_loss = F.mse_loss(expr_pred, expr_gt)
+        latent_rec_loss = F.mse_loss(target, model_output)
+        # flint decode
+        pred_flame = self.flint_decoder(model_output)   # (bs, n, 53)
+        bs, n = pred_flame.shape[:2]
         
-        # velocity loss
-        pose_vel_loss = torch.mean(
-            ((jaw_pred[:,1:] - jaw_pred[:,:-1]) - (jaw_gt[:,1:] - jaw_gt[:,:-1])) ** 2
-        )
-        expr_vel_loss = torch.mean(
-            ((expr_pred[:,1:] - expr_pred[:,:-1]) - (expr_gt[:,1:] - expr_gt[:,:-1])) ** 2
-        )
+        # parse the output and target
+        jaw_pred, expr_pred = pred_flame[...,self.model_cfg.n_exp:], pred_flame[...,:self.model_cfg.n_exp]
+
+         # l2 loss on flame parameters w.r.t deca's output             
+        pose_loss = F.mse_loss(jaw_pred, model_kwargs['jaw'])
+        expr_loss = F.mse_loss(expr_pred, model_kwargs['exp'])
+        
+        # # velocity loss
+        # pose_vel_loss = torch.mean(
+        #     ((jaw_pred[:,1:] - jaw_pred[:,:-1]) - (jaw_gt[:,1:] - jaw_gt[:,:-1])) ** 2
+        # )
+        # expr_vel_loss = torch.mean(
+        #     ((expr_pred[:,1:] - expr_pred[:,:-1]) - (expr_gt[:,1:] - expr_gt[:,:-1])) ** 2
+        # )
         
         # # jitter loss for temporal smoothness
         # pose_jitter = torch.mean((jaw_pred[:,2:] + jaw_pred[:,:-2] - jaw_pred[:,1:-1]) ** 2)
@@ -322,13 +335,11 @@ class DiffusionModel(GaussianDiffusion):
         shape = model_kwargs['shape'].view(bs*n, -1)
         R_aa = model_kwargs['global_pose'].view(bs*n, -1)
         expr_pred = expr_pred.reshape(bs*n, -1)
-        jaw_pred_aa = utils_transform.sixd2aa(jaw_pred.reshape(-1, 6))
-        pose_pred = torch.cat([R_aa, jaw_pred_aa], dim=-1)
+        pose_pred = torch.cat([R_aa, jaw_pred.reshape(bs*n, -1)], dim=-1)
         cam = model_kwargs['cam'].view(bs*n, -1)
 
-        expr_gt = expr_gt.reshape(bs*n, -1)
-        jaw_gt_aa = utils_transform.sixd2aa(jaw_gt.reshape(-1, 6))
-        pose_gt = torch.cat([R_aa, jaw_gt_aa], dim=-1)
+        expr_gt = model_kwargs['exp'].reshape(bs*n, -1)
+        pose_gt = torch.cat([R_aa, model_kwargs['jaw'].reshape(bs*n, -1)], dim=-1)
         
         # flame decoder
         verts_pred, lmk3d_pred = self.flame(
@@ -336,11 +347,16 @@ class DiffusionModel(GaussianDiffusion):
             expression_params=expr_pred,
             pose_params=pose_pred)
         
-        _, lmk3d_gt = self.flame(
+        verts_gt, lmk3d_gt = self.flame(
             shape_params=shape, 
             expression_params=expr_gt,
             pose_params=pose_gt)
         
+        # l2 on mesh verts
+        mesh_verts_loss = torch.mean(
+            torch.norm(verts_gt - verts_pred, p=2, dim=-1)
+        )
+
         # orthogonal projection
         lmk_pred = batch_orth_proj(lmk3d_pred, cam)[:, :, :2]
         lmk_pred[:, :, 1:] = -lmk_pred[:, :, 1:]
@@ -418,14 +434,16 @@ class DiffusionModel(GaussianDiffusion):
             lipread_loss = F.mse_loss(lip_features_gt, lip_features_pred)
         loss = self.loss_weight['lmk2d_loss'] * lmk2d_loss + self.loss_weight['mouth_closure_loss'] * mouth_closure_loss \
             + self.loss_weight['expr_loss'] * expr_loss + self.loss_weight['pose_loss'] * pose_loss \
-            + self.loss_weight['expr_vel_loss'] * expr_vel_loss + self.loss_weight['pose_vel_loss'] * pose_vel_loss \
             + self.loss_weight['lmk3d_loss'] * lmk3d_loss \
+            + self.loss_weight['latent_rec_loss'] * latent_rec_loss + self.loss_weight['mesh_verts_loss'] * mesh_verts_loss \
             + self.loss_weight['emotion_loss'] * emotion_loss + self.loss_weight['lipread_loss'] * lipread_loss
+        # + self.loss_weight['expr_vel_loss'] * expr_vel_loss + self.loss_weight['pose_vel_loss'] * pose_vel_loss \
+        
         loss_dict = {
             'expr_loss': expr_loss.detach().item(),
             'pose_loss': pose_loss.detach().item(),
-            'expr_vel_loss': expr_vel_loss.detach().item(),
-            'pose_vel_loss': pose_vel_loss.detach().item(),
+            'latent_rec_loss': latent_rec_loss.detach().item(),
+            'mesh_verts_loss': mesh_verts_loss.detach().item(),          
             'lmk3d_loss': lmk3d_loss.detach().item(),
             'lmk2d_loss': lmk2d_loss.detach().item(),
             'mouth_closure_loss': mouth_closure_loss.detach().item(),

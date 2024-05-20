@@ -29,6 +29,10 @@ from utils.renderer import SRenderY
 from skimage.io import imread
 import imageio
 import ffmpeg
+from munch import Munch, munchify
+from model.motion_prior import L2lVqVae
+from configs.config import get_cfg_defaults
+import h5py
 
 
 os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
@@ -55,8 +59,18 @@ class MotionTracker:
 
         self._create_flame()
         self._setup_renderer()
+
+        # set up flint 
+        ckpt_path = 'pretrained/MotionPrior/models/FLINTv2/checkpoints/model-epoch=0758-val/loss_total=0.113977119327.ckpt'
+        f = open('pretrained/MotionPrior/models/FLINTv2/cfg.yaml')
+        cfg = Munch.fromYAML(f)
+        self.flint = L2lVqVae(cfg)
+        self.flint.load_model_from_checkpoint(ckpt_path)
+        self.flint.freeze_model()
+        self.flint.to(self.device)
     
     def _create_flame(self):
+        self.model_cfg.n_exp = 100
         self.flame = FLAME_mediapipe(self.model_cfg).to(self.device)
         self.flametex = FLAMETex(self.model_cfg).to(self.device)    
     
@@ -85,44 +99,60 @@ class MotionTracker:
         
         # prepare vis data dict 
         shape = emica_split['shape'][:,:300]
-        exp = emica_split['exp'][:,:50]
+        exp = emica_split['exp'][:,:100]
         cam = emica_split['cam']
-        pose = torch.cat([emica_split['global_pose'], emica_split['jaw']], dim=-1)
-        
+        pose_gt = torch.cat([emica_split['global_pose'], emica_split['jaw']], dim=-1)
+
+        # run flint
+        inputs = torch.cat([exp, emica_split['jaw']], dim=-1).unsqueeze(0)  # (bs, 32, 53)
+        print(inputs.shape)
+        z = self.flint.motion_encoder(inputs)
+        print("z: ", z.shape)
+
+        rec = self.flint.motion_decoder(z)[0]
+        print("rec: ", rec.shape)
+        rec_exp = rec[...,:100]
+        rec_jaw = rec[...,100:]
+        rec_pose = torch.cat([emica_split['global_pose'], rec_jaw], dim=-1)
+
         # flame decoder
-        emica_verts, lmk_3d = self.flame(shape, exp, pose)
-        
+        emica_verts_gt, lmk_3d_gt = self.flame(shape, exp, pose_gt)
         # orthogonal projection
-        emica_trans_verts = batch_orth_proj(emica_verts, cam)
-        emica_trans_verts[:, :, 1:] = -emica_trans_verts[:, :, 1:]
+        emica_trans_verts_gt = batch_orth_proj(emica_verts_gt, cam)
+        emica_trans_verts_gt[:, :, 1:] = -emica_trans_verts_gt[:, :, 1:]
+
+        emica_verts_rec, lmk_3d_rec = self.flame(shape, rec_exp, rec_pose)
+        # orthogonal projection
+        emica_trans_verts_rec = batch_orth_proj(emica_verts_rec, cam)
+        emica_trans_verts_rec[:, :, 1:] = -emica_trans_verts_rec[:, :, 1:]
         
-        emica_lmk2d = batch_orth_proj(lmk_3d, cam)[:, :, :2]
-        emica_lmk2d[:, :, 1:] = -emica_lmk2d[:, :, 1:]
-        
-        
-        
+        lmk2d_rec = batch_orth_proj(lmk_3d_rec, cam)[:, :, :2]
+        lmk2d_rec[:, :, 1:] = -lmk2d_rec[:, :, 1:]
+
         # # render
         if self.use_tex:
             albedo = self.flametex(emica_split['tex']).detach()
             light = emica_split['light']
-            emica_render_images = self.render(emica_verts, emica_trans_verts, albedo, light, background=motion_split['images'])['images']
+            emica_render_images = self.render(emica_verts_gt, emica_trans_verts_gt, albedo, light, background=motion_split['images'])['images']
+            flint_render_images = self.render(emica_verts_rec, emica_trans_verts_rec, albedo, light, background=motion_split['images'])['images']
+
         else:
-            emica_render_images = self.render.render_shape(emica_verts, emica_trans_verts, images=motion_split['images'])
+            emica_render_images = self.render.render_shape(emica_verts_gt, emica_trans_verts_gt, images=motion_split['images'])
+            flint_render_images = self.render.render_shape(emica_verts_rec, emica_trans_verts_rec, images=motion_split['images'])
         
         # landmarks vis
-        lmk2d_vis_gt = utils_visualize.tensor_vis_landmarks(motion_split['images'], motion_split['lmk_2d'])
-        lmk2d_vis_emica = utils_visualize.tensor_vis_landmarks(motion_split['images'], emica_lmk2d)
+        lmk2d_vis = utils_visualize.tensor_vis_landmarks(motion_split['images'], lmk2d_rec, motion_split['lmk_2d'])
         
 
         gt_img = motion_split['images'] * (motion_split['img_masks'].unsqueeze(1))
 
         # frame_id = str(frame_id).zfill(5)
-        for i in range(emica_lmk2d.shape[0]):
+        for i in range(lmk2d_rec.shape[0]):
             vis_dict = {
                 'gt_img': gt_img[i].detach().cpu(),   # (3, 224, 224)
                 'emica': emica_render_images[i].detach().cpu(),  # (3, 224, 224)
-                'lmk_gt': lmk2d_vis_gt[i].detach().cpu(),  # (3, 224, 224)
-                'lmk_emica': lmk2d_vis_emica[i].detach().cpu()
+                'flint': flint_render_images[i].detach().cpu(),  # (3, 224, 224)
+                'lmk2d': lmk2d_vis[i].detach().cpu()
             }
             grid_image = self.visualize(vis_dict)
             if self.with_audio:
@@ -155,16 +185,18 @@ class MotionTracker:
         # make prediction by split the whole sequences into chunks due to memory limit
         self.num_frames = batch['lmk_2d'].shape[0]
         vid = test_video_id.split('/')
-        v_name = '_'.join(vid) + '_test_crop'
+        v_name = '_'.join(vid) + '_test_flint'
         # set the output writer
         if self.with_audio:
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            self.writer = cv2.VideoWriter(v_name+'.mp4', fourcc, self.fps, (self.image_size*4, self.image_size))
+            self.writer = cv2.VideoWriter(v_name+'_v2.mp4', fourcc, self.fps, (self.image_size*4, self.image_size))
         else:
-            self.writer = imageio.get_writer(v_name + '.gif', mode='I')
+            self.writer = imageio.get_writer(v_name + '_v2.gif', mode='I')
         
         for start_id in range(0, self.num_frames, self.sld_wind_size):
             print(f"Processing frame starting from {start_id}")
+            if self.num_frames - start_id < self.sld_wind_size:
+                break
             motion_split = {}
             for key in batch:
                 motion_split[key] = batch[key][start_id:start_id+self.sld_wind_size].to(self.device)
@@ -189,8 +221,10 @@ class MotionTracker:
 def main():
     pretrained_args = get_cfg_defaults()
     test_video_id = 'M003/front/contempt/level_1/001'
-    filename = 'cropped_frames.hdf5'
+    img_folder = 'dataset/mead_25fps/processed/images'
+    filename = os.path.join(img_folder, test_video_id, 'cropped_frames.hdf5')
     data_dict = {}
+
     with h5py.File(filename, "r") as f:
         for k in f.keys():
             print(f"shape of {k} : {f[k].shape}")
@@ -219,10 +253,10 @@ def main():
     
     motion_tracker = MotionTracker(
         pretrained_args.model,
-        sld_wind_size=10, 
+        sld_wind_size=32, 
         device='cuda', 
-        with_audio=True,
-        use_tex=True)
+        with_audio=False,
+        use_tex=False)
     
     motion_tracker.run_vis(data_dict, emica_code, test_video_id)
 

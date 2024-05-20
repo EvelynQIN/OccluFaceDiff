@@ -6,10 +6,10 @@ import numpy as np
 
 import torch
 
-from data_loaders.dataloader_MEAD import get_dataloader, load_data, TrainMeadDataset
+from data_loaders.dataloader_MEAD_flint import get_dataloader, load_data, TrainMeadDataset
 
 # from runner.train_mlp import train_step, val_step
-from runner.training_loop import TrainLoop
+from runner.training_loop_flint import TrainLoop
 
 from utils import dist_util
 
@@ -58,7 +58,7 @@ def main():
     # init wandb log
     if args.wandb_log:
         wandb.init(
-            project="face_animation_from_MEAD",
+            project="face_animation_from_MEAD_flint",
             name=args.arch,
             config=args,
             settings=wandb.Settings(start_method="fork"),

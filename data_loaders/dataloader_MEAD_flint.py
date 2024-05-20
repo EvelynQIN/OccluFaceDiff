@@ -74,16 +74,6 @@ class TrainMeadDataset(Dataset):
         with h5py.File(lmk_path, "r") as f:
             lmk_2d = torch.from_numpy(f['lmk_2d'][start_id:start_id+self.input_motion_length]).float()
 
-        # # validity check
-        # landmark_validity = np.ones((len(lmk_2d), 1), dtype=np.float32)
-        # for i in range(len(lmk_2d)): 
-        #     if len(lmk_2d[i]) == 0: # dropped detection
-        #         lmk_2d[i] = np.zeros((MEDIAPIPE_LANDMARK_NUMBER, 2))
-        #         landmark_validity[i] = 0.
-        #     else: # multiple faces detected or one face detected
-        #         lmk_2d[i] = lmk_2d[i][0] # just take the first one for now
-        # lmk_2d = np.stack(lmk_2d, axis=0)
-
         if not self.use_iris:
             lmk_2d = lmk_2d[:,:468] # exclude pupil parts
 
@@ -96,16 +86,6 @@ class TrainMeadDataset(Dataset):
         with h5py.File(img_path, "r") as f:
             image = torch.from_numpy(f['images'][start_id:start_id+self.input_motion_length]).float()
             # img_mask = torch.from_numpy(f['img_masks'][start_id:start_id+self.input_motion_length]).float()
-
-        # # validity check
-        # landmark_validity = np.ones((len(lmk_2d), 1), dtype=np.float32)
-        # for i in range(len(lmk_2d)): 
-        #     if len(lmk_2d[i]) == 0: # dropped detection
-        #         lmk_2d[i] = np.zeros((MEDIAPIPE_LANDMARK_NUMBER, 2))
-        #         landmark_validity[i] = 0.
-        #     else: # multiple faces detected or one face detected
-        #         lmk_2d[i] = lmk_2d[i][0] # just take the first one for now
-        # lmk_2d = np.stack(lmk_2d, axis=0)
 
         return image
 
@@ -146,12 +126,6 @@ class TrainMeadDataset(Dataset):
                     code_dict[k] = torch.from_numpy(f[k][0,start_id:start_id+self.input_motion_length]).float()
         code_dict['shape'] = code_dict['shape'][:,:self.n_shape]
         code_dict['exp'] = code_dict['exp'][:,:self.n_exp]
-
-        # compose target 
-        jaw_6d = utils_transform.aa2sixd(code_dict['jaw'])
-        code_dict['target'] = torch.cat([jaw_6d, code_dict['exp']], dim=-1)
-        code_dict.pop('exp', None)
-        code_dict.pop('jaw', None)
 
         return code_dict 
     
