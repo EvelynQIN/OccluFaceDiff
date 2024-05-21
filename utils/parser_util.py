@@ -564,8 +564,8 @@ def add_test_options(parser):
     group.add_argument(
         "--sent",
         default=None,
-        type=str,
-        help="sent id in MEAD [3 digit].",
+        type=int,
+        help="sent id in MEAD [1 digit].",
     )
 
     group.add_argument(

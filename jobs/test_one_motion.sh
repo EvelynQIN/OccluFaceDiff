@@ -1,1 +1,1 @@
-python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT/model_19.pt --subject_id 'M003' --level 'level_2' --sent 028 --input_motion_length 64 --sld_wind_size 32 --exp_name non_occ --vis
+python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit/model_27.pt --subject_id 'M003' --level 'level_2' --sent 1 --input_motion_length 64 --sld_wind_size 32 --exp_name non_occ --vis

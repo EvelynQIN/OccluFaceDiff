@@ -5,7 +5,7 @@ dataset_path: "./dataset"
 weight_decay: 0.001
 batch_size: 16
 gradient_accumulation_steps: 4
-lr: 0.0001
+lr: 0.00005
 cosine_scheduler: True
 warmup_steps: 100
 device: 0 # -1 if using cpu for test
@@ -19,8 +19,8 @@ input_motion_length: 64
 cond_mask_prob: 0
 audio_mask_prob: 0.1
 fps: 25
-freeze_audio_encoder_interval: 6
-# resume_checkpoint: checkpoints/Transformer_768d_cat_mediapipelmk_FLINT/model_19.pt
+freeze_audio_encoder_interval: 4
+resume_checkpoint: checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit/model_27.pt
 # flame_params
 n_shape: 300
 n_exp: 100 
@@ -35,7 +35,7 @@ save_interval: 1
 log_interval: 1 
 
 #model architecture
-arch: "diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit" 
+arch: "diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc" 
 latent_dim: 768
 dropout: 0.1
 

@@ -157,15 +157,18 @@ class TrainLoop:
             self.epoch = epoch
 
             # focus on visual signals without mouth & all occ type
-            if epoch % self.freeze_audio_encoder_interval < 3:
+            if epoch % self.freeze_audio_encoder_interval < (self.freeze_audio_encoder_interval // 2):
                 self.model.freeze_wav2vec()
                 self.occlusion_regions_prob = {
                     'all': 0.3,
+                    'eye': 0.3,
+                    'left': 0.3,
+                    'right': 0.3,
                     'left_eye': 0.3,
                     'right_eye': 0.3,
-                    'mouth': 0.3,
-                    'random': 0.3,
-                    'contour': 0.3
+                    'mouth': 0.2,
+                    'random': 0.4,
+                    'contour': 0.4
                 }
                 self.mask_all_prob = 0.15
                 self.mask_frame_prob = 0.15
@@ -173,7 +176,10 @@ class TrainLoop:
             else:
                 self.model.unfreeze_wav2vec()
                 self.occlusion_regions_prob = {
-                    'all': 0.2,
+                    'all': 0.3,
+                    'eye': 0.,
+                    'left': 0.15,
+                    'right': 0.15,
                     'left_eye': 0.,
                     'right_eye': 0.,
                     'mouth': 0.8,
