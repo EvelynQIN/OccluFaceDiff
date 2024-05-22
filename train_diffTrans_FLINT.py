@@ -116,7 +116,7 @@ def main():
         args.dataset_path,
         val_processed_path,
         args.input_motion_length,
-        10,
+        20,
         args.no_normalization,
         args.fps,
         args.n_shape,

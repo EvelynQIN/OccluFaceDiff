@@ -26,7 +26,6 @@ class FaceTransformerFLINT(nn.Module):
         self.tag = 'FaceTransformerFLINT_non_diffusion'
         self.input_feats = 128  # latent dim of the FLINT motion prior
         self.dataset = dataset
-        self.use_mask = use_mask
         self.latent_dim_condition = latent_dim // 3
         self.latent_dim_transformer_encoder = latent_dim
         self.latent_dim_transformer_decoder = latent_dim // 2

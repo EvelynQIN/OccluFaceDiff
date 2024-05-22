@@ -62,7 +62,7 @@ def train_pureTrans_model(args, model_cfg, train_loader, valid_loader):
     steps_per_epoch = len(train_loader) // args.gradient_accumulation_steps
     resume_epoch = 0
     resume_step = 0
-    num_steps = args.num_epochs * steps_per_epoch
+    num_steps = args.num_epoch * steps_per_epoch
     train_stage = model_cfg.train_stage
     
     model = FaceTransformerFLINT(
@@ -119,12 +119,11 @@ def train_pureTrans_model(args, model_cfg, train_loader, valid_loader):
     if args.cosine_scheduler:
         scheduler =  WarmupCosineSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=num_steps)
     
-    nb_iter = 0
     batch_size = args.batch_size
     lr = args.lr
     loss_keys = None 
 
-    train_loss = TransformerLoss(model_cfg)
+    train_loss = TransformerLoss(model_cfg, device)
 
     for epoch in tqdm(range(resume_epoch, resume_epoch + args.num_epoch)):
         model.train()
@@ -176,13 +175,13 @@ def train_pureTrans_model(args, model_cfg, train_loader, valid_loader):
             target = flint.motion_encoder(motion_target)  # (bs, n//8, 128)
 
             grad_update = True if local_step % args.gradient_accumulation_steps == 0 else False
-            model_output = model(batch)
+            model_output = model(**batch)
 
-            loss, loss_dict = train_loss.compute_loss(target, model_output, batch)
+            loss, loss_dict = train_loss.compute_loss(target, model_output, **batch)
             
             if loss_keys is None:
                 loss_keys = loss_dict.keys()
-            loss = loss_dict['loss'] / args.gradient_accumulation_steps
+            loss = loss / args.gradient_accumulation_steps
             loss.backward()
 
             if grad_update:
@@ -191,14 +190,13 @@ def train_pureTrans_model(args, model_cfg, train_loader, valid_loader):
                 lr = optimizer.param_groups[-1]['lr']
                 optimizer.zero_grad()
                 if args.wandb_log:
-                    loss_dict["lr"] = lr
-                    loss_dict["epoch"] = epoch
                     wandb_log_dict = {}
                     for k, v in loss_dict.items():
                         wandb_log_dict["train/"+k] = v
+                    wandb_log_dict['lr'] = lr
+                    wandb_log_dict['epoch'] = epoch
                     wandb.log(wandb_log_dict)
             local_step += 1
-        
         if epoch % args.log_interval == 0:
             model.eval()
             print("start eval ...")
@@ -209,20 +207,20 @@ def train_pureTrans_model(args, model_cfg, train_loader, valid_loader):
             with torch.no_grad():
                 for batch in tqdm(valid_loader):
                     eval_steps += 1
-                    batch['lmk_mask'] = occluder.get_lmk_occlusion_mask(batch['lmk_2d'][0]).unsqueeze(0).repeat(self.batch_size, 1, 1)   # (bs, t, v)
+                    batch['lmk_mask'] = occluder.get_lmk_occlusion_mask(batch['lmk_2d'][0]).unsqueeze(0).repeat(batch_size, 1, 1)   # (bs, t, v)
                     for k in batch:
                         batch[k] = batch[k].to(device)
                     motion_target = torch.cat([batch['exp'], batch['jaw']], dim=-1)
                     target = flint.motion_encoder(motion_target)  # (bs, n//8, 128)
-                    model_output = model(batch)
-                    _, loss_dict = train_loss.compute_loss(target, model_output, batch)
+                    model_output = model(**batch)
+                    _, loss_dict = train_loss.compute_loss(target, model_output, **batch)
                     for k in val_loss:
                         val_loss[k] +=  loss_dict[k]
                 for k in val_loss:
                     val_loss[k] /= eval_steps
                 if args.wandb_log:   
-                    loss_dict["epoch"] = epoch
                     wandb_log_dict = {}
+                    wandb_log_dict['val/epoch'] = epoch
                     for k, v in val_loss.items():
                         wandb_log_dict["val/"+k] = v
                     wandb.log(wandb_log_dict)

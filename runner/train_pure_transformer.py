@@ -17,11 +17,13 @@ from configparser import ConfigParser
 from utils.MediaPipeLandmarkLists import *
 from model.motion_prior import L2lVqVae
 from munch import Munch, munchify
+from diffusion.diffusion_model import  mouth_closure_lmk_loss
 
 class TransformerLoss:
-    def __init__(self, model_cfg):
+    def __init__(self, model_cfg, device):
         self.model_cfg = model_cfg
-        self._set_up()
+        self.device = device
+        self._setup()
     
     def _load_flint_decoder(self):
         ckpt_path = self.model_cfg.flint_ckpt_path
