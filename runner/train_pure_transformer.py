@@ -1,15 +1,3 @@
-"""
-This code started out as a PyTorch port of Ho et al's diffusion models:
-https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/diffusion_utils_2.py
-
-Docstrings have been added, as well as DDIM sampling and a new collection of beta schedules.
-"""
-# MIT License
-# Copyright (c) 2021 OpenAI
-#
-# This code is based on https://github.com/GuyTevet/motion-diffusion-model
-# Copyright (c) Meta Platforms, Inc. All Rights Reserved
-from memory_profiler import profile
 import torch
 import torch.nn.functional as F
 from utils import utils_transform
@@ -30,39 +18,10 @@ from utils.MediaPipeLandmarkLists import *
 from model.motion_prior import L2lVqVae
 from munch import Munch, munchify
 
-from diffusion.gaussian_diffusion import (
-    GaussianDiffusion,
-    LossType,
-    ModelMeanType,
-    ModelVarType,
-)
-
-def normalize(value, mean, std):
-    return (value - mean) / (std + 1e-8)
-
-def denormalize(value, mean, std):
-    return  value * std + mean
-
-def mouth_closure_lmk_loss(pred_lmks, gt_lmks):
-    
-    diff_pred = (pred_lmks[:, UPPER_LIP_EM, :] - pred_lmks[:, LOWER_LIP_EM, :]).abs().sum(2)
-    diff_gt = (gt_lmks[:, UPPER_LIP_EM, :] - gt_lmks[:, LOWER_LIP_EM, :]).abs().sum(2)
-    closure_loss = torch.mean(torch.abs(diff_gt - diff_pred))
-    return closure_loss
-
-def eye_closure_lmk_loss(pred_lmks, gt_lmks):
-    diff_pred = (pred_lmks[:, UPPER_EYELIDS_EM, :2] - pred_lmks[:, LOWER_EYELIDS_EM, :2]).abs().sum(2)
-    diff_gt = (gt_lmks[:, UPPER_EYELIDS_EM, :2] - gt_lmks[:, LOWER_EYELIDS_EM, :2]).abs().sum(2)
-    closure_loss = torch.mean(torch.abs(diff_gt - diff_pred))
-    return closure_loss
-
-
-class DiffusionModel(GaussianDiffusion):
-    def __init__(
-        self,
-        **kwargs,
-    ):
-        super(DiffusionModel, self).__init__(**kwargs,)
+class TransformerLoss:
+    def __init__(self, model_cfg):
+        self.model_cfg = model_cfg
+        self._set_up()
     
     def _load_flint_decoder(self):
         ckpt_path = self.model_cfg.flint_ckpt_path
@@ -74,7 +33,7 @@ class DiffusionModel(GaussianDiffusion):
         print(f"[FLINT Decoder] Load and Frozen.")
         self.flint_decoder.requires_grad_(False)
         self.flint_decoder.eval()
-    
+
     def _setup(self):
         self.train_stage = self.model_cfg.train_stage
         print(f"[Diffusion] Set up training stage {self.train_stage}")
@@ -88,16 +47,16 @@ class DiffusionModel(GaussianDiffusion):
             self.loss_weight = {
                 'expr_loss': 0.,
                 'pose_loss': 0.,
-                'latent_rec_loss': 1.,
+                'latent_rec_loss': 1.0,
                 'mesh_verts_loss': 100.,
                 'lmk3d_loss': 0.,
-                'lmk2d_loss': 0.5,
+                'lmk2d_loss': 0.05,
                 'mouth_closure_loss': 0.01,
                 'emotion_loss': 0,
                 'lipread_loss': 0
             }
             print(f"[Diffusion] Loss weights used: {self.loss_weight}")
-        
+
         # at train stage 2, optimize over rendering loss
         elif self.train_stage == 2:
             self._create_flame()
@@ -107,31 +66,25 @@ class DiffusionModel(GaussianDiffusion):
 
             # set up loss weight
             self.loss_weight = {
-                'expr_loss': 1.0,
-                'pose_loss': 1.0,
-                'expr_vel_loss': 0.01,
-                'pose_vel_loss': 0.01,
-                'lmk3d_loss': 0.1,
-                'lmk2d_loss': 0.2,
-                'mouth_closure_loss': 0.5,
-                'emotion_loss': 0.0005,
-                'lipread_loss': 0.005
+                'expr_loss': 0.,
+                'pose_loss': 0.,
+                'latent_rec_loss': 0.,
+                'mesh_verts_loss': 10.,
+                'lmk3d_loss': 0.,
+                'lmk2d_loss': 1.,
+                'mouth_closure_loss': 0.01,
+                'emotion_loss': 0.1,
+                'lipread_loss': 0.5
             }
             print(f"[Diffusion] Loss weights used: {self.loss_weight}")
         else:
             raise ValueError(f"Traing stage[ {self.train_stage}] not valid!")
-
+    
     def _create_flame(self):
         print(f"[Diffusion] Load FLAME.")
         self.flame = FLAME_mediapipe(self.model_cfg).to(self.device)
         if self.train_stage == 2 and self.model_cfg.use_texture:
             self.flametex = FLAMETex(self.model_cfg).to(self.device)
-        
-        # flame_vmask_path = "flame_2020/FLAME_masks.pkl"
-        # with open(flame_vmask_path, 'rb') as f:
-        #     flame_v_mask = pickle.load(f, encoding="latin1")
-
-        # self.lip_v_mask = torch.from_numpy(flame_v_mask['lips']).to(self.device)
 
     def _setup_renderer(self):
         print(f"[Diffusion] Set up Renderer.")
@@ -143,17 +96,6 @@ class DiffusionModel(GaussianDiffusion):
         mask = imread(self.model_cfg.face_eye_mask_path).astype(np.float32)/255. 
         mask = torch.from_numpy(mask[:,:,0])[None,None,:,:].contiguous()
         self.uv_face_eye_mask = F.interpolate(mask, [self.model_cfg.uv_size, self.model_cfg.uv_size]).to(self.device)
-        # mask = imread(self.model_cfg.face_mask_path).astype(np.float32)/255.
-        # mask = torch.from_numpy(mask[:,:,0])[None,None,:,:].contiguous()
-        # self.uv_face_mask = F.interpolate(mask, [self.model_cfg.uv_size, self.model_cfg.uv_size]).to(self.device)
-        # # TODO: displacement correction
-        # fixed_dis = np.load(self.model_cfg.fixed_displacement_path)
-        # self.fixed_uv_dis = torch.tensor(fixed_dis).float().to(self.device)
-        # mean texture
-        # mean_texture = imread(self.model_cfg.mean_tex_path).astype(np.float32)/255.; mean_texture = torch.from_numpy(mean_texture.transpose(2,0,1))[None,:,:,:].contiguous()
-        # self.mean_texture = F.interpolate(mean_texture, [self.model_cfg.uv_size, self.model_cfg.uv_size]).to(self.device)
-        # # dense mesh template, for save detail mesh
-        # self.dense_template = np.load(self.model_cfg.dense_template_path, allow_pickle=True, encoding='latin1').item()
     
     def _load_evalnet(self):
  
@@ -303,7 +245,7 @@ class DiffusionModel(GaussianDiffusion):
         
     # loss computation between target and prediction where 2d images are available
     # @profile
-    def masked_l2(self, target, model_output, **model_kwargs):  
+    def compute_loss(self, target, model_output, **model_kwargs):  
 
         loss_dict = {}
         
@@ -318,18 +260,6 @@ class DiffusionModel(GaussianDiffusion):
          # l2 loss on flame parameters w.r.t deca's output             
         pose_loss = F.mse_loss(jaw_pred, model_kwargs['jaw'])
         expr_loss = F.mse_loss(expr_pred, model_kwargs['exp'])
-        
-        # # velocity loss
-        # pose_vel_loss = torch.mean(
-        #     ((jaw_pred[:,1:] - jaw_pred[:,:-1]) - (jaw_gt[:,1:] - jaw_gt[:,:-1])) ** 2
-        # )
-        # expr_vel_loss = torch.mean(
-        #     ((expr_pred[:,1:] - expr_pred[:,:-1]) - (expr_gt[:,1:] - expr_gt[:,:-1])) ** 2
-        # )
-        
-        # # jitter loss for temporal smoothness
-        # pose_jitter = torch.mean((jaw_pred[:,2:] + jaw_pred[:,:-2] - jaw_pred[:,1:-1]) ** 2)
-        # expr_jitter = torch.mean((expr_pred[:,2:] + expr_pred[:,:-2] - expr_pred[:,1:-1]) ** 2)
         
         # batch the output
         shape = model_kwargs['shape'].view(bs*n, -1)
@@ -449,7 +379,7 @@ class DiffusionModel(GaussianDiffusion):
             'mouth_closure_loss': mouth_closure_loss.detach().item(),
             # 'eye_closure_loss': eye_closure_loss.detach().item(),
             # 'photometric_loss': photometric_loss.detach().item(),
-            'loss': loss
+            'loss': loss.detach().item(),
         }
 
         if self.train_stage == 2:
@@ -457,77 +387,4 @@ class DiffusionModel(GaussianDiffusion):
                 'emotion_loss': emotion_loss.detach().item(),
                 'lipread_loss' : lipread_loss.detach().item(),})
 
-        return loss_dict
-
-    def training_losses(
-        self, model, x_start, t, model_kwargs=None, noise=None, dataset=None
-    ):
-        # print("model_kwargs = ", model_kwargs)
-        if model_kwargs is None:
-            model_kwargs = {}
-        if noise is None:
-            noise = torch.randn_like(x_start)
-        x_t = self.q_sample(x_start, t, noise=noise)
-
-        terms = {}
-
-        if self.loss_type == LossType.KL or self.loss_type == LossType.RESCALED_KL:
-            terms["loss"] = self._vb_terms_bpd(
-                model=model,
-                x_start=x_start,
-                x_t=x_t,
-                t=t,
-                clip_denoised=False,
-                model_kwargs=model_kwargs,
-            )["output"]
-            if self.loss_type == LossType.RESCALED_KL:  
-                terms["loss"] *= self.num_timesteps
-        elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
-            model_output = model(x_t, self._scale_timesteps(t), **model_kwargs)
-
-            if self.model_var_type in [
-                ModelVarType.LEARNED,
-                ModelVarType.LEARNED_RANGE,
-            ]:
-                B, C = x_t.shape[:2]
-                assert model_output.shape == (B, C * 2, *x_t.shape[2:])
-                model_output, model_var_values = torch.split(model_output, C, dim=1)
-                # Learn the variance using the variational bound, but don't let
-                # it affect our mean prediction.
-                frozen_out = torch.cat([model_output.detach(), model_var_values], dim=1)
-                terms["vb"] = self._vb_terms_bpd(
-                    model=lambda *args, r=frozen_out: r,
-                    x_start=x_start,
-                    x_t=x_t,
-                    t=t,
-                    clip_denoised=False,
-                )["output"]
-                if self.loss_type == LossType.RESCALED_MSE:
-                    # Divide by 1000 for equivalence with initial implementation.
-                    # Without a factor of 1/1000, the VB term hurts the MSE term.
-                    terms["vb"] *= self.num_timesteps / 1000.0
-
-            target = {
-                ModelMeanType.PREVIOUS_X: self.q_posterior_mean_variance(
-                    x_start=x_start, x_t=x_t, t=t
-                )[0],
-                ModelMeanType.START_X: x_start,
-                ModelMeanType.EPSILON: noise,
-            }[self.model_mean_type]
-
-            assert model_output.shape == target.shape == x_start.shape
-
-            
-            terms.update(self.masked_l2(
-                target,
-                model_output,
-                **model_kwargs
-            ))
-
-            terms["loss"] += terms.get("vb", 0.0)
-
-
-        else:
-            raise NotImplementedError(self.loss_type)
-
-        return terms
+        return loss, loss_dict

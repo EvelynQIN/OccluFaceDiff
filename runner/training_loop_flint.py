@@ -159,7 +159,7 @@ class TrainLoop:
             # focus on visual signals without mouth & all occ type
             if epoch % self.freeze_audio_encoder_interval < (self.freeze_audio_encoder_interval // 2):
                 self.model.freeze_wav2vec()
-                self.occlusion_regions_prob = {
+                self.occluder.occlusion_regions_prob = {
                     'all': 0.3,
                     'eye': 0.3,
                     'left': 0.3,
@@ -170,12 +170,12 @@ class TrainLoop:
                     'random': 0.4,
                     'contour': 0.4
                 }
-                self.mask_all_prob = 0.15
-                self.mask_frame_prob = 0.15
+                self.occluder.mask_all_prob = 0.15
+                self.occluder.mask_frame_prob = 0.15
             # focus on combining audio signals with only mouth & all occ type
             else:
                 self.model.unfreeze_wav2vec()
-                self.occlusion_regions_prob = {
+                self.occluder.occlusion_regions_prob = {
                     'all': 0.3,
                     'eye': 0.,
                     'left': 0.15,
@@ -186,8 +186,8 @@ class TrainLoop:
                     'random': 0.,
                     'contour': 0.3
                 }
-                self.mask_all_prob = 0.3
-                self.mask_frame_prob = 0.2
+                self.occluder.mask_all_prob = 0.3
+                self.occluder.mask_frame_prob = 0.2
 
             for batch in tqdm(self.train_loader):
                 local_step += 1

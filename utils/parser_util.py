@@ -114,13 +114,6 @@ def add_transformer_options(parser):
     )
 
     group.add_argument(
-        "--lmk3d_dim", default=68*3, type=int, help="3d lmks signal feature dimension"
-    )
-    
-    group.add_argument(
-        "--lmk2d_dim", default=68*2, type=int, help="2d lmks signal feature dimension"
-    )
-    group.add_argument(
         "--num_enc_layers", default=1, type=int, help="Number of encoder layers."
     )
     group.add_argument(
@@ -604,6 +597,14 @@ def train_mlp_args():
     add_data_options(parser)
     add_mlp_options(parser)
     add_diffusion_options(parser)
+    add_training_options(parser)
+    return parser.parse_args()
+
+def train_pureTrans_args():
+    parser = ArgumentParser()
+    add_base_options(parser)
+    add_data_options(parser)
+    add_transformer_options(parser)
     add_training_options(parser)
     return parser.parse_args()
 
