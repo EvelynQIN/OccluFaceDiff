@@ -1,1 +1,1 @@
-python3 predict.py --model_path checkpoints/Transformer_512d_cat_mediapipelmk/model_50.pt --save_folder vis_result --exp_name non_occ --video_path dataset/in_the_wild/videos/male_2_speak.mp4 --input_motion_length 64 --sld_wind_size 25 --with_audio
+python3 predict.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --save_folder vis_result --exp_name non_occ --video_path dataset/in_the_wild/videos/01-01-03-01-02-02-02.mp4 --input_motion_length 64 --sld_wind_size 50 --mode both

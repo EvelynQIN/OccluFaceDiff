@@ -305,21 +305,28 @@ def bbox_from_lmk(lmk_2d, idx, scale_x=None, scale_y=None):
 
 def get_test_img_occlusion_mask(img_mask, lmk_2d, occlusion_type):
     n, h, w = img_mask.shape
-    sid = torch.randint(low=0, high=n-30, size=(1,))[0]
-    occ_num_frames = torch.randint(low=30, high=n-sid+1, size=(1,))[0]
-    frame_id = torch.arange(sid, sid+occ_num_frames)
+    
     if occlusion_type == 'non_occ':
         return img_mask
-    elif occlusion_type == 'all':
+    
+    if n < 40:
+        sid = 0
+    sid = torch.randint(low=0, high=n-40, size=(1,))[0] if n > 40 else 0
+    occ_num_frames = torch.randint(low=min(40, n-sid), high=n-sid+1, size=(1,))[0]
+    frame_id = torch.arange(sid, sid+occ_num_frames)
+
+    if occlusion_type == 'all':
         img_mask[:,:,:] = 0
+    elif occlusion_type == 'missing_frames':
+        img_mask[frame_id,:,:] = 0
     elif occlusion_type == 'left_eye':
         idx = left_eye_eyebrow_landmark_indices()
         left, right, top, bottom = bbox_from_lmk(lmk_2d, idx)
-        img_mask[:,top:bottom, left:right] = 0
+        img_mask[frame_id,top:bottom, left:right] = 0
     elif occlusion_type == 'right_eye':
         idx = right_eye_eyebrow_landmark_indices()
         left, right, top, bottom = bbox_from_lmk(lmk_2d, idx)
-        img_mask[:,top:bottom, left:right] = 0
+        img_mask[frame_id,top:bottom, left:right] = 0
     elif occlusion_type == 'mouth':
         idx = mouth_landmark_indices()
         left, right, top, bottom = bbox_from_lmk(lmk_2d, idx)
@@ -328,13 +335,22 @@ def get_test_img_occlusion_mask(img_mask, lmk_2d, occlusion_type):
         eye_idx = np.concatenate([left_eye_eyebrow_landmark_indices(),right_eye_eyebrow_landmark_indices()])
         eye_idx = torch.from_numpy(eye_idx).long()
         bottom = torch.max(lmk_2d[:,eye_idx, 1])
-        img_mask[:,:bottom,:] = 0
+        img_mask[frame_id,:bottom,:] = 0
     elif occlusion_type == 'bottom':
-        img_mask[:,112:,:] = 0
+        img_mask[frame_id,112:,:] = 0
     elif occlusion_type == 'left':
-        img_mask[:,:,:112] = 0
+        img_mask[frame_id,:,:112] = 0
     elif occlusion_type == 'right':
-        img_mask[:,:,112:] = 0
+        img_mask[frame_id,:,112:] = 0
+    elif occlusion_type == 'asym':
+        if np.random.rand() < 0.5:
+            img_mask[frame_id,:,:112] = 0
+        else:
+            img_mask[frame_id,:,112:] = 0
     elif occlusion_type == 'downsample_frames':
         img_mask[::3,:,:] = 0
+    elif occlusion_type == 'random':
+        x, y = torch.randint(low=20, high = 170, size=(2,))
+        dx, dy = torch.randint(low=100, high=220, size=(2,))
+        img_mask[frame_id, x:x+dx, y:y+dy] = 0
     return img_mask

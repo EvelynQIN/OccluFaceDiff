@@ -12,13 +12,17 @@ import cv2
 from loguru import logger
 from transformers import Wav2Vec2Processor
 import librosa
-from model.wav2vec import Wav2Vec2Model
-from mmseg.apis import inference_model, init_model
+# from model.wav2vec import Wav2Vec2Model
+# from mmseg.apis import inference_model, init_model
 import h5py
 from utils.mediapipe_landmark_detection import MediapipeDetector
 from model.deca import EMOCA
 from collections import defaultdict
 from utils import utils_transform
+
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 
 class VideoProcessor:
     def __init__(self, model_cfg, config=None, data_folder='dataset/in_the_wild'):
@@ -34,13 +38,20 @@ class VideoProcessor:
         self.face_detector = MediapipeDetector()
         logger.info("Use Mediapipe Predictor for 2d LMK Detection.")
         
-        # image segmentator 
-        config_file = 'face_segmentation/deeplabv3plus_r101_512x512_face-occlusion.py'
-        checkpoint_file = 'face_segmentation/deeplabv3plus_r101_512x512_face-occlusion-93ec6695.pth'
-        self.seg_model = init_model(config_file, checkpoint_file, device=self.device)
-        logger.info("Use mmseg for Face Segmentation.")
+        # Create a image segmenter instance with the video mode for mediapipe
+        model_path = 'face_segmentation/selfie_multiclass_256x256.tflite'
+        BaseOptions = mp.tasks.BaseOptions
+        base_options = BaseOptions(model_asset_path=model_path)
+        self.ImageSegmenter = mp.tasks.vision.ImageSegmenter
+        ImageSegmenterOptions = mp.tasks.vision.ImageSegmenterOptions
+        VisionRunningMode = mp.tasks.vision.RunningMode
 
-        model_cfg.n_shape = 100
+        self.options = ImageSegmenterOptions(
+            base_options=base_options,
+            running_mode=VisionRunningMode.VIDEO,
+            output_category_mask=True)
+        logger.info("Use mediapipe multiclass segment for Face Segmentation.")
+
         self.emoca = EMOCA(model_cfg)
         self.emoca.to(self.device)
 
@@ -131,26 +142,29 @@ class VideoProcessor:
         seg_list = []
 
         frame_id = 0
-        while True:
-            _, frame = video.read()
-            if frame is None:
-                break
-            dst_image, dst_landmarks = self.warp_image_from_lmk(self.landmarks[frame_id], frame)
+        with self.ImageSegmenter.create_from_options(self.options) as segmenter:
+            while True:
+                ret, frame = video.read()
+                if not ret:
+                    break
+                dst_image, dst_landmarks = self.warp_image_from_lmk(self.landmarks[frame_id], frame)
 
-            # normalize landmarks to [-1, 1]
-            dst_landmarks = dst_landmarks / self.image_size * 2 - 1
-            lmk_list.append(dst_landmarks)  # (V, 2)
+                # normalize landmarks to [-1, 1]
+                dst_landmarks = dst_landmarks / self.image_size * 2 - 1
+                lmk_list.append(dst_landmarks)  # (V, 2)
+                
+                # perform image segmentation to the warped image
+                seg_image = (dst_image * 255.).astype(np.uint8)[:,:,::-1].copy() # (h, w, 3) in RGB
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=seg_image)
+                frame_timestamp_ms = int(1000 * frame_id / self.fps)   
+                seg_mask = segmenter.segment_for_video(mp_image, frame_timestamp_ms).category_mask
+                seg_mask = seg_mask.numpy_view() == 3   # only extract facial skins
+                seg_list.append(seg_mask)
 
-            dst_image = (dst_image * 255.).astype(np.uint8) # (h, w, 3)
-            # perform image segmentation to the warped image
-            result = inference_model(self.seg_model, dst_image)
-            seg_mask = np.asanyarray(result.pred_sem_seg.values()[0].cpu()).squeeze(0)  # (h, w)
-            seg_list.append(seg_mask)
-
-            dst_image = (dst_image[:,:,[2,1,0]] / 255.).transpose(2, 0, 1)   # (3, h, w) in RGB float
-            frame_list.append(dst_image)
-            frame_id += 1
-        video.release()
+                dst_image = (dst_image[:,:,[2,1,0]]).transpose(2, 0, 1)   # (3, h, w) in RGB float
+                frame_list.append(dst_image)
+                frame_id += 1
+            video.release()
         frame_list = np.stack(frame_list)   # (n, 3, 224, 224)
         seg_list = np.stack(seg_list)   # (n, 224, 224)
         lmk_list = np.stack(lmk_list)   # (n, V, 2)
@@ -230,15 +244,11 @@ class VideoProcessor:
             data_dict['audio_input'] = data_dict['audio_input'][:num_frames * self.wav_per_frame]
         
         data_dict['audio_input'] = data_dict['audio_input'].reshape(num_frames, -1)
-
-        # compose target 
-        jaw_6d = utils_transform.aa2sixd(data_dict['jaw'])
-        data_dict['target'] = torch.cat([jaw_6d, data_dict['exp']], dim=-1)
-        data_dict.pop('exp', None)
-        data_dict.pop('jaw', None)
-
         data_dict['lmk_mask'] = self._get_lmk_mask_from_img_mask(data_dict['img_mask'], data_dict['lmk_2d'])
-
-        data_dict['lmk_mask'][:] = 1.0
+            
+        if self.config.mode == 'audio':
+            data_dict['lmk_mask'][:,:] = 0
+        elif self.config.mode == 'visual':
+            data_dict['audio_input'][:,:] = 0
 
         return data_dict, self.video_name, self.audio_path

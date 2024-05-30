@@ -109,7 +109,7 @@ class EMOCA(nn.Module):
         deca_code = self.E_flame(inputs)
         exp_code = self.E_expression(inputs)
         code_dict = self.decompose_deca_code(deca_code)
-        code_dict['exp'] = exp_code
+        code_dict['exp_emoca'] = exp_code
         return code_dict
 
 
@@ -131,3 +131,42 @@ class ExpressionLossNet(nn.Module):
     def forward(self, inputs):
         features = self.backbone(inputs)
         return features
+
+# emorec mlp to classify emotion from flame parameters
+class MLP(torch.nn.Module):
+    """ Code borrowed from EMOCA https://github.com/radekd91/emoca """
+    def __init__(
+        self,
+        in_size : int,
+        out_size: int,
+        hidden_layer_sizes : list,
+        hidden_activation = None,
+        batch_norm = None
+    ):
+        super().__init__()
+        self.in_size = in_size
+        self.out_size = out_size
+        self.batch_norm = batch_norm
+        self.hidden_layer_sizes = hidden_layer_sizes
+        hidden_activation = hidden_activation or nn.LeakyReLU(0.2)
+        self.hidden_activation = hidden_activation
+        self._build_network()
+
+    def _build_network(self):
+        layers = []
+        # layers += [Linear(self.in_size, self.hidden_layer_sizes[0])]
+        # layers += [self.hidden_activation]
+        layer_sizes = [self.in_size] + self.hidden_layer_sizes
+        for i in range(1, len(layer_sizes)):
+            layers += [
+                nn.Linear(layer_sizes[i - 1], layer_sizes[i])
+            ]
+            if self.batch_norm is not None:
+                layers += [self.batch_norm(layer_sizes[i])]
+            layers += [self.hidden_activation]
+        layers += [nn.Linear(layer_sizes[-1], self.out_size)]
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, x):
+        y = self.model(x)
+        return y

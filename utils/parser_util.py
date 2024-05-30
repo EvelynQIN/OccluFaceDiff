@@ -472,9 +472,9 @@ def add_predict_options(parser):
 
     
     group.add_argument(
-        "--with_audio",
-        action="store_true",
-        help="whether the input with audio.",
+        "--mode",
+        type=str,
+        help="what mode for predictin, should be in [audio, visual, both].",
     )
 
     group.add_argument(
@@ -502,7 +502,7 @@ def add_test_options(parser):
 
     group.add_argument(
         "--input_motion_length",
-        default=30,
+        default=64,
         type=int,
         help="motion length to chunk over the original sequence.",
     )
@@ -516,7 +516,7 @@ def add_test_options(parser):
     
     group.add_argument(
         "--sld_wind_size",
-        default=20,
+        default=32,
         type=int,
         help="slide window size.",
     )
@@ -575,9 +575,43 @@ def add_test_options(parser):
     )
 
     group.add_argument(
+        "--overlap",
+        action="store_true",
+        help="whether to inference with slid window.",
+    )
+
+    group.add_argument(
         "--with_audio",
         action="store_true",
         help="whether the input with audio.",
+    )
+
+    group.add_argument(
+        "--save_rec",
+        action="store_true",
+        help="whether to store the diffusion reconstruction.",
+    )
+
+    group.add_argument(
+        "--test_dataset",
+        default='MEAD',
+        type=str,
+        help="name of the test dataset.",
+    )
+
+    # cfg guidance
+    group.add_argument(
+        "--guidance_param_all",
+        default=None,
+        type=float,
+        help="scale factor of both conditioned sampler.",
+    )
+
+    group.add_argument(
+        "--guidance_param_audio",
+        default=None,
+        type=float,
+        help="scale factor of audio conditioned sampler.",
     )
 
     

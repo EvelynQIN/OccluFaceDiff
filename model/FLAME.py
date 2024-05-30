@@ -232,6 +232,15 @@ class FLAME_mediapipe(FLAME):
             torch.tensor(lmk_embeddings_mediapipe['lmk_b_coords'], dtype=self.dtype))
         self.register_buffer('landmark_indices_mediapipe',
             torch.tensor(lmk_embeddings_mediapipe['landmark_indices'].astype(np.int64), dtype=torch.long))
+    
+    def select_lmk3d_mediapipe(self, vertices):
+        batch_size = vertices.shape[0]
+        lmk_faces_idx_mediapipe = self.lmk_faces_idx_mediapipe.unsqueeze(dim=0).expand(batch_size, -1).contiguous()
+        lmk_bary_coords_mediapipe = self.lmk_bary_coords_mediapipe.unsqueeze(dim=0).expand(batch_size, -1, -1).contiguous()
+        landmarks2d_mediapipe = vertices2landmarks(vertices, self.faces_tensor,
+                                         lmk_faces_idx_mediapipe,
+                                         lmk_bary_coords_mediapipe )
+        return landmarks2d_mediapipe
         
     def forward(self, shape_params=None, expression_params=None, pose_params=None, eye_pose_params=None):
         vertices = super().forward(shape_params, expression_params, pose_params, eye_pose_params)

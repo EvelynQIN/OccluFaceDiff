@@ -17,6 +17,7 @@ Docstrings have been added, as well as DDIM sampling and a new collection of bet
 import enum
 import math
 from copy import deepcopy
+from tqdm import tqdm
 
 import numpy as np
 import torch
@@ -669,7 +670,7 @@ class GaussianDiffusion:
         if dump_steps is not None:
             dump = []
 
-        for i, sample in enumerate(
+        for i, sample in tqdm(enumerate(
             self.p_sample_loop_progressive(
                 model,
                 shape,
@@ -685,7 +686,7 @@ class GaussianDiffusion:
                 randomize_class=randomize_class,
                 cond_fn_with_grad=cond_fn_with_grad,
                 const_noise=const_noise,
-            )
+            ))
         ):
             if dump_steps is not None and i in dump_steps:
                 dump.append(deepcopy(sample["sample"]))

@@ -53,7 +53,11 @@ class MotionTracker:
         self.input_motion_length = config.input_motion_length
         self.target_nfeat = config.n_exp + config.n_pose
         config.n_shape = 100
+        model_cfg.n_shape = 100
+        self.flint_dim = 128
+        self.flint_factor = 8
         self.test_data = test_data
+        self.mode = self.config.mode
         # IO setups
                         
         # name of the tested motion sequence
@@ -111,6 +115,7 @@ class MotionTracker:
 
     
     def _create_flame(self):
+        self.model_cfg.n_exp = 50
         self.flame = FLAME_mediapipe(self.model_cfg).to(self.device)
         flame_template_file = 'flame_2020/head_template_mesh.obj'
         self.faces = load_obj(flame_template_file)[1]
@@ -175,18 +180,6 @@ class MotionTracker:
         self.denoise_model.eval()  # disable random masking
 
         self.diffusion_input_keys = ['lmk_2d', 'lmk_mask', 'audio_input']
-        # # create audio encoder tuned in the state_dict
-        # self.audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
-        # w2v_ckpt = {}
-        # for key in state_dict.keys():
-        #     if key.startswith('audio_encoder.'):
-        #         k = key.replace("audio_encoder.","")
-        #         w2v_ckpt[k] = state_dict[key]
-        # if len(w2v_ckpt) > 0:
-        #     self.audio_encoder.load_state_dict(w2v_ckpt, strict=True)
-        #     logger.info(f"Load Audio Encoder Successfully from CKPT!")
-        # self.audio_encoder.to(self.device)
-        # self.audio_encoder.eval()
     
     def output_video(self, fps=30):
         utils_visualize.images_to_video(self.output_folder, fps, self.motion_name)
@@ -196,7 +189,7 @@ class MotionTracker:
         sample_fn = self.diffusion.p_sample_loop
 
         with torch.no_grad():
-            split_length = motion_split['lmk_2d'].shape[0]
+            split_length = motion_split['lmk_2d'].shape[0] // self.flint_factor
             
             model_kwargs = {}
             for key in self.diffusion_input_keys:
@@ -206,7 +199,7 @@ class MotionTracker:
             if self.config.fix_noise:
                 # fix noise seed for every frame
                 noise = torch.randn(1, 1, 1).cuda()
-                noise = noise.repeat(1, split_length, self.target_nfeat)
+                noise = noise.repeat(1, split_length, self.flint_dim)
             else:
                 noise = None
                 
@@ -216,16 +209,16 @@ class MotionTracker:
                 model_kwargs["y"]["inpainting_mask"] = torch.zeros(
                     (
                         1,
-                        self.input_motion_length,
-                        self.target_nfeat,
+                        split_length,
+                        self.flint_dim,
                     )
                 ).cuda()
                 model_kwargs["y"]["inpainting_mask"][:, :mem_idx, :] = 1
                 model_kwargs["y"]["inpainted_motion"] = torch.zeros(
                     (
                         1,
-                        self.input_motion_length,
-                        self.target_nfeat,
+                        split_length,
+                        self.flint_dim,
                     )
                 ).cuda()
                 model_kwargs["y"]["inpainted_motion"][:, :mem_idx, :] = self.motion_memory[
@@ -234,7 +227,7 @@ class MotionTracker:
             start_time = time()
             output_sample = sample_fn(
                 self.denoise_model,
-                (1, split_length, self.target_nfeat),
+                (1, split_length, self.flint_dim),
                 clip_denoised=False,
                 model_kwargs=model_kwargs,
                 skip_timesteps=0,
@@ -246,9 +239,10 @@ class MotionTracker:
             )
             self.sample_time += time() - start_time
             self.memory = output_sample.clone().detach()
-            output_sample = output_sample[:, mem_idx:].reshape(-1, self.target_nfeat).float()
+            flint_output = self.diffusion.flint_decoder(output_sample)
+            flint_output = flint_output[:, mem_idx:].reshape(-1, self.target_nfeat)
 
-        return output_sample
+        return flint_output
     
     def vis_motion_split(self, gt_data, diffusion_sample):
         diffusion_sample = diffusion_sample.to(self.device)
@@ -257,13 +251,11 @@ class MotionTracker:
             gt_data[k] = gt_data[k].to(self.device)
         
         # prepare vis data dict 
-        diff_jaw = diffusion_sample[...,:self.config.n_pose]
-        diff_expr = diffusion_sample[...,self.config.n_pose:]
-        diff_jaw_aa = utils_transform.sixd2aa(diff_jaw)
+        diff_jaw_aa = diffusion_sample[...,self.config.n_exp:]
+        diff_expr = diffusion_sample[...,:self.config.n_exp]
 
-        gt_jaw = gt_data['target'][...,:self.config.n_pose]
-        gt_exp = gt_data['target'][...,self.config.n_pose:]
-        gt_jaw_aa = utils_transform.sixd2aa(gt_jaw)
+        gt_jaw_aa = gt_data['jaw']
+        gt_exp = gt_data['exp']
 
         cam = gt_data['cam']
 
@@ -272,8 +264,8 @@ class MotionTracker:
         gt_rot_aa = torch.cat([global_rot_aa, gt_jaw_aa], dim=-1)
         
         # flame decoder
-        emica_verts, _ = self.flame(gt_data['shape'], gt_exp, gt_rot_aa)
-        diff_verts, diff_lmk3d = self.flame(gt_data['shape'], diff_expr, diff_rot_aa)
+        emoca_verts, _ = self.flame(gt_data['shape'], gt_exp, gt_rot_aa)
+        diff_verts, diff_lmk3d = self.diffusion.flame(gt_data['shape'], diff_expr, diff_rot_aa)
         
         # 2d orthogonal projection
         diff_lmk2d = batch_orth_proj(diff_lmk3d, cam)
@@ -282,16 +274,16 @@ class MotionTracker:
         diff_trans_verts = batch_orth_proj(diff_verts, cam)
         diff_trans_verts[:, :, 1:] = -diff_trans_verts[:, :, 1:]
 
-        emica_trans_verts = batch_orth_proj(emica_verts, cam)
-        emica_trans_verts[:, :, 1:] = -emica_trans_verts[:, :, 1:]
+        emoca_trans_verts = batch_orth_proj(emoca_verts, cam)
+        emoca_trans_verts[:, :, 1:] = -emoca_trans_verts[:, :, 1:]
         
         # # render
         diff_render_images = self.render.render_shape(diff_verts, diff_trans_verts, images=gt_data['image'])
-        emica_render_images = self.render.render_shape(emica_verts, emica_trans_verts, images=gt_data['image'])
-        if self.heatmap_view:
-            vertex_error = torch.norm(emica_verts - diff_verts, p=2, dim=-1) * 1000. # vertex dist in mm
-            face_error_colors = self.get_vertex_error_heat_color(vertex_error).to(self.device)
-            heat_maps = self.render.render_shape(diff_verts, diff_trans_verts,colors=face_error_colors)
+        emoca_render_images = self.render.render_shape(emoca_verts, emoca_trans_verts, images=gt_data['image'])
+        # if self.heatmap_view:
+        #     vertex_error = torch.norm(emica_verts - diff_verts, p=2, dim=-1) * 1000. # vertex dist in mm
+        #     face_error_colors = self.get_vertex_error_heat_color(vertex_error).to(self.device)
+        #     heat_maps = self.render.render_shape(diff_verts, diff_trans_verts,colors=face_error_colors)
         
         # landmarks vis
         lmk2d_vis = utils_visualize.tensor_vis_landmarks(gt_data['image'], diff_lmk2d[...,:2], gt_data['lmk_2d'])
@@ -301,12 +293,12 @@ class MotionTracker:
         for i in range(diff_lmk2d.shape[0]):
             vis_dict = {
                 'gt_img': gt_img[i].detach().cpu(),   # (3, h, w)
-                'gt_mesh': emica_render_images[i].detach().cpu(),  # (3, h, w)
+                'gt_mesh': emoca_render_images[i].detach().cpu(),  # (3, h, w)
                 'diff_mesh': diff_render_images[i].detach().cpu(),  # (3, h, w)
                 'lmk': lmk2d_vis[i].detach().cpu()
             }
-            if self.heatmap_view:
-                vis_dict['heatmap'] = heat_maps[i].detach().cpu()
+            # if self.heatmap_view:
+            #     vis_dict['heatmap'] = heat_maps[i].detach().cpu()
             grid_image = self.visualize(vis_dict)
             if self.to_mp4:
                 self.writer.write(grid_image[:,:,[2,1,0]])
@@ -407,7 +399,7 @@ class MotionTracker:
         self.flame.to(self.device)
         batch, motion_id, audio_path = self.test_data
         logger.info(f'Process [{motion_id}].')
-        video_path = self.output_folder + f'/{motion_id}'
+        video_path = self.output_folder + f'/{motion_id}_{self.mode}'
         
         # set the output writer
         if self.to_mp4:
@@ -471,13 +463,13 @@ class MotionTracker:
             os.system(f"ffmpeg -i {video_path}.mp4 -i {audio_path} -c:v copy {video_path}_audio.mp4")
             os.system(f"rm {video_path}.mp4")
         
-        # start evaluation
-        self.flame.to('cpu')
-        diffusion_output.to('cpu')
-        eval_log = self.evaluate_one_motion(diffusion_output, batch)
+        # # start evaluation
+        # self.flame.to('cpu')
+        # diffusion_output.to('cpu')
+        # eval_log = self.evaluate_one_motion(diffusion_output, batch)
                 
-        for metric in eval_log:
-            logger.info(f"{metric} : {eval_log[metric]}")
+        # for metric in eval_log:
+        #     logger.info(f"{metric} : {eval_log[metric]}")
 
         torch.cuda.empty_cache()
 
@@ -491,7 +483,7 @@ def main():
     torch.manual_seed(args.seed)
     
     print("loading processed data of the test video...")
-    video_processor = VideoProcessor(pretrained_args.model, args)
+    video_processor = VideoProcessor(pretrained_args.emoca, args)
 
     video_processor.preprocess_video()
     test_data = video_processor.get_processed_data()

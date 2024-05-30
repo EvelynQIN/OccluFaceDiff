@@ -17,3 +17,6 @@ transformers
 pytorch-lightning
 mediapipe
 h5py
+phonemizer==3.2.1
+jiwer
+sentencepiece

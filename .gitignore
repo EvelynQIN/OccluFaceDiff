@@ -12,6 +12,7 @@ human_body_prior
 *.gif
 *.tar.gz
 *.zip
+*.avi
 face_segmentation/deeplabv3plus_r101_512x512_face-occlusion-93ec6695.pth
 dataset
 pretrained
@@ -33,3 +34,4 @@ pretrained/
 videos/
 processed/
 face_motion_videos/
+vis_RAVDESS

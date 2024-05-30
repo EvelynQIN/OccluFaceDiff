@@ -88,7 +88,7 @@ class Pytorch3dRasterizer(nn.Module):
         return pixel_vals
 
 class SRenderY(nn.Module):
-    def __init__(self, image_size, obj_filename, uv_size=256, v_mask=None):
+    def __init__(self, image_size, obj_filename, uv_size=256, v_mask=None, default_color=[180, 180, 180]):
         super(SRenderY, self).__init__()
         self.image_size = image_size
         self.uv_size = uv_size
@@ -126,7 +126,7 @@ class SRenderY(nn.Module):
         self.register_buffer('face_uvcoords', face_uvcoords)
 
         # shape colors, for rendering shape overlay
-        colors = torch.tensor([180, 180, 180])[None, None, :].repeat(1, V, 1).float()/255.
+        colors = torch.tensor(default_color)[None, None, :].repeat(1, V, 1).float()/255.
         face_colors = data_util.face_vertices(colors, faces)
         self.register_buffer('face_colors', face_colors)
 

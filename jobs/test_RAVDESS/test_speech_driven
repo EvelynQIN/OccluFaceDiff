@@ -1,0 +1,7 @@
+python3 test_lipreading.py --output_folder vis_RAVDESS/FaceFormer --model_type faceformer --rec_folder reconstruction --dataset RAVDESS
+python3 test_lipreading.py --output_folder vis_RAVDESS/FaceDiffuser --model_type facediffuser --rec_folder reconstruction --dataset RAVDESS
+python3 test_lipreading.py --output_folder vis_RAVDESS/CodeTalker --model_type codetalker --rec_folder reconstruction --dataset RAVDESS
+python3 test_lipreading.py --output_folder vis_RAVDESS/EMOTE --model_type emote --rec_folder reconstruction --dataset RAVDESS
+python3 test_lipreading.py --output_folder vis_RAVDESS/EMOTE --model_type video --rec_folder reconstruction --dataset RAVDESS
+
+python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/EMOTE --model_type emote --rec_folder reconstruction --dataset RAVDESS

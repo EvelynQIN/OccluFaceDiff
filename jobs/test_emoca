@@ -1,0 +1,28 @@
+# python3 test_motion_mead_lmk_EMOCA.py --sld_wind_size 64 --exp_name upper --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/upper/diffusion_sample
+# python3 test_motion_mead_lmk_EMOCA.py --sld_wind_size 64 --exp_name mouth --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/mouth/diffusion_sample
+# python3 test_motion_mead_lmk_EMOCA.py --sld_wind_size 64 --exp_name asym --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/asym/diffusion_sample
+# python3 test_motion_mead_lmk_EMOCA.py --sld_wind_size 64 --exp_name random --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/random/diffusion_sample
+
+# python3 test_lipreading.py --output_folder vis_result/EMOCA/mouth --model_type emoca --rec_folder EMOCA_reconstruction
+# python3 test_lipreading.py --output_folder vis_result/EMOCA/upper --model_type emoca --rec_folder EMOCA_reconstruction
+# python3 test_lipreading.py --output_folder vis_result/EMOCA/asym --model_type emoca --rec_folder EMOCA_reconstruction
+# python3 test_lipreading.py --output_folder vis_result/EMOCA/random --model_type emoca --rec_folder EMOCA_reconstruction
+
+# python3 test_lipreading.py --output_folder vis_result/EMOCA/mouth --model_type deca --rec_folder EMOCA_reconstruction
+# python3 test_lipreading.py --output_folder vis_result/EMOCA/upper --model_type deca --rec_folder EMOCA_reconstruction
+# python3 test_lipreading.py --output_folder vis_result/EMOCA/asym --model_type deca --rec_folder EMOCA_reconstruction
+# python3 test_lipreading.py --output_folder vis_result/EMOCA/random --model_type deca --rec_folder EMOCA_reconstruction
+
+# test emotion
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/EMOCA/non_occ --split test --model_type emoca --rec_folder EMOCA_reconstruction
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/EMOCA/mouth --split test --model_type emoca --rec_folder EMOCA_reconstruction
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/EMOCA/upper --split test --model_type emoca --rec_folder EMOCA_reconstruction
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/EMOCA/asym --split test --model_type emoca --rec_folder EMOCA_reconstruction
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/EMOCA/random --split test --model_type emoca --rec_folder EMOCA_reconstruction
+
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/EMOCA/non_occ --split test --model_type deca --rec_folder EMOCA_reconstruction
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/EMOCA/mouth --split test --model_type deca --rec_folder EMOCA_reconstruction
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/EMOCA/upper --split test --model_type deca --rec_folder EMOCA_reconstruction
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/EMOCA/asym --split test --model_type deca --rec_folder EMOCA_reconstruction
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/EMOCA/random --split test --model_type deca --rec_folder EMOCA_reconstruction
+

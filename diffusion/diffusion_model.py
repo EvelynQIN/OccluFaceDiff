@@ -103,19 +103,20 @@ class DiffusionModel(GaussianDiffusion):
             self._create_flame()
             self._load_flint_decoder()
             self._setup_renderer()
-            self._load_evalnet()
+            # self._load_evalnet()
+            self._load_video_emotion_classifier()
 
             # set up loss weight
             self.loss_weight = {
                 'expr_loss': 1.0,
                 'pose_loss': 1.0,
-                'expr_vel_loss': 0.01,
-                'pose_vel_loss': 0.01,
+                'latent_rec_loss': 1.,
+                'mesh_verts_loss': 100.,
                 'lmk3d_loss': 0.1,
-                'lmk2d_loss': 0.2,
-                'mouth_closure_loss': 0.5,
-                'emotion_loss': 0.0005,
-                'lipread_loss': 0.005
+                'lmk2d_loss': 0.,
+                'mouth_closure_loss': 0.,
+                'emotion_loss': 0.0001,
+                'lipread_loss': 0.0005
             }
             print(f"[Diffusion] Loss weights used: {self.loss_weight}")
         else:
@@ -201,6 +202,27 @@ class DiffusionModel(GaussianDiffusion):
             Normalize(mean, std),
             Identity()]
         )
+
+    def _load_video_emotion_classifier(self):
+        from configs.classifier_config import get_cfg_defaults as video_emo_classifier_cfg
+        from model.video_emotion_classifier import VideoEmotionClassifier
+
+        args = video_emo_classifier_cfg()
+        self.emo_classifier = VideoEmotionClassifier(
+            args.input_dim,
+            args.num_classes,
+            args.latent_dim,
+            args.heads,
+            args.layers,
+            args.ff_size,
+            args.max_pool,
+            args.dropout
+        )
+        ckpt_path = 'checkpoints/Emotion_Classifier_Transformer_128d_4l/model_20.pt'
+        ckpt = torch.load(ckpt_path)
+        self.emo_classifier.load_state_dict(ckpt)
+        self.emo_classifier.to(self.device)
+        self.emo_classifier.eval()
 
     def cut_mouth_vectorized(
         self,
@@ -397,8 +419,9 @@ class DiffusionModel(GaussianDiffusion):
         
             # # ---- emotion loss from EMOCA ---- #
             with torch.no_grad():
-                emotion_features_gt = self.expression_net(images)
-            emotion_features_pred = self.expression_net(pred_render_img)
+                # emotion_features_gt = self.expression_net(images)
+                
+            # emotion_features_pred = self.expression_net(pred_render_img)
 
             emotion_loss = F.mse_loss(emotion_features_pred, emotion_features_gt)
 

@@ -78,14 +78,14 @@ def lmk_3d_mvpe(
     expr_gt, pose_aa_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
     fps, flame_v_mask
 ):
-    lmk_3d_mean_vertex_position_error = torch.mean(
-        torch.norm(
-            lmk_3d_gt.reshape(-1, 3) - lmk_3d_pred.reshape(-1, 3),
-            2,
-            1
-        )
-    )
-    return lmk_3d_mean_vertex_position_error * METERS_TO_MILLIMETERS
+    lmk_3d_mean_vertex_position_error_max = torch.max(
+        torch.norm(lmk_3d_gt - lmk_3d_pred,p=2,dim=-1),
+        dim=0
+    ).values
+
+    lmk_3d_vpe_mean = torch.mean(lmk_3d_mean_vertex_position_error_max)
+
+    return lmk_3d_vpe_mean * METERS_TO_MILLIMETERS
 
 def mvpe(
     expr_pred, pose_aa_pred, verts_pred, lmk_3d_pred, lmk_2d_pred, lmk_2d_pgt,
@@ -244,6 +244,15 @@ def gt_lmk2d_mouth_closure_error(
     mouth_closure_error = torch.mean(torch.abs(diff_gt - pgt_pred))
     return mouth_closure_error
 
+def lmk2d_reproj_error(
+    expr_pred, pose_aa_pred, verts_pred, lmk_3d_pred, lmk_2d_pred, lmk_2d_pgt,
+    expr_gt, pose_aa_gt, verts_gt, lmk_3d_gt, lmk_2d_gt,
+    fps, flame_v_mask 
+):
+    lmk2d_error = torch.mean(
+        torch.norm(lmk_2d_gt - lmk_2d_pred, p=1, dim=-1))
+    return lmk2d_error
+
 metric_funcs_dict = {
     "pred_jitter": pred_jitter,
     "gt_jitter": gt_jitter,
@@ -260,7 +269,8 @@ metric_funcs_dict = {
     "mvpe_neck": mvpe_neck,
     "mvpe_nose": mvpe_nose,
     "mouth_closure": lmk2d_mouth_closure_error,
-    "gt_mouth_closure": gt_lmk2d_mouth_closure_error
+    "gt_mouth_closure": gt_lmk2d_mouth_closure_error,
+    "lmk2d_reproj_error": lmk2d_reproj_error
 }
 
 

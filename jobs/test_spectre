@@ -1,0 +1,21 @@
+# python3 test_motion_mead_lmk_SPECTRE.py --exp_name mouth --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/mouth/diffusion_sample
+# python3 test_motion_mead_lmk_SPECTRE.py --exp_name upper --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/upper/diffusion_sample
+# python3 test_motion_mead_lmk_SPECTRE.py --exp_name asym --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/asym/diffusion_sample
+# python3 test_motion_mead_lmk_SPECTRE.py --exp_name random --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/random/diffusion_sample
+# python3 test_motion_mead_lmk_SPECTRE.py --exp_name missing_frames --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/missing_frames/diffusion_sample
+
+# python3 test_lipreading.py --output_folder vis_result/SPECTRE/mouth --model_type spectre --rec_folder SPECTRE_reconstruction
+# python3 test_lipreading.py --output_folder vis_result/SPECTRE/upper --model_type spectre --rec_folder SPECTRE_reconstruction
+# python3 test_lipreading.py --output_folder vis_result/SPECTRE/asym --model_type spectre --rec_folder SPECTRE_reconstruction
+# python3 test_lipreading.py --output_folder vis_result/SPECTRE/random --model_type spectre --rec_folder SPECTRE_reconstruction
+python3 test_lipreading.py --output_folder vis_result/SPECTRE/missing_frames --model_type spectre --rec_folder SPECTRE_reconstruction
+
+# test emotion
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/SPECTRE/non_occ --split test --model_type spectre --rec_folder SPECTRE_reconstruction
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/SPECTRE/mouth --split test --model_type spectre --rec_folder SPECTRE_reconstruction
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/SPECTRE/upper --split test --model_type spectre --rec_folder SPECTRE_reconstruction
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/SPECTRE/asym --split test --model_type spectre --rec_folder SPECTRE_reconstruction
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/SPECTRE/random --split test --model_type spectre --rec_folder SPECTRE_reconstruction
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result/SPECTRE/missing_frames --split test --model_type spectre --rec_folder SPECTRE_reconstruction
+
+

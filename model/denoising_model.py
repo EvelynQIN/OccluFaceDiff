@@ -700,17 +700,29 @@ class FaceTransformerFLINT(nn.Module):
         else:
             return cond
     
-    def mask_audio_cond(self, audio_emb):
+    def mask_audio_cond(self, audio_emb, force_mask=False):
         """
         audio_emb: [bs, c]
         """
         bs = audio_emb.shape[0]
-        mask = torch.bernoulli(
-            torch.ones(bs, device=audio_emb.device) * self.audio_mask_prob
-        )
-        mask = mask.view(bs, 1)
+        if force_mask:
+            mask = torch.ones((bs, 1), device=audio_emb.device)
+        else:
+            mask = torch.bernoulli(
+                torch.ones(bs, device=audio_emb.device) * self.audio_mask_prob
+            )
+            mask = mask.view(bs, 1)
         # 1-> use null_cond, 0-> use real cond
         return audio_emb * (1.0 - mask)
+
+    def mask_lmk_cond(self, lmk_mask):
+        """
+        lmk_mask: (bs, n, v)
+        """
+        bs = lmk_mask.shape[0]
+        mask = torch.ones((bs, 1, 1), device=lmk_mask.device)
+        # 1-> use null_cond, 0-> use real cond
+        return lmk_mask * (1.0 - mask)
 
     def freeze_wav2vec(self):
         self.audio_encoder.freeze_encoder()
@@ -725,8 +737,14 @@ class FaceTransformerFLINT(nn.Module):
         images: [bs, nframes, 3, 224, 224]
         """
         bs, n = lmk_2d.shape[:2]
-        # print(lmk_mask.shape)
-        # print(lmk_2d.shape)
+
+        # for cfg generation
+        if 'uncond_lmk' in kwargs:
+            audio_input = self.mask_audio_cond(audio_input, force_mask=True)
+        elif 'uncond_all' in kwargs:
+            audio_input = self.mask_audio_cond(audio_input, force_mask=True)
+            lmk_mask = self.mask_lmk_cond(lmk_mask)
+
         lmk_2d = lmk_2d[...,:2].clone() * (lmk_mask.unsqueeze(-1))
         ts_emb = self.embed_timestep(timesteps)  # [1, bs, d]
 
@@ -737,7 +755,7 @@ class FaceTransformerFLINT(nn.Module):
         # image_cond = self.image_process(image_cond) # [seqlen, bs, d]
         vis_cond = self.lmk_process(lmk_2d.reshape(bs, n, -1))  # [seqlen, bs, d]
         
-        audio_input = self.mask_audio_cond(audio_input)
+        
         audio_emb = self.audio_encoder(audio_input, frame_num=n).last_hidden_state
         audio_cond = self.audio_process(audio_emb)
         

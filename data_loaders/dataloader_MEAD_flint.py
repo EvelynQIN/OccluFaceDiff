@@ -160,28 +160,33 @@ class TestMeadDataset(Dataset):
         dataset_name, # list of dataset names
         dataset_path,
         split_data,
-        input_motion_length=120,
         fps=25,
         n_shape=300,
         n_exp=50,
         occ_type='non_occ',
         load_tex=False,
         use_iris=False,
+        load_audio_input=True,
+        vis=False,
+        use_segmask=False,
+        mask_path=None
     ):
         self.split_data = split_data
         self.fps = fps
         self.dataset = dataset_name
         self.load_tex = load_tex # whether to use texture from emica
         self.use_iris = use_iris # whether to use iris landmarks from mediapipe (last 10)
+        self.load_audio_input = load_audio_input
         self.n_shape = n_shape 
         self.n_exp = n_exp
         self.occ_type = occ_type # occlusion type
+        self.vis = vis
+        self.use_segmask = use_segmask
         # # apply occlusion
         # self.occluder = MediaPipeFaceOccluder()
 
         # image process
         self.image_size = 224 
-        self.input_motion_length = input_motion_length
         self.wav_per_frame = int(16000 / self.fps)
 
         # paths to processed folder
@@ -191,6 +196,7 @@ class TestMeadDataset(Dataset):
         self.reconstruction_folder = os.path.join(self.processed_folder, 'reconstructions/EMICA-MEAD_flame2020')
         self.emotion_folder = os.path.join(self.processed_folder, 'emotions/resnet50')
         self.image_folder = os.path.join(self.processed_folder, 'images')
+        self.mask_path = mask_path
        
     def __len__(self):
         return len(self.split_data)
@@ -263,7 +269,10 @@ class TestMeadDataset(Dataset):
         data_dict = {}
         with h5py.File(os.path.join(self.image_folder, motion_path, 'cropped_frames.hdf5'), "r") as f:
             data_dict['image'] = torch.from_numpy(f['images'][:]).float()
-            data_dict['img_mask'] = torch.from_numpy(f['img_masks'][:]).float()
+            if self.use_segmask and 'img_mask' in f:
+                data_dict['img_mask'] = torch.from_numpy(f['img_masks'][:]).float()
+            else:
+                data_dict['img_mask'] = torch.ones((data_dict['image'].shape[0], self.image_size, self.image_size))
         return data_dict
     
     def _get_occlusion_mask(self, img_mask, lmk_2d):
@@ -289,9 +298,19 @@ class TestMeadDataset(Dataset):
 
         batch = self._get_emica_codes(motion_path)
         batch['lmk_2d'] = self._get_lmk_mediapipe(motion_path)
-        batch['audio_input'] = self._get_audio_input(motion_path, seqlen)
-        batch.update(self._get_image_info(motion_path))
-        batch['img_mask'], batch['lmk_mask'] = self._get_occlusion_mask(batch['img_mask'], batch['lmk_2d'])
+        if self.load_audio_input:
+            batch['audio_input'] = self._get_audio_input(motion_path, seqlen)
+        if self.vis:
+            batch.update(self._get_image_info(motion_path))
+            if self.mask_path is not None and os.path.exists(os.path.join(self.mask_path, f"{motion_path}_mask.npy")):
+                mask_path_motion = os.path.join(self.mask_path, f"{motion_path}_mask.npy")
+                img_mask = np.load(mask_path_motion, allow_pickle=True)[()]
+                batch['img_mask'] = torch.from_numpy(img_mask).float()
+            else:
+                batch['img_mask'], batch['lmk_mask'] = self._get_occlusion_mask(batch['img_mask'], batch['lmk_2d'])
+        else:
+            batch['img_mask'] = torch.ones((seqlen, self.image_size, self.image_size))
+            batch['img_mask'], batch['lmk_mask'] = self._get_occlusion_mask(batch['img_mask'], batch['lmk_2d'])
         # for key in batch:
         #     print(f"shape of {key}: {batch[key].shape}")
         
@@ -310,7 +329,7 @@ def get_split_MEAD(split):
               'W028', 'W029', 'W033', 'W035', 'W036', 
               'W037', 'W038', 'W040'],
     "test": [
-        'M003', 'M005']
+        'M003', 'M005', 'M007', 'M009', 'W011']
     }      
     
     MEAD_sentence_split = {
@@ -346,7 +365,7 @@ def load_test_data(
         level_list = ['level_1', 'level_2', 'level_3']
     if sent_list is None:
         sent_list = MEAD_sentence_split
-    with open(os.path.join(processed_folder, 'video_list_woimg.pkl'), 'rb') as f:
+    with open(os.path.join(processed_folder, 'video_list_test.pkl'), 'rb') as f:
         video_list = pickle.load(f)
     motion_list = []
     for video_id, num_frames in video_list:
