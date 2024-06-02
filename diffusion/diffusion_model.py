@@ -103,20 +103,20 @@ class DiffusionModel(GaussianDiffusion):
             self._create_flame()
             self._load_flint_decoder()
             self._setup_renderer()
-            # self._load_evalnet()
+            self._load_evalnet()
             self._load_video_emotion_classifier()
 
             # set up loss weight
             self.loss_weight = {
                 'expr_loss': 1.0,
                 'pose_loss': 1.0,
-                'latent_rec_loss': 1.,
-                'mesh_verts_loss': 100.,
+                'latent_rec_loss': 0.,
+                'mesh_verts_loss': 0.,
                 'lmk3d_loss': 0.1,
                 'lmk2d_loss': 0.,
                 'mouth_closure_loss': 0.,
                 'emotion_loss': 0.0001,
-                'lipread_loss': 0.0005
+                'lipread_loss': 0.005
             }
             print(f"[Diffusion] Loss weights used: {self.loss_weight}")
         else:
@@ -158,17 +158,17 @@ class DiffusionModel(GaussianDiffusion):
     
     def _load_evalnet(self):
  
-        # ----- load resnet trained from EMOCA https://github.com/radekd91/emoca for expression loss ----- #
-        self.expression_net = ExpressionLossNet().to(self.device)
-        self.emotion_checkpoint = torch.load(self.model_cfg.expression_net_path)['state_dict']
-        self.emotion_checkpoint['linear.0.weight'] = self.emotion_checkpoint['linear.weight']
-        self.emotion_checkpoint['linear.0.bias'] = self.emotion_checkpoint['linear.bias']
+        # # ----- load resnet trained from EMOCA https://github.com/radekd91/emoca for expression loss ----- #
+        # self.expression_net = ExpressionLossNet().to(self.device)
+        # self.emotion_checkpoint = torch.load(self.model_cfg.expression_net_path)['state_dict']
+        # self.emotion_checkpoint['linear.0.weight'] = self.emotion_checkpoint['linear.weight']
+        # self.emotion_checkpoint['linear.0.bias'] = self.emotion_checkpoint['linear.bias']
 
-        print(f"[Diffusion] Load emotion net.")
-        self.expression_net.load_state_dict(self.emotion_checkpoint, strict=False)
-        self.expression_net.eval()
-        for param in self.expression_net.parameters():
-            param.requires_grad = False
+        # print(f"[Diffusion] Load emotion net.")
+        # self.expression_net.load_state_dict(self.emotion_checkpoint, strict=False)
+        # self.expression_net.eval()
+        # for param in self.expression_net.parameters():
+        #     param.requires_grad = False
 
         # ----- load lipreader network for lipread loss ----- #
         config = ConfigParser()
@@ -340,6 +340,18 @@ class DiffusionModel(GaussianDiffusion):
          # l2 loss on flame parameters w.r.t deca's output             
         pose_loss = F.mse_loss(jaw_pred, model_kwargs['jaw'])
         expr_loss = F.mse_loss(expr_pred, model_kwargs['exp'])
+
+        # emotion_loss
+        emo_input_gt = torch.cat([
+            model_kwargs['shape'][...,:100], model_kwargs['exp'][...,:50], model_kwargs['jaw']], dim=-1
+        )
+        emo_input_pred = torch.cat([
+            model_kwargs['shape'][...,:100], expr_pred[...,:50],jaw_pred], dim=-1
+        )
+        with torch.no_grad():
+            video_emo_feature_gt = self.emo_classifier.encode(emo_input_gt)
+        video_emo_feature_pred = self.emo_classifier.encode(emo_input_pred)
+        emotion_loss = F.mse_loss(video_emo_feature_gt, video_emo_feature_pred)
         
         # # velocity loss
         # pose_vel_loss = torch.mean(
@@ -390,10 +402,13 @@ class DiffusionModel(GaussianDiffusion):
         # eye_closure_loss = eye_closure_lmk_loss(lmk_pred, lmk_gt)
         mouth_closure_loss = mouth_closure_lmk_loss(lmk_pred, lmk_gt)
 
-        emotion_loss = 0
+        # emotion_loss = 0
         lipread_loss = 0
 
         if self.train_stage == 2:
+
+            trans_verts_gt = batch_orth_proj(verts_gt, cam)
+            trans_verts_gt[:, :, 1:] = -trans_verts_gt[:, :, 1:]
 
             trans_verts = batch_orth_proj(verts_pred, cam)
             trans_verts[:, :, 1:] = -trans_verts[:, :, 1:]
@@ -408,8 +423,9 @@ class DiffusionModel(GaussianDiffusion):
             else:
                 albedo = torch.ones([bs*n, 3, self.model_cfg.uv_size, self.model_cfg.uv_size], device=light.device) * 0.5
 
-            images = model_kwargs['image'].view(bs*n, *model_kwargs['image'].shape[2:])
+            # images = model_kwargs['image'].view(bs*n, *model_kwargs['image'].shape[2:])
 
+            gt_render_img = self.render(verts_gt, trans_verts_gt, albedo, light)['images']
             pred_render_img = self.render(verts_pred, trans_verts, albedo, light)['images']
             
             #  # ---- photometric loss ---- #
@@ -417,22 +433,22 @@ class DiffusionModel(GaussianDiffusion):
             # photometric_loss = torch.mean(mask_face_eye * ops['alpha_images'] * (ops['images'] - images).abs())
             
         
-            # # ---- emotion loss from EMOCA ---- #
-            with torch.no_grad():
-                # emotion_features_gt = self.expression_net(images)
-                
+            # # # ---- emotion loss from EMOCA ---- #
+            # with torch.no_grad():
+            #     emotion_features_gt = self.expression_net(images)
+
             # emotion_features_pred = self.expression_net(pred_render_img)
 
-            emotion_loss = F.mse_loss(emotion_features_pred, emotion_features_gt)
+            # emotion_loss = F.mse_loss(emotion_features_pred, emotion_features_gt)
 
         
             # ---- lipread loss ---- #
             # first crop the mouths of the input and rendered faces and then calculate the distance of features 
-            images = images.view(bs,n, *images.shape[1:])
+            gt_render_img = gt_render_img.view(bs,n, *gt_render_img.shape[1:])
             lmk_gt = lmk_gt.view(bs, n, *lmk_gt.shape[1:])
             lmk_pred = lmk_pred.view(bs, n, *lmk_pred.shape[1:])
             pred_render_img = pred_render_img.view(bs, n, *pred_render_img.shape[1:])
-            mouths_gt = self.cut_mouth_vectorized(images, lmk_gt[...,:2])   # (bs*t, 96, 96)
+            mouths_gt = self.cut_mouth_vectorized(gt_render_img, lmk_gt[...,:2])   # (bs*t, 96, 96)
             mouths_pred = self.cut_mouth_vectorized(pred_render_img, lmk_pred[...,:2])
             mouths_gt = self.mouth_transform(mouths_gt) # (bs*t, 88, 88)
             mouths_pred = self.mouth_transform(mouths_pred)

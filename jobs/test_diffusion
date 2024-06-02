@@ -15,4 +15,6 @@ python3 test_emotion_classification_EMOTE.py --output_folder vis_result/diffusio
 python3 test_emotion_classification_EMOTE.py --output_folder vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/missing_frames --split test --model_type diffusion --rec_folder diffusion_sample
 python3 test_emotion_classification_EMOTE.py --output_folder vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/all --split test --model_type diffusion --rec_folder diffusion_sample
 
+python3 test_emotion_classification_EMOTE.py --output_folder vis_result_56/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_video_classifier_s2/non_occ --split test --model_type diffusion --rec_folder reconstruction
+python3 test_lipreading.py --output_folder vis_result_56/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_video_classifier_s2/non_occ --model_type diffusion --rec_folder reconstruction
 

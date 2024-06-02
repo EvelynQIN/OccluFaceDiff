@@ -121,7 +121,7 @@ class TrainLoop:
                     resume_checkpoint,
                     map_location=dist_util.dev(),
                 ),
-                strict=False
+                strict=True
             )
 
     def _load_optimizer_state(self):
@@ -164,8 +164,8 @@ class TrainLoop:
                     'eye': 0.3,
                     'left': 0.3,
                     'right': 0.3,
-                    'left_eye': 0.3,
-                    'right_eye': 0.3,
+                    'left_eye': 0.,
+                    'right_eye': 0.,
                     'mouth': 0.2,
                     'random': 0.4,
                     'contour': 0.4
@@ -176,13 +176,13 @@ class TrainLoop:
             else:
                 self.model.unfreeze_wav2vec()
                 self.occluder.occlusion_regions_prob = {
-                    'all': 0.3,
+                    'all': 0.2,
                     'eye': 0.,
-                    'left': 0.15,
-                    'right': 0.15,
+                    'left': 0.1,
+                    'right': 0.1,
                     'left_eye': 0.,
                     'right_eye': 0.,
-                    'mouth': 0.8,
+                    'mouth': 0.5,
                     'random': 0.,
                     'contour': 0.3
                 }
@@ -203,15 +203,18 @@ class TrainLoop:
                 grad_update = True if local_step % self.gradient_accumulation_steps == 0 else False 
                 self.run_step(target, grad_update, **batch)
 
+                if local_step % self.log_interval == 0:
+                    self.validation()
+
             if epoch == self.num_epochs or epoch % self.save_interval == 0:
                 self.save()
 
-            if epoch % self.log_interval == 0:
-                self.validation()
+            # if epoch % self.log_interval == 0:
+            #     self.validation()
 
         # Save the last checkpoint if it wasn't already saved.
-        if (self.epoch) % self.save_interval != 0:
-            self.save()
+        # if (self.epoch) % self.save_interval != 0:
+        #     self.save()
     
     # @profile
     def run_step(self, batch, grad_update, **model_kwargs):
@@ -297,6 +300,7 @@ class TrainLoop:
                 val_loss[k] /= eval_steps
             
             self.log_loss_dict(val_loss, phase="validation")
+            
             del val_loss
 
     def _anneal_lr(self):

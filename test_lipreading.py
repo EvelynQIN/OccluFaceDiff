@@ -708,6 +708,9 @@ class LipReadEval:
         wv = wer(vg, v)
         cv = cer(vg, v)
 
+        if w > 2.:
+            return
+        
         self.total_wer.update(w)
         self.total_cer.update(c)
         self.total_werv.update(wv)

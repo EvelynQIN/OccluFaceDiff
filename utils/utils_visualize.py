@@ -342,9 +342,9 @@ def tensor_vis_landmarks(images, landmarks, gt_landmarks=None, color = 'g', isSc
             if gt_landmarks is not None:
                 image_landmarks = plot_verts(image_landmarks, gt_landmarks_np[i], 'r')
         else:
+            image_landmarks = plot_verts(image, predicted_landmark, color)
             if gt_landmarks is not None:
-                image_landmarks = plot_verts(image, gt_landmarks_np[i], 'r')
-            image_landmarks = plot_verts(image_landmarks, predicted_landmark, color)
+                image_landmarks = plot_verts(image_landmarks, gt_landmarks_np[i], 'r')
             
         vis_landmarks.append(image_landmarks)
 

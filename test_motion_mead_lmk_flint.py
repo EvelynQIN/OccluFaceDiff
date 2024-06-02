@@ -551,11 +551,11 @@ class MotionTracker:
             self.num_frames = batch['lmk_2d'].shape[0]
             if batch['exp'].shape[1] != self.config.n_exp:
                 batch['exp'] = torch.cat([batch['exp'], torch.ones(self.num_frames, 50)], dim=-1)
-            # if self.num_frames < 25:
-            #     logger.info(f'[{motion_id}] is shorter than 1 sec, skipped.')
-            #     continue
+            if self.num_frames < 25:
+                logger.info(f'[{motion_id}] is shorter than 1 sec, skipped.')
+                continue
             eval_motion_num += 1
-            logger.info(f'Process [{motion_id}].')
+            logger.info(f'Process [{motion_id}]. with {self.num_frames} frames')
             # diffusion sample
 
             save_path = f"{self.sample_folder}/{motion_id}.npy"
@@ -628,6 +628,8 @@ class MotionTracker:
 
 def main():
     args = test_args()
+
+    args.timestep_respacing = '100' # use DDIM samper
     pretrained_args = get_cfg_defaults()
     # to guanrantee reproducibility
     torch.backends.cudnn.benchmark = False

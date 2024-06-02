@@ -4,23 +4,24 @@ dataset: "mead_25fps"
 dataset_path: "./dataset"
 weight_decay: 0.001
 batch_size: 1
-gradient_accumulation_steps: 32
-lr: 0.00005
-cosine_scheduler: True
+gradient_accumulation_steps: 128
+lr: 0.000005
+cosine_scheduler: False
 warmup_steps: 100
 device: 0 # -1 if using cpu for test
 num_workers: 4
 diffusion_steps: 1000 
 overwrite: True 
 no_normalization: False
-train_dataset_repeat_times: 10
-input_motion_length: 64
+train_dataset_repeat_times: 2
+input_motion_length: 32
+load_optimizer: True
 
 cond_mask_prob: 0
-audio_mask_prob: 0.1
+audio_mask_prob: 0.2
 fps: 25
 freeze_audio_encoder_interval: 4
-resume_checkpoint: checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit/model_27.pt
+resume_checkpoint: checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_video_classifier_s2/model_56.pt
 # flame_params
 n_shape: 300
 n_exp: 100 
@@ -31,13 +32,13 @@ use_iris: False
 
 # log
 wandb_log: True
-save_interval: 1
-log_interval: 1 
+save_interval: 1  # epochs
+log_interval: 8192  # steps
 
 #model architecture
-arch: "diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc" 
+arch: "diffusion_Transformer_768d_cat_mediapipelmk_FLINT_video_classifier_s2_res56" 
 latent_dim: 768
-dropout: 0.1
+dropout: 0.2  # avoid overfitting
 
 use_mask: False # use alibi mask
 
