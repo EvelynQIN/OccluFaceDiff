@@ -173,7 +173,7 @@ def load_RAVDESS_test_data(
         if (subject_list is not None and sbj not in subject_list) or \
             (emotion_list is not None and emotion not in emotion_list) or \
             (level_list is not None and intensity not in level_list) or \
-            (sent_list is not None and sent not in sent_list):
+            (sent_list is not None and int(sent) not in sent_list):
             continue
 
         motion_list.append('-'.join([vocal, emotion, intensity, sent, rep, sbj]))

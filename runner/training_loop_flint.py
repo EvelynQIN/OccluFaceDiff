@@ -84,7 +84,7 @@ class TrainLoop:
             self.mp_trainer.master_params, lr=self.lr, weight_decay=self.weight_decay
         )
         if self.args.cosine_scheduler:
-            self.scheduler = CosineAnnealingWarmRestarts(self.opt, T_0=15, T_mult=1, eta_min=1e-6)   # WarmupCosineSchedule(self.opt, warmup_steps=args.warmup_steps, t_total=self.num_steps)
+            self.scheduler = WarmupCosineSchedule(self.opt, warmup_steps=args.warmup_steps, t_total=self.num_steps)
         
         if self.resume_epoch and self.load_optimizer:
             self._load_optimizer_state()
@@ -108,6 +108,8 @@ class TrainLoop:
 
         # load the motion prior
         self._load_flint_encoder()
+
+        self.model.freeze_wav2vec()
 
     def _load_and_sync_parameters(self):
         resume_checkpoint = self.resume_checkpoint
@@ -203,18 +205,18 @@ class TrainLoop:
                 grad_update = True if local_step % self.gradient_accumulation_steps == 0 else False 
                 self.run_step(target, grad_update, **batch)
 
-                if local_step % self.log_interval == 0:
-                    self.validation()
+                # if local_step % self.log_interval == 0:
+                #     self.validation()
 
             if epoch == self.num_epochs or epoch % self.save_interval == 0:
                 self.save()
 
-            # if epoch % self.log_interval == 0:
-            #     self.validation()
+            if epoch % self.log_interval == 0:
+                self.validation()
 
         # Save the last checkpoint if it wasn't already saved.
-        # if (self.epoch) % self.save_interval != 0:
-        #     self.save()
+        if (self.epoch) % self.save_interval != 0:
+            self.save()
     
     # @profile
     def run_step(self, batch, grad_update, **model_kwargs):
@@ -223,7 +225,7 @@ class TrainLoop:
             self.forward_backward(batch, log_loss=True, **model_kwargs)
             self.mp_trainer.optimize(self.opt)
             if self.args.cosine_scheduler:
-                self.scheduler.step(self.epoch - self.resume_epoch - 1 + self.step / self.steps_per_epoch)
+                self.scheduler.step()
                 self.lr = self.opt.param_groups[-1]['lr']  # self.scheduler.get_last_lr()[0]
             else:
                 self._step_lr()

@@ -384,6 +384,8 @@ def main():
         )
         print(f"number of test sequences: {len(test_video_list)}")
 
+        
+
         test_dataset = TestRAVDESSDataset(
             args.dataset,
             args.dataset_path,
@@ -391,6 +393,8 @@ def main():
             test_video_list,
             args.model_type
         )
+
+    
 
     motion_tracker = EmoRecLoss(args, test_dataset, 'cuda')
     

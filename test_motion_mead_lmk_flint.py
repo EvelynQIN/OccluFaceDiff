@@ -60,7 +60,7 @@ class MotionTracker:
         self.flint_dim = 128
         self.flint_factor = 8
         self.test_data = test_data
-        self.original_data_folder = 'dataset/mead_25fps/original_data'
+        self.original_data_folder = 'dataset/mead_25fps/original_data' if config.test_dataset == 'MEAD' else 'dataset/RAVDESS'
         self.vis = config.vis
         self.save_rec = config.save_rec
         # IO setups
@@ -68,7 +68,7 @@ class MotionTracker:
         # name of the tested motion sequence
         self.save_folder = self.config.save_folder
         self.output_folder = os.path.join(self.save_folder, self.config.arch, config.exp_name)
-        self.sample_folder = os.path.join(self.output_folder, 'reconstruction')
+        self.sample_folder = os.path.join(self.output_folder, 'diffusion_sample')
         if self.save_rec:
             if not os.path.exists(self.sample_folder):
                 os.makedirs(self.sample_folder)
@@ -596,10 +596,14 @@ class MotionTracker:
                 # concat audio 
                 if self.to_mp4:
                     self.writer.release()
-                    subject, view, emotion, level, sent = motion_id.split('/')
-                    audio_path = os.path.join(self.original_data_folder, subject, 'audio', emotion, level, f"{sent}.m4a")
-                    assert os.path.exists(audio_path)
-                    os.system(f"ffmpeg -i {video_path}.mp4 -i {audio_path} -c:v copy -c:a copy {video_path}_audio.mp4")
+                    if self.config.test_dataset == 'MEAD':
+                        subject, view, emotion, level, sent = motion_id.split('/')
+                        audio_path = os.path.join(self.original_data_folder, subject, 'audio', emotion, level, f"{sent}.m4a")
+                        os.system(f"ffmpeg -i {video_path}.mp4 -i {audio_path} -c:v copy -c:a copy {video_path}_audio.mp4")
+                    else:
+                        vocal, emotion, level, sent, rep, subject = motion_id.split('-')
+                        audio_path = os.path.join(self.original_data_folder, 'audio','03-' + motion_id + '.wav')
+                        os.system(f"ffmpeg -i {video_path}.mp4 -i {audio_path} -c:v copy {video_path}_audio.mp4")
                     os.system(f"rm {video_path}.mp4")
             
             # start evaluation
@@ -618,7 +622,7 @@ class MotionTracker:
                 np.save(save_path, diffusion_output.numpy())
 
                 # save the occlusion mask
-                if self.config.exp_name not in ['non_occ', 'all']:
+                if self.config.exp_name not in ['non_occ', 'all'] and self.config.mask_path is None:
                     np.save(f"{self.sample_folder}/{motion_id}_mask.npy", batch['img_mask'].cpu().numpy())
             torch.cuda.empty_cache()
 
@@ -667,7 +671,8 @@ def main():
             args.use_iris,
             load_audio_input=True,
             vis=args.vis,
-            use_segmask=True
+            use_segmask=True,
+            mask_path=args.mask_path
         )
     elif args.test_dataset == "RAVDESS":
         from data_loaders.dataloader_RAVDESS import load_RAVDESS_test_data, TestRAVDESSDataset
@@ -689,7 +694,7 @@ def main():
             args.use_iris,
             load_audio_input=True,
             vis=args.vis,
-            mask_path=None
+            mask_path=args.mask_path
         )
     else:
         raise ValueError(f"{args.test_dataset} not supported!")

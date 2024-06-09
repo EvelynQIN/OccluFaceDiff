@@ -1,5 +1,5 @@
 save_dir: "./checkpoints" 
-num_epoch: 100
+num_epoch: 58
 dataset: "mead_25fps" 
 dataset_path: "./dataset"
 weight_decay: 0.001
@@ -10,15 +10,17 @@ cosine_scheduler: False
 warmup_steps: 100
 device: 0 # -1 if using cpu for test
 num_workers: 4
-train_dataset_repeat_times: 10
+diffusion_steps: 1000 
+overwrite: True 
+no_normalization: False
+train_dataset_repeat_times: 3
 input_motion_length: 64
-overwrite: True
 
-audio_mask_prob: 0.2
+cond_mask_prob: 0
+audio_mask_prob: 0.1
 fps: 25
-freeze_audio_encoder_interval: 6
-# resume_checkpoint: checkpoints/TransformerPure_768d_36l_cat_mediapipelmk_FLINT/model_26.pt
-
+freeze_audio_encoder_interval: 2
+resume_checkpoint: checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt
 # flame_params
 n_shape: 300
 n_exp: 100 
@@ -29,13 +31,13 @@ use_iris: False
 
 # log
 wandb_log: True
-save_interval: 1
+save_interval: 2
 log_interval: 1 
 
 #model architecture
-arch: "pure_TransformerPure_768d_36l_cat_mediapipelmk_FLINT" 
+arch: "diffusion_Transformer_768d_cat_mediapipelmk_FLINT_wpad" 
 latent_dim: 768
-dropout: 0.2
+dropout: 0.1
 
 use_mask: False # use alibi mask
 
@@ -44,5 +46,5 @@ ff_size: 1536
 num_enc_layers: 3
 num_heads: 4
 
-# unusable
+# unusable for transformer encoder 
 num_dec_layers: 6

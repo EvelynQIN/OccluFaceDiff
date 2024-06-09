@@ -90,8 +90,8 @@ class DiffusionModel(GaussianDiffusion):
                 'pose_loss': 0.,
                 'latent_rec_loss': 1.,
                 'mesh_verts_loss': 100.,
-                'lmk3d_loss': 0.,
-                'lmk2d_loss': 0.5,
+                'lmk3d_loss': 0.5,
+                'lmk2d_loss': 0.,
                 'mouth_closure_loss': 0.01,
                 'emotion_loss': 0,
                 'lipread_loss': 0
@@ -158,17 +158,17 @@ class DiffusionModel(GaussianDiffusion):
     
     def _load_evalnet(self):
  
-        # # ----- load resnet trained from EMOCA https://github.com/radekd91/emoca for expression loss ----- #
-        # self.expression_net = ExpressionLossNet().to(self.device)
-        # self.emotion_checkpoint = torch.load(self.model_cfg.expression_net_path)['state_dict']
-        # self.emotion_checkpoint['linear.0.weight'] = self.emotion_checkpoint['linear.weight']
-        # self.emotion_checkpoint['linear.0.bias'] = self.emotion_checkpoint['linear.bias']
+        # ----- load resnet trained from EMOCA https://github.com/radekd91/emoca for expression loss ----- #
+        self.expression_net = ExpressionLossNet().to(self.device)
+        self.emotion_checkpoint = torch.load(self.model_cfg.expression_net_path)['state_dict']
+        self.emotion_checkpoint['linear.0.weight'] = self.emotion_checkpoint['linear.weight']
+        self.emotion_checkpoint['linear.0.bias'] = self.emotion_checkpoint['linear.bias']
 
-        # print(f"[Diffusion] Load emotion net.")
-        # self.expression_net.load_state_dict(self.emotion_checkpoint, strict=False)
-        # self.expression_net.eval()
-        # for param in self.expression_net.parameters():
-        #     param.requires_grad = False
+        print(f"[Diffusion] Load emotion net.")
+        self.expression_net.load_state_dict(self.emotion_checkpoint, strict=False)
+        self.expression_net.eval()
+        for param in self.expression_net.parameters():
+            param.requires_grad = False
 
         # ----- load lipreader network for lipread loss ----- #
         config = ConfigParser()
@@ -341,17 +341,17 @@ class DiffusionModel(GaussianDiffusion):
         pose_loss = F.mse_loss(jaw_pred, model_kwargs['jaw'])
         expr_loss = F.mse_loss(expr_pred, model_kwargs['exp'])
 
-        # emotion_loss
-        emo_input_gt = torch.cat([
-            model_kwargs['shape'][...,:100], model_kwargs['exp'][...,:50], model_kwargs['jaw']], dim=-1
-        )
-        emo_input_pred = torch.cat([
-            model_kwargs['shape'][...,:100], expr_pred[...,:50],jaw_pred], dim=-1
-        )
-        with torch.no_grad():
-            video_emo_feature_gt = self.emo_classifier.encode(emo_input_gt)
-        video_emo_feature_pred = self.emo_classifier.encode(emo_input_pred)
-        emotion_loss = F.mse_loss(video_emo_feature_gt, video_emo_feature_pred)
+        # # emotion_loss
+        # emo_input_gt = torch.cat([
+        #     model_kwargs['shape'][...,:100], model_kwargs['exp'][...,:50], model_kwargs['jaw']], dim=-1
+        # )
+        # emo_input_pred = torch.cat([
+        #     model_kwargs['shape'][...,:100], expr_pred[...,:50],jaw_pred], dim=-1
+        # )
+        # with torch.no_grad():
+        #     video_emo_feature_gt = self.emo_classifier.encode(emo_input_gt)
+        # video_emo_feature_pred = self.emo_classifier.encode(emo_input_pred)
+        # emotion_loss = F.mse_loss(video_emo_feature_gt, video_emo_feature_pred)
         
         # # velocity loss
         # pose_vel_loss = torch.mean(
@@ -402,7 +402,7 @@ class DiffusionModel(GaussianDiffusion):
         # eye_closure_loss = eye_closure_lmk_loss(lmk_pred, lmk_gt)
         mouth_closure_loss = mouth_closure_lmk_loss(lmk_pred, lmk_gt)
 
-        # emotion_loss = 0
+        emotion_loss = 0
         lipread_loss = 0
 
         if self.train_stage == 2:

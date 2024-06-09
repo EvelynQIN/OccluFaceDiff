@@ -613,6 +613,12 @@ def add_test_options(parser):
         type=float,
         help="scale factor of audio conditioned sampler.",
     )
+    parser.add_argument(
+        "--mask_path",
+        type=str,
+        default=None,
+        help="whether to assign mask path to it.",
+    )
 
     
 def add_evaluation_options(parser):

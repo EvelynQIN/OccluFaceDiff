@@ -5,13 +5,13 @@ import random
 import numpy as np
 
 import torch
-
+import torch.nn as nn
 from data_loaders.dataloader_MEAD_flint import get_dataloader, load_data, TrainMeadDataset
 
 # from runner.train_mlp import train_step, val_step
 from runner.training_loop_flint import TrainLoop
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, MultiStepLR
 from utils.scheduler import WarmupCosineSchedule
 from utils import dist_util
 
@@ -70,6 +70,7 @@ def train_pureTrans_model(args, model_cfg, train_loader, valid_loader):
         args.latent_dim, 
         args.ff_size, 
         args.num_enc_layers, 
+        args.num_dec_layers, 
         args.num_heads, 
         args.dropout
     )
@@ -114,10 +115,12 @@ def train_pureTrans_model(args, model_cfg, train_loader, valid_loader):
 
     # initialize optimizer
     optimizer = torch.optim.Adam(
-        model.parameters(), lr=args.lr, weight_decay=args.weight_decay
+        model.parameters(), lr=args.lr, weight_decay=args.weight_decay, eps = 1e-5
     )
     if args.cosine_scheduler:
         scheduler =  WarmupCosineSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=num_steps)
+    else:
+        scheduler = MultiStepLR(optimizer, milestones=[15, 30], gamma=0.3)
     
     batch_size = args.batch_size
     lr = args.lr
@@ -156,7 +159,7 @@ def train_pureTrans_model(args, model_cfg, train_loader, valid_loader):
                 'right': 0.15,
                 'left_eye': 0.,
                 'right_eye': 0.,
-                'mouth': 0.8,
+                'mouth': 0.5,
                 'random': 0.,
                 'contour': 0.3
             }
@@ -170,6 +173,7 @@ def train_pureTrans_model(args, model_cfg, train_loader, valid_loader):
 
             for k in batch:
                 batch[k] = batch[k].to(device)
+                assert batch[k] is not None, f'{k} in batck is None'
             motion_target = torch.cat([batch['exp'], batch['jaw']], dim=-1)
 
             target = flint.motion_encoder(motion_target)  # (bs, n//8, 128)
@@ -185,8 +189,8 @@ def train_pureTrans_model(args, model_cfg, train_loader, valid_loader):
             loss.backward()
 
             if grad_update:
+                nn.utils.clip_grad_norm_(model.parameters(), 0.7)
                 optimizer.step()
-                scheduler.step()
                 lr = optimizer.param_groups[-1]['lr']
                 optimizer.zero_grad()
                 if args.wandb_log:
@@ -212,6 +216,7 @@ def train_pureTrans_model(args, model_cfg, train_loader, valid_loader):
                         batch[k] = batch[k].to(device)
                     motion_target = torch.cat([batch['exp'], batch['jaw']], dim=-1)
                     target = flint.motion_encoder(motion_target)  # (bs, n//8, 128)
+
                     model_output = model(**batch)
                     _, loss_dict = train_loss.compute_loss(target, model_output, **batch)
                     for k in val_loss:
@@ -231,6 +236,7 @@ def train_pureTrans_model(args, model_cfg, train_loader, valid_loader):
                 "wb",
             ) as f:
                 torch.save(model.state_dict(), f)
+        scheduler.step()
 
 def set_deterministic(seed):
     torch.backends.cudnn.benchmark = False

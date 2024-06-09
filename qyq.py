@@ -1,8 +1,10 @@
 import cv2
 import numpy as np
 import os 
-
-print(len(os.listdir('vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/non_occ/reconstruction')))
+from glob import glob
+for occ in os.scandir('vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_video_classifier_s2'):
+    for mask_file in glob(os.path.join(occ.path, f'reconstruction/*/*/*/*/*_mask.npy')):
+        os.system(f'rm {mask_file}')
 
 
 

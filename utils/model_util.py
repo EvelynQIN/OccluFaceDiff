@@ -47,8 +47,8 @@ def create_model_and_diffusion(args, model_cfg, device):
     arch = args.arch  
     if "Audio" in arch:
         denoise_model = denoising_model.AudioTransformerFiLM(**get_transformer_args(args))
-    elif "Enc" in arch:
-        denoise_model = denoising_model.FaceTransEncoderFLINT(**get_transformer_args(args))
+    elif "woFiLM" in arch:
+        denoise_model = denoising_model.FaceTransformerFLINTwoFiLM(**get_transformer_args(args))
     elif "FLINT" in arch:
         denoise_model = denoising_model.FaceTransformerFLINT(**get_transformer_args(args))
     elif "Trans" in arch:

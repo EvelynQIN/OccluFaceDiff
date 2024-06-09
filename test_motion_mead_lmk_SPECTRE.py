@@ -403,7 +403,16 @@ class MotionTracker:
                     self.writer = imageio.get_writer(gif_fname, mode='I')
             
             # batch inference
-            code_dict = self.spectre_inference(batch)
+            code_dict = None
+            if self.save_rec:
+                # save inference results
+                save_path = f"{self.sample_folder}/{motion_id}.npy"
+                if os.path.exists(save_path):
+                    code_dict = np.load(save_path, allow_pickle=True)[()]
+                    for key in code_dict:
+                        code_dict[key] = torch.from_numpy(code_dict[key])
+            if code_dict is None:
+                code_dict = self.spectre_inference(batch)
 
             if self.vis:
                 # batch visualiza all frames

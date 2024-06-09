@@ -6,7 +6,7 @@ import numpy as np
 
 import torch
 
-from data_loaders.dataloader_MEAD_flint import get_dataloader, load_data, TrainMeadDataset
+from data_loaders.dataloader_MEAD_flint import get_dataloader, load_data, TrainMeadDataset, TrainMeadDatasetPad
 
 # from runner.train_mlp import train_step, val_step
 from runner.training_loop_flint import TrainLoop
@@ -84,7 +84,7 @@ def main():
     )
 
     print(f"number of train sequences: {len(train_processed_path)}")
-    train_dataset = TrainMeadDataset(
+    train_dataset = TrainMeadDatasetPad(
         args.dataset,
         args.dataset_path,
         train_processed_path,
@@ -111,12 +111,12 @@ def main():
         args.input_motion_length
     )
     print(f"number of test sequences: {len(val_processed_path)}")
-    val_dataset = TrainMeadDataset(
+    val_dataset = TrainMeadDatasetPad(
         args.dataset,
         args.dataset_path,
         val_processed_path,
         args.input_motion_length,
-        20,
+        5,
         args.no_normalization,
         args.fps,
         args.n_shape,

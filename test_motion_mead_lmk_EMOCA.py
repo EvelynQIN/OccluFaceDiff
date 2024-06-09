@@ -62,7 +62,7 @@ class MotionTracker:
         self.output_folder = os.path.join(self.save_folder, 'EMOCA', config.exp_name)
         
         if self.save_rec:
-            self.sample_folder = os.path.join(self.output_folder, 'reconstruction')
+            self.sample_folder = os.path.join(self.output_folder, 'EMOCA_reconstruction')
             if not os.path.exists(self.sample_folder):
                 os.makedirs(self.sample_folder)
         
@@ -96,25 +96,25 @@ class MotionTracker:
 
         # eval metrics
         pred_metrics = [
-            "pred_jitter",
-            "mvpe",
-            "mvve",
-            "expre_error",
-            "pose_error",
-            "lmk_3d_mvpe",
-            "mvpe_face",
-            "lve",
-            "mouth_closure",
+            # "pred_jitter",
+            # "mvpe",
+            # "mvve",
+            # "expre_error",
+            # "pose_error",
+            # "lmk_3d_mvpe",
+            # "mvpe_face",
+            # "lve",
+            # "mouth_closure",
             "lmk2d_reproj_error",
         ]
 
-        # from emica pseudo gt
-        gt_metrics = [
-            "gt_jitter",
-            "gt_mouth_closure",
-        ]
+        # # from emica pseudo gt
+        # gt_metrics = [
+        #     "gt_jitter",
+        #     "gt_mouth_closure",
+        # ]
 
-        self.all_metrics = pred_metrics + gt_metrics
+        self.all_metrics = pred_metrics # + gt_metrics
     
     def _create_flame(self):
         self.flame = FLAME_mediapipe(self.model_cfg).to(self.device)
@@ -363,19 +363,29 @@ class MotionTracker:
             
             
             # batch inference
-            emoca_codes = defaultdict(list)
-            for start_id in range(0, self.num_frames, self.sld_wind_size):        
-                image_split = batch['image'][start_id:start_id+self.sld_wind_size].to(self.device)
-                img_mask_split = batch['img_mask'][start_id:start_id+self.sld_wind_size].to(self.device)
-                image_split =  image_split * img_mask_split.unsqueeze(1)
-                with torch.no_grad():
-                    emoca_rec_split = self.emoca(image_split)
-                for k in emoca_rec_split:
-                    emoca_codes[k].append(emoca_rec_split[k].cpu())
+            emoca_codes = None
+            if self.save_rec:
+                # save inference results
+                save_path = f"{self.sample_folder}/{motion_id}.npy"
+                if os.path.exists(save_path):
+                    emoca_codes = np.load(save_path, allow_pickle=True)[()]
+                    for key in emoca_codes:
+                        emoca_codes[key] = torch.from_numpy(emoca_codes[key])
 
-            for k in emoca_codes:
-                emoca_codes[k] = torch.cat(emoca_codes[k], dim=0)
-                # print(f"{k}: {emoca_codes[k].shape}")
+            if emoca_codes is None:
+                emoca_codes = defaultdict(list)
+                for start_id in range(0, self.num_frames, self.sld_wind_size):        
+                    image_split = batch['image'][start_id:start_id+self.sld_wind_size].to(self.device)
+                    img_mask_split = batch['img_mask'][start_id:start_id+self.sld_wind_size].to(self.device)
+                    image_split =  image_split * img_mask_split.unsqueeze(1)
+                    with torch.no_grad():
+                        emoca_rec_split = self.emoca(image_split)
+                    for k in emoca_rec_split:
+                        emoca_codes[k].append(emoca_rec_split[k].cpu())
+
+                for k in emoca_codes:
+                    emoca_codes[k] = torch.cat(emoca_codes[k], dim=0)
+                    # print(f"{k}: {emoca_codes[k].shape}")
 
             if self.vis:
                 # batch visualiza all frames
