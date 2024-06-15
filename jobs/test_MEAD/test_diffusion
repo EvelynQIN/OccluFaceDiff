@@ -1,12 +1,11 @@
 # run reconstruction
-python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name non_occ --save_rec 
-python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name all --save_rec 
-python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name mouth --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/mouth/diffusion_sample
-python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name upper --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/upper/diffusion_sample
-python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name random --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/random/diffusion_sample
-python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name asym --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/asym/diffusion_sample
-python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name missing_frames --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/missing_frames/diffusion_sample
-
+# python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name non_occ --save_rec 
+# python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name all --save_rec 
+python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name mouth --save_rec
+python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name upper --save_rec
+python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name random --save_rec
+# python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name asym --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/asym/diffusion_sample
+python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name missing_frames --save_rec
 
 # # test lip reading
 # python3 test_lipreading.py --output_folder vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_video_classifier_s2/non_occ --model_type diffusion --rec_folder reconstruction

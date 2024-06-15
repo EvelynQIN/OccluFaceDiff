@@ -1,5 +1,69 @@
 from utils.MediaPipeLandmarkLists import *
 import torch
+import os
+from glob import glob
+import cv2 
+from PIL import Image
+import numpy as np
+
+# inject random masks into the original video
+class RandomOcclusion(object):
+    def __init__(self):
+        self.mask_folder = 'dataset/occ_masks'
+        self.mask_dict = {
+            'mouth': list(glob(os.path.join(self.mask_folder, 'mouth/*.png'))),
+            'random': list(glob(os.path.join(self.mask_folder, 'random/*.png'))),
+            'upper': list(glob(os.path.join(self.mask_folder, 'upper/*.png'))),
+        }
+        self.image_size = 224
+    
+    def get_lmk_mask_from_img_mask(self, img_mask, frame_ids, lmk_2d):
+        kpts = (lmk_2d.clone() * 112 + 112).long()
+        n, v = kpts.shape[:2]
+        lmk_mask = torch.ones((n,v))
+        for i in frame_ids:
+            for j in range(v):
+                x, y = kpts[i,j]
+                if x<0 or x >=self.image_size or y<0 or y>=self.image_size or img_mask[y,x]:
+                    lmk_mask[i,j] = 0
+        return lmk_mask
+    
+    def get_landmark_mask(self, lmk_2d, frame_ids, mask_type):
+        
+        # get a random mask from the mask type
+        num_masks = len(self.mask_dict[mask_type])
+        mask_id = np.random.randint(low=0, high = num_masks)
+        mask_path = self.mask_dict[mask_type][mask_id]
+        mask = Image.open(mask_path).convert('RGBA')
+        mask = mask.resize((224, 224))
+        mask = np.asanyarray(mask)  # (224, 224)
+        img_mask = torch.from_numpy(mask[:,:,-1] > 5).bool() # (224, 224)
+        lmk_mask = self.get_lmk_mask_from_img_mask(img_mask, frame_ids, lmk_2d)
+        return lmk_mask, mask_path
+    
+    def get_landmark_mask_from_mask_path(self, lmk_2d, frame_ids, mask_path):
+        
+        # get a random mask from the mask type
+        mask = Image.open(mask_path).convert('RGBA')
+        mask = mask.resize((224, 224))
+        mask = np.asanyarray(mask)  # (224, 224)
+        img_mask = torch.from_numpy(mask[:,:,-1] > 5).bool() # (224, 224)
+        lmk_mask = self.get_lmk_mask_from_img_mask(img_mask, frame_ids, lmk_2d)
+        return lmk_mask
+    
+    def get_image_with_mask(self, image, mask_path, frame_ids):
+        mask = Image.open(mask_path).convert('RGBA')
+        mask = mask.resize((224, 224))
+        mask = np.asanyarray(mask)  # (224, 224)
+        img_mask = mask[:,:,-1] > 5 # (224, 224)
+
+        image = (image.permute(0, 2, 3, 1) * 255.).numpy().astype(np.uint8)
+        for i in frame_ids:
+            image[i][img_mask] = mask[img_mask][:,:3]
+        image = torch.from_numpy(image / 255.).float()
+        image = image.permute(0, 3, 1, 2)
+        return image
+
 
 
 class MediaPipeFaceOccluder(object):

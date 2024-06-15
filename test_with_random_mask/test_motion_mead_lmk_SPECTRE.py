@@ -15,6 +15,8 @@ from time import time
 from matplotlib import cm
 from collections import defaultdict
 import argparse
+import sys
+sys.path.append('./')
 
 from utils import utils_transform, utils_visualize
 from utils.metrics import get_metric_function
@@ -36,7 +38,7 @@ from pytorch3d.structures import Meshes
 
 import imageio
 from skimage.io import imread
-from data_loaders.dataloader_MEAD_flint import load_test_data, TestMeadDataset
+from data_loaders.dataloader_MEAD_flint import load_test_data, TestMeadDatasetRandomOcclusion
 import ffmpeg
 import pickle
 from model.spectre import SPECTRE
@@ -61,11 +63,11 @@ class MotionTracker:
         self.output_folder = os.path.join(self.save_folder, 'SPECTRE', config.exp_name)
         
         if self.save_rec:
-            self.sample_folder = os.path.join(self.output_folder, 'SPECTRE_reconstruction')
+            self.sample_folder = os.path.join(self.output_folder, 'occ_mask')
             if not os.path.exists(self.sample_folder):
                 os.makedirs(self.sample_folder)
         
-        logger.add(os.path.join(self.output_folder, 'test_mead_wrt_gt.log'))
+        logger.add(os.path.join(self.output_folder, 'test_mead_occ_mask.log'))
         logger.info(f"Using device {self.device}.")
 
         # vis settings
@@ -105,14 +107,12 @@ class MotionTracker:
             "lve",
             "mouth_closure",
             "lmk2d_reproj_error",
-            "lmk2d_vis_reproj_error",
-            "lmk2d_invis_reproj_error"
         ]
 
         # from emica pseudo gt
         gt_metrics = [
-            # "gt_jitter",
-            # "gt_mouth_closure",
+            "gt_jitter",
+            "gt_mouth_closure",
         ]
 
         self.all_metrics = pred_metrics + gt_metrics
@@ -225,7 +225,7 @@ class MotionTracker:
         # landmarks vis
         lmk2d_vis = utils_visualize.tensor_vis_landmarks(gt_data['image'], pred_lmk2d[...,:2], gt_data['lmk_2d'])
         
-        gt_img = gt_data['image'] * gt_data['img_mask'].unsqueeze(1)
+        gt_img = gt_data['image']
 
         for i in range(gt_img.shape[0]):
             vis_dict = {
@@ -292,7 +292,6 @@ class MotionTracker:
         lmk_2d_emica[:, :, 1:] = -lmk_2d_emica[:, :, 1:]
 
         lmk_2d_gt = batch['lmk_2d'][:,self.flame.landmark_indices_mediapipe]
-        lmk_mask_emb = batch['lmk_mask'][:, self.flame.landmark_indices_mediapipe]
 
         eval_log = {}
         for metric in self.all_metrics:
@@ -300,7 +299,7 @@ class MotionTracker:
                 get_metric_function(metric)(
                     spectre_exp, spectre_jaw_aa, verts_pred, lmk_3d_pred, lmk_2d_pred, lmk_2d_emica,
                     gt_expr, gt_jaw_aa, verts_gt, lmk_3d_gt, lmk_2d_gt,
-                    self.config.fps, self.flame_v_mask, lmk_mask_emb
+                    self.config.fps, self.flame_v_mask 
                 )
                 .numpy()
             )
@@ -331,8 +330,6 @@ class MotionTracker:
         """
          # pad
         image = batch['image'].clone()
-        img_mask = batch['img_mask']
-        image =  image * img_mask.unsqueeze(1)  # (n, 3, 224, 224)
         image = torch.cat([
             image[:1].repeat(2, 1, 1, 1), image, image[-1:].repeat(2, 1, 1, 1)], dim=0) # (n+4, 3, 224, 224)
         L = 50 # chunk size
@@ -407,13 +404,13 @@ class MotionTracker:
             
             # batch inference
             code_dict = None
-            # if self.save_rec:
-            #     # save inference results
-            #     save_path = f"{self.sample_folder}/{motion_id}.npy"
-            #     if os.path.exists(save_path):
-            #         code_dict = np.load(save_path, allow_pickle=True)[()]
-            #         for key in code_dict:
-            #             code_dict[key] = torch.from_numpy(code_dict[key])
+            if self.save_rec:
+                # save inference results
+                save_path = f"{self.sample_folder}/{motion_id}.npy"
+                if os.path.exists(save_path):
+                    code_dict = np.load(save_path, allow_pickle=True)[()]
+                    for key in code_dict:
+                        code_dict[key] = torch.from_numpy(code_dict[key])
             if code_dict is None:
                 code_dict = self.spectre_inference(batch)
 
@@ -439,7 +436,8 @@ class MotionTracker:
             # start evaluation
             self.flame.to('cpu')
             for k in batch:
-                batch[k] = batch[k].to('cpu')
+                if k not in ['mask_path', 'frame_ids']:
+                    batch[k] = batch[k].to('cpu')
             for k in code_dict:
                 code_dict[k] = code_dict[k].to('cpu')
             eval_log = self.evaluate_one_motion(code_dict, batch)
@@ -577,7 +575,7 @@ def main():
     emotion_list = [args.emotion] if args.emotion else None
 
     if args.test_dataset == "MEAD":
-        test_video_list = load_test_data(
+        test_video_list_all = load_test_data(
             args.dataset, 
             args.dataset_path, 
             args.split, 
@@ -585,9 +583,13 @@ def main():
             emotion_list=emotion_list, 
             level_list=level_list, 
             sent_list=sent_list)
+        test_video_list = []
+        for motion_path, seqlen in test_video_list_all:
+            if os.path.exists(os.path.join(args.mask_path, f"{motion_path}_mask.npy")):
+                test_video_list.append((motion_path, seqlen))
     
         print(f"number of test sequences: {len(test_video_list)}")
-        test_dataset = TestMeadDataset(
+        test_dataset = TestMeadDatasetRandomOcclusion(
             args.dataset,
             args.dataset_path,
             test_video_list,
@@ -599,11 +601,11 @@ def main():
             use_iris=False,
             load_audio_input=False,
             vis=True,
-            mask_path = args.mask_path  # 
+            mask_folder = args.mask_path  # 
         )
     elif args.test_dataset == "RAVDESS":
-        from data_loaders.dataloader_RAVDESS import load_RAVDESS_test_data, TestRAVDESSDataset
-        test_video_list = load_RAVDESS_test_data(
+        from data_loaders.dataloader_RAVDESS import load_RAVDESS_test_data, TestRAVDESSDatasetRandomOcclusion
+        test_video_list_all = load_RAVDESS_test_data(
             args.test_dataset, 
             args.dataset_path, 
             subject_list=subject_list,
@@ -611,8 +613,13 @@ def main():
             level_list=level_list, 
             sent_list=sent_list)
         
+        test_video_list = []
+        for motion_path in test_video_list_all:
+            if os.path.exists(os.path.join(args.mask_path, f"{motion_path}_mask.npy")):
+                test_video_list.append(motion_path)
+        
         print(f"number of test sequences: {len(test_video_list)}")
-        test_dataset = TestRAVDESSDataset(
+        test_dataset = TestRAVDESSDatasetRandomOcclusion(
             args.test_dataset,
             args.dataset_path,
             test_video_list,
@@ -632,3 +639,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# python3 test_with_random_mask/test_motion_mead_lmk_SPECTRE.py --exp_name mouth --save_rec --mask_path vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/mouth/occ_mask

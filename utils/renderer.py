@@ -273,7 +273,7 @@ class SRenderY(nn.Module):
         return shading.mean(1)
 
     def render_shape(self, vertices, transformed_vertices, colors = None, images=None, detail_normal_images=None, 
-                lights=None, return_grid=False, uv_detail_normals=None, h=None, w=None, return_pos=False):
+                lights=None, return_grid=False, uv_detail_normals=None, h=None, w=None, return_pos=False, black_bg=True):
         '''
         -- rendering shape with detail normal map
         '''
@@ -346,7 +346,10 @@ class SRenderY(nn.Module):
         alpha_images = alpha_images*pos_mask
 
         if images is None:
-            shape_images = shaded_images*alpha_images + torch.zeros_like(shaded_images).to(vertices.device)*(1-alpha_images)
+            if black_bg:
+                shape_images = shaded_images*alpha_images + torch.zeros_like(shaded_images).to(vertices.device)*(1-alpha_images)
+            else:
+                shape_images = shaded_images*alpha_images + torch.ones_like(shaded_images).to(vertices.device)*(1-alpha_images)
         else:
             shape_images = shaded_images*alpha_images + images*(1-alpha_images)
 

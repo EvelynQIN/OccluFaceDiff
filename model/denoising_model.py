@@ -581,7 +581,7 @@ class FaceTransformerFLINT(nn.Module):
         **kwargs):
         super().__init__()
 
-        self.tag = 'FaceTransformerFLINT'
+        self.tag = 'FaceTransformerFLINTwFILM'
         self.input_feats = 128
         self.dataset = dataset
         self.use_mask = use_mask

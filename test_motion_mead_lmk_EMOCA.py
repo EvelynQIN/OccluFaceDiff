@@ -96,16 +96,18 @@ class MotionTracker:
 
         # eval metrics
         pred_metrics = [
-            # "pred_jitter",
-            # "mvpe",
-            # "mvve",
-            # "expre_error",
-            # "pose_error",
-            # "lmk_3d_mvpe",
-            # "mvpe_face",
-            # "lve",
-            # "mouth_closure",
+            "pred_jitter",
+            "mvpe",
+            "mvve",
+            "expre_error",
+            "pose_error",
+            "lmk_3d_mvpe",
+            "mvpe_face",
+            "lve",
+            "mouth_closure",
             "lmk2d_reproj_error",
+            "lmk2d_vis_reproj_error",
+            "lmk2d_invis_reproj_error"
         ]
 
         # # from emica pseudo gt
@@ -290,6 +292,7 @@ class MotionTracker:
         lmk_2d_emica[:, :, 1:] = -lmk_2d_emica[:, :, 1:]
 
         lmk_2d_gt = batch['lmk_2d'][:,self.flame.landmark_indices_mediapipe]
+        lmk_mask_emb = batch['lmk_mask'][:, self.flame.landmark_indices_mediapipe]
 
         eval_log_deca = {}
         for metric in self.all_metrics:
@@ -297,7 +300,7 @@ class MotionTracker:
                 get_metric_function(metric)(
                     deca_exp, deca_jaw_aa, verts_pred, lmk_3d_pred, lmk_2d_pred, lmk_2d_emica,
                     gt_expr, gt_jaw_aa, verts_gt, lmk_3d_gt, lmk_2d_gt,
-                    self.config.fps, self.flame_v_mask 
+                    self.config.fps, self.flame_v_mask, lmk_mask_emb
                 )
                 .numpy()
             )
@@ -321,7 +324,7 @@ class MotionTracker:
                 get_metric_function(metric)(
                     deca_exp, deca_jaw_aa, verts_pred, lmk_3d_pred, lmk_2d_pred, lmk_2d_emica,
                     gt_expr, gt_jaw_aa, verts_gt, lmk_3d_gt, lmk_2d_gt,
-                    self.config.fps, self.flame_v_mask 
+                    self.config.fps, self.flame_v_mask, lmk_mask_emb
                 )
                 .numpy()
             )
@@ -339,6 +342,7 @@ class MotionTracker:
         for i in tqdm(range(num_test_motions)):
             self.flame.to(self.device)
             batch, motion_id = self.test_data[i]
+            assert 'lmk_mask' in batch
             self.num_frames = batch['image'].shape[0]
             if self.num_frames < 25:
                 logger.info(f'[{motion_id}] is shorter than 1 sec, skipped.')
@@ -364,13 +368,13 @@ class MotionTracker:
             
             # batch inference
             emoca_codes = None
-            if self.save_rec:
-                # save inference results
-                save_path = f"{self.sample_folder}/{motion_id}.npy"
-                if os.path.exists(save_path):
-                    emoca_codes = np.load(save_path, allow_pickle=True)[()]
-                    for key in emoca_codes:
-                        emoca_codes[key] = torch.from_numpy(emoca_codes[key])
+            # if self.save_rec:
+            #     # save inference results
+            #     save_path = f"{self.sample_folder}/{motion_id}.npy"
+            #     if os.path.exists(save_path):
+            #         emoca_codes = np.load(save_path, allow_pickle=True)[()]
+            #         for key in emoca_codes:
+            #             emoca_codes[key] = torch.from_numpy(emoca_codes[key])
 
             if emoca_codes is None:
                 emoca_codes = defaultdict(list)

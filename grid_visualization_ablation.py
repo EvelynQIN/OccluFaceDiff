@@ -41,167 +41,6 @@ import h5py
 from torch.utils.data import DataLoader, Dataset
 from utils.MediaPipeLandmarkLists import *
 
-class TestRAVDESSDataset(Dataset):
-    def __init__(
-        self,
-        dataset_name, 
-        dataset_path,
-        rec_paths,
-        split_data,
-        model_types=['diffusion']
-    ):
-        self.split_data = split_data
-        self.rec_paths = rec_paths
-        self.dataset = dataset_name
-        self.model_types = model_types
-
-        # paths to processed folder
-        self.processed_folder = os.path.join(dataset_path, dataset_name, 'processed')
-        self.cropped_landmark_folder = os.path.join(self.processed_folder,'cropped_landmarks_mediapipe')
-        self.emoca_rec_folder = os.path.join(self.processed_folder, 'EMOCA_reconstruction')
-        self.video_id_to_sent = {
-            '01': 'KIDS ARE TALKING BY THE DOOR',
-            '02': 'DOGS ARE SITTING BY THE DOOR'
-        }
-        self.video_folder = os.path.join(self.processed_folder, 'cropped_videos')
-
-    def __len__(self):
-        return len(self.split_data)
-    
-    def _get_transcript(self, motion_id):
-        vocal, emotion, intensity, sent, rep, sbj = motion_id.split('-')
-        return self.video_id_to_sent[sent]
-    
-    def _get_video_input(self, motion_id):
-        fname = '02-' + motion_id + '.npy'
-        lmk_path = os.path.join(self.cropped_landmark_folder, fname)
-        lmk_2d = np.load(lmk_path, allow_pickle=True)[()][:,EMBEDDING_INDICES]
-    
-        rec_dict = {}
-        rec_dict['lmk_2d'] = torch.from_numpy(lmk_2d).float() # (n,105,2)
-
-        fname = '02-' + motion_id + '.mp4'
-        video_path = os.path.join(self.video_folder, fname)
-        video_cap = cv2.VideoCapture()
-        if not video_cap.open(video_path):
-            print(f"{video_path} open error!")
-            exit(1)
-        image_array = []
-        while True:
-            _, frame = video_cap.read()
-            if frame is None:
-                break
-            image_array.append(frame)
-        video_cap.release()
-        image_array = np.stack(image_array) / 255. # (n, 224, 224, 3) in float BGR
-        rec_dict['image'] = torch.from_numpy(image_array[:,:,:,[2,1,0]]).permute(0,3,1,2).float() # (n, 3, 224, 224) in RGB
-        return rec_dict
-
-    def _get_emica_codes(self, motion_id):
-        fname = motion_id + '.npy'
-        rec_path = os.path.join(self.emoca_rec_folder, fname)
-        rec_dict = np.load(rec_path, allow_pickle=True)[()]
-
-        rec_dict['global_pose'] = rec_dict['pose'][:,:3]
-        rec_dict['jaw'] = rec_dict['pose'][:,3:]
-        rec_dict.pop('pose', None)
-        for key in rec_dict:
-            rec_dict[key] = torch.from_numpy(rec_dict[key]).float()
-        
-        # get image
-        rec_dict['image'] = self._get_video_input(motion_id)['image']
-
-        return rec_dict
-    
-    def _get_diffusion_reconstruction(self, motion_path, rec_path):
-        sample_path = os.path.join(rec_path, f"{motion_path}.npy")
-        if not os.path.exists(sample_path):
-            return None
-        diffusion_sample = np.load(sample_path, allow_pickle=True)[()]
-        diffusion_codes = {}
-        diffusion_codes['jaw'] = torch.from_numpy(diffusion_sample[:,100:]).float()
-        diffusion_codes['exp'] = torch.from_numpy(diffusion_sample[:,:100]).float()
-
-        mask_path = os.path.join(rec_path, f"{motion_path}_mask.npy")
-        print(mask_path)
-        if os.path.exists(mask_path):
-            print(f"found mask")
-            mask = np.load(mask_path, allow_pickle=True)[()]
-            diffusion_codes['mask'] = torch.from_numpy(mask).float()
-
-        return diffusion_codes
-    
-    def _get_emoca_reconstruction(self, motion_path, model_type, rec_path):
-        sample_path = os.path.join(rec_path, f"{motion_path}.npy")
-        if not os.path.exists(sample_path):
-            return None
-        emoca_codes = np.load(sample_path, allow_pickle=True)[()]
-
-        rec_dict = {}
-        rec_dict['jaw'] = torch.from_numpy(emoca_codes['pose'][:,3:]).float()
-        if model_type in ['deca', 'spectre']:
-            rec_dict['exp'] = torch.from_numpy(emoca_codes['exp']).float()
-        else:
-            rec_dict['exp'] = torch.from_numpy(emoca_codes['exp_emoca']).float()
-        return rec_dict
-    
-    def _get_verts_reconstruction(self, motion_path, rec_path):
-        sample_path = os.path.join(rec_path, f"{motion_path}.npy")
-        if not os.path.exists(sample_path):
-            return None
-        rec_dict = {}
-        verts_reconstruciton = np.load(sample_path, allow_pickle=True)[()]
-        rec_dict['verts'] = torch.from_numpy(verts_reconstruciton).float()
-
-        # fix a dummy camera
-        # rec_dict['cam'] = torch.FloatTensor([[ 8.8514, -0.0149,  0.0190]]).repeat(verts_reconstruciton.shape[0], 1)
-
-        return rec_dict
-    
-    def __getitem__(self, idx):
-        motion_path = self.split_data[idx]
-
-        model_reconstructions = {}
-        gt_flame = self._get_emica_codes(motion_path)
-        model_reconstructions['gt'] = gt_flame
-        for model_type in self.model_types:
-            rec_path = self.rec_paths[model_type]
-            if model_type in ['faceformer', 'facediffuser', 'codetalker', 'voca']:
-                rec_dict = self._get_verts_reconstruction(motion_path, rec_path)
-                n_verts = rec_dict['verts'].shape[0]
-                num_frames = gt_flame['shape'].shape[0]
-                if num_frames < n_verts:
-                    rec_dict['verts'] = rec_dict['verts'][:num_frames]
-                elif num_frames > n_verts:
-                    rec_dict['verts'] = torch.cat([rec_dict['verts'], rec_dict['verts'][-1:].repeat(num_frames-n_verts, 1, 1)], dim=0)
-                assert gt_flame['shape'].shape[0] == rec_dict['verts'].shape[0]
-            elif model_type in ['diffusion', 'emote']:
-                rec_dict = self._get_diffusion_reconstruction(motion_path, rec_path)
-            elif model_type in ['emoca', 'deca', 'spectre']:
-                rec_dict = self._get_emoca_reconstruction(motion_path, model_type, rec_path)
-            else:
-                raise ValueError(f"{self.model_type} not supported!")
-            
-            if rec_dict is None:
-                print(f'{model_type} is None')
-                return None, None
-            model_reconstructions[model_type] = rec_dict
-        
-        for model in model_reconstructions:
-                print(f"====={model}=====")
-                for key in model_reconstructions[model]:
-                    print(f'shape {key} {model_reconstructions[model][key].shape}')
-
-        if 'emote' in model_reconstructions:
-            seq_len = min(model_reconstructions['emote']['exp'].shape[0], model_reconstructions['gt']['image'].shape[0])
-            for model in model_reconstructions:
-                for key in model_reconstructions[model]:
-                    model_reconstructions[model][key] = model_reconstructions[model][key][:seq_len]
-                          
-        print(model_reconstructions.keys())
-        return model_reconstructions, motion_path
-
-
 class TestMeadDataset(Dataset):
     def __init__(
         self,
@@ -269,37 +108,6 @@ class TestMeadDataset(Dataset):
             diffusion_codes['mask'] = torch.from_numpy(mask).float()
         return diffusion_codes
 
-    def _get_emoca_reconstruction(self, motion_path, model_type, rec_path):
-        sample_path = os.path.join(rec_path, f"{motion_path}.npy")
-        if not os.path.exists(sample_path):
-            return None
-        emoca_codes = np.load(sample_path, allow_pickle=True)[()]
-
-        rec_dict = {}
-        rec_dict['jaw'] = torch.from_numpy(emoca_codes['pose'][:,3:]).float()
-        if model_type in ['deca', 'spectre']:
-            rec_dict['exp'] = torch.from_numpy(emoca_codes['exp']).float()
-        else:
-            rec_dict['exp'] = torch.from_numpy(emoca_codes['exp_emoca']).float()
-        return rec_dict
-    
-    def _get_verts_reconstruction(self, motion_path, rec_path):
-        sample_path = os.path.join(rec_path, f"{motion_path}.npy")
-        if not os.path.exists(sample_path):
-            print(f"recons not existed for {sample_path}")
-            return None
-        rec_dict = {}
-        verts_reconstruciton = np.load(sample_path, allow_pickle=True)[()]
-        rec_dict['verts'] = torch.from_numpy(verts_reconstruciton).float()
-
-        # fix a dummy camera
-        # rec_dict['cam'] = torch.FloatTensor([[ 8.8514, -0.0149,  0.0190]]).repeat(verts_reconstruciton.shape[0], 1)
-
-        return rec_dict
-
-    def _get_transcript(self, motion_path):
-        return self.video_id_to_sent[motion_path]
-
     def __getitem__(self, idx):
         motion_path, _ = self.split_data[idx]
         model_reconstructions = {}
@@ -307,23 +115,7 @@ class TestMeadDataset(Dataset):
         model_reconstructions['gt'] = gt_flame
         for model_type in self.model_types:
             rec_path = self.rec_paths[model_type]
-            if model_type in ['faceformer', 'facediffuser', 'codetalker', 'voca']:
-                rec_dict = self._get_verts_reconstruction(motion_path, rec_path)
-                n_verts = rec_dict['verts'].shape[0]
-                num_frames = gt_flame['shape'].shape[0]
-                if num_frames < n_verts:
-                    rec_dict['verts'] = rec_dict['verts'][:num_frames]
-                elif num_frames > n_verts:
-                    rec_dict['verts'] = torch.cat([rec_dict['verts'], rec_dict['verts'][-1:].repeat(num_frames-n_verts, 1, 1)], dim=0)
-                assert gt_flame['shape'].shape[0] == rec_dict['verts'].shape[0]
-            elif model_type in ['diffusion', 'emote']:
-                rec_dict = self._get_diffusion_reconstruction(motion_path, rec_path)
-            elif model_type in ['emoca', 'deca', 'spectre']:
-                rec_dict = self._get_emoca_reconstruction(motion_path, model_type, rec_path)
-            else:
-                raise ValueError(f"{model_type} not supported!")
-            if rec_dict is None:
-                return None, None
+            rec_dict = self._get_diffusion_reconstruction(motion_path, rec_path)
             model_reconstructions[model_type] = rec_dict
 
         print(model_reconstructions.keys())
@@ -348,7 +140,7 @@ class GridVis:
         # IO setups
                         
         # name of the tested motion sequence
-        self.output_folder = os.path.join(self.config.output_folder, 'grid_vis')
+        self.output_folder = os.path.join(self.config.output_folder, 'grid_vis_ablation')
         if not os.path.exists(self.output_folder):
             os.makedirs(self.output_folder)
         
@@ -392,31 +184,15 @@ class GridVis:
         global_pose = motion_split['gt']['global_pose']
         shape = motion_split['gt']['shape']
         image = motion_split['gt']['image']
-        mask = motion_split['diffusion'].get('mask', None)
+        mask = motion_split['full'].get('mask', None)
 
         for model_type in self.model_types:
             motion_split_model = motion_split[model_type]
-            if model_type in ['faceformer', 'facediffuser', 'codetalker', 'voca']:
-                # shape template
-                n = motion_split_model['verts'].shape[0]
-                exp = torch.zeros((n, 100)).to(self.device)
-                jaw = torch.zeros((n, 3)).to(self.device)
-                pose = torch.cat([global_pose, jaw], dim=-1)
-                shape_template, _ = self.flame_emica(shape,  exp, pose)
-                verts = motion_split_model['verts'] + shape_template
-                lmk_3d = self.flame_emica.select_lmk3d_mediapipe(verts)
 
-            elif model_type in ['diffusion', 'emote']:
-                exp = motion_split_model['exp']
-                pose = torch.cat([global_pose, motion_split_model['jaw']], dim=-1)
-                # flame decoder
-                verts, lmk_3d = self.flame_emica(shape, exp, pose)
-            elif model_type in ['emoca', 'deca', 'spectre']:
-                exp = motion_split_model['exp']
-                pose = torch.cat([global_pose, motion_split_model['jaw']], dim=-1)
-                # flame decoder
-                verts, lmk_3d = self.flame_deca(shape[:,:100], exp, pose)
-            
+            exp = motion_split_model['exp']
+            pose = torch.cat([global_pose, motion_split_model['jaw']], dim=-1)
+            # flame decoder
+            verts, lmk_3d = self.flame_emica(shape, exp, pose)
         
             # orthogonal projection
             trans_verts = batch_orth_proj(verts, cam)
@@ -488,7 +264,7 @@ class GridVis:
     def run_vis(self):
         num_test_motions = len(self.test_data)
         self.idx = 0
-        mode = 'visual' if 'deca' in self.model_types else 'speech'
+        mode = 'ablation' 
         for i in tqdm(range(num_test_motions)):
             batch, motion_id = self.test_data[i]
             if batch is None:
@@ -556,8 +332,7 @@ def main():
     args = parser.parse_args()
     pretrained_args = get_cfg_defaults()
 
-    # args.model_types = ['diffusion', 'emote', 'faceformer', 'facediffuser', 'codetalker'] 
-    args.model_types = ['diffusion', 'spectre'] 
+    args.model_types = ['full', 'woflint', 'woalign', 'wofilm', 'wodiffusion'] 
 
     diffusion_model_base = 'diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc'    # base model to get the image mask
     
@@ -574,13 +349,11 @@ def main():
     print("loading test data...")
     if args.dataset == 'mead_25fps':
         rec_paths = {
-            'diffusion': os.path.join(args.vis_folder, diffusion_model_base , exp_name, 'diffusion_sample'),
-            'emoca': os.path.join(args.vis_folder, 'EMOCA', exp_name, 'EMOCA_reconstruction'),
-            'deca': os.path.join(args.vis_folder, 'EMOCA', exp_name, 'EMOCA_reconstruction'),
-            'spectre': os.path.join(args.vis_folder,'SPECTRE', exp_name, 'SPECTRE_reconstruction'),
-            'faceformer': os.path.join(args.vis_folder, 'FaceFormer', 'reconstruction'),
-            'facediffuser': os.path.join(args.vis_folder, 'FaceDiffuser', 'reconstruction'),
-            'codetalker': os.path.join(args.vis_folder, 'CodeTalker', 'reconstruction'),
+            'full': os.path.join(args.vis_folder, diffusion_model_base , exp_name, 'diffusion_sample'),
+            'woflint': os.path.join(args.vis_folder, 'diffusion_Transformer_768d_cat_mediapipelmk_final', exp_name, 'diffusion_sample'),
+            'woalign': os.path.join(args.vis_folder, 'diffusion_Transformer_768d_cat_mediapipelmk_FLINT_wo_align', exp_name, 'diffusion_sample'),
+            'wofilm': os.path.join(args.vis_folder, 'diffusion_Transformer_768d_cat_mediapipelmk_FLINT_woFiLM', exp_name, 'diffusion_sample'),
+            'wodiffusion': os.path.join(args.vis_folder, 'pureTrans', exp_name, 'reconstruction'),
         }
         
         test_video_list = load_test_data(
@@ -602,38 +375,9 @@ def main():
             test_video_list[shuffle_id],
             model_types=args.model_types
         )
-    elif args.dataset == 'RAVDESS':
-
-        rec_paths = {
-            'diffusion': os.path.join(args.vis_folder, diffusion_model_base , exp_name, 'reconstruction'),
-            'emoca': os.path.join(args.vis_folder, 'EMOCA', exp_name, 'reconstruction'),
-            'deca': os.path.join(args.vis_folder, 'EMOCA', exp_name, 'reconstruction'),
-            'spectre': os.path.join(args.vis_folder,'SPECTRE', exp_name, 'SPECTRE_reconstruction'),
-            'faceformer': os.path.join(args.vis_folder, 'FaceFormer', 'reconstruction'),
-            'facediffuser': os.path.join(args.vis_folder, 'FaceDiffuser', 'reconstruction'),
-            'codetalker': os.path.join(args.vis_folder, 'CodeTalker', 'reconstruction'),
-            'emote': os.path.join(args.vis_folder, 'EMOTE', 'reconstruction'),
-        }
-
-        from data_loaders.dataloader_RAVDESS import load_RAVDESS_test_data
-        test_video_list = load_RAVDESS_test_data(
-            args.dataset, 
-            args.dataset_path,
-            subject_list=subject_list,
-            emotion_list=emotion_list, 
-            level_list=level_list, 
-            sent_list=sent_list)
-        
-        print(f"number of test sequences: {len(test_video_list)}")
-        shuffle_id = np.random.permutation(len(test_video_list))[:20]
-
-        test_dataset = TestRAVDESSDataset(
-            args.dataset,
-            args.dataset_path,
-            rec_paths,
-            test_video_list[shuffle_id],
-            model_types=args.model_types
-        )
+    else:
+        print(f"dataset not supported!")
+        exit(0)
     
 
     grid_vis = GridVis(args, pretrained_args, test_dataset, 'cuda')

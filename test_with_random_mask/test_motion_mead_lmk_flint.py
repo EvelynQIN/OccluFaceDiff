@@ -15,6 +15,8 @@ from time import time
 from matplotlib import cm
 from copy import deepcopy
 from collections import defaultdict
+import sys
+sys.path.append('./')
 
 from diffusion.cfg_sampler import ClassifierFreeSampleModel
 
@@ -68,12 +70,12 @@ class MotionTracker:
         # name of the tested motion sequence
         self.save_folder = self.config.save_folder
         self.output_folder = os.path.join(self.save_folder, self.config.arch, config.exp_name)
-        self.sample_folder = os.path.join(self.output_folder, 'reconstruction')
+        self.sample_folder = os.path.join(self.output_folder, 'occ_mask')
         if self.save_rec:
             if not os.path.exists(self.sample_folder):
                 os.makedirs(self.sample_folder)
         
-        logger.add(os.path.join(self.output_folder, 'test_mead_wrt_gt.log'))
+        logger.add(os.path.join(self.output_folder, 'test_mead_occ_mask.log'))
         logger.info(f"Using device {self.device}.")
 
         # vis settings
@@ -113,8 +115,6 @@ class MotionTracker:
             "lve",
             "mouth_closure",
             "lmk2d_reproj_error",
-            "lmk2d_vis_reproj_error",
-            "lmk2d_invis_reproj_error"
         ]
 
         # from emica pseudo gt
@@ -122,7 +122,7 @@ class MotionTracker:
             "gt_jitter",
             "gt_mouth_closure",
         ]
-        # gt_metrics = []
+        gt_metrics = []
         self.all_metrics = pred_metrics + gt_metrics
     
     def _create_flame(self):
@@ -365,7 +365,7 @@ class MotionTracker:
         # landmarks vis
         lmk2d_vis = utils_visualize.tensor_vis_landmarks(gt_data['image'], diff_lmk2d[...,:2], gt_data['lmk_2d'])
         
-        gt_img = gt_data['image'] * gt_data['img_mask'].unsqueeze(1)
+        gt_img = gt_data['image']
 
         for i in range(diff_lmk2d.shape[0]):
             vis_dict = {
@@ -431,7 +431,6 @@ class MotionTracker:
         lmk_2d_emica[:, :, 1:] = -lmk_2d_emica[:, :, 1:]
 
         lmk_2d_gt = batch['lmk_2d'][:,self.flame.landmark_indices_mediapipe]
-        lmk_mask_emb = batch['lmk_mask'][:, self.flame.landmark_indices_mediapipe]
 
         eval_log = {}
         for metric in self.all_metrics:
@@ -439,7 +438,7 @@ class MotionTracker:
                 get_metric_function(metric)(
                     diff_expr, diff_jaw_aa, verts_pred, lmk_3d_pred, lmk_2d_pred, lmk_2d_emica,
                     gt_expr, gt_jaw_aa, verts_gt, lmk_3d_gt, lmk_2d_gt,
-                    self.config.fps, self.flame_v_mask, lmk_mask_emb
+                    self.config.fps, self.flame_v_mask 
                 )
                 .numpy()
             )
@@ -562,14 +561,14 @@ class MotionTracker:
             # diffusion sample
 
             save_path = f"{self.sample_folder}/{motion_id}.npy"
-            # if os.path.exists(save_path):
-            #     diffusion_output = np.load(save_path, allow_pickle=True)[()]
-            #     diffusion_output = torch.from_numpy(diffusion_output)
-            # else:
-            if self.config.overlap:
-                diffusion_output = self.overlapping_inference(batch)
+            if os.path.exists(save_path):
+                diffusion_output = np.load(save_path, allow_pickle=True)[()]
+                diffusion_output = torch.from_numpy(diffusion_output)
             else:
-                diffusion_output = self.non_overlapping_inference(batch)
+                if self.config.overlap:
+                    diffusion_output = self.overlapping_inference(batch)
+                else:
+                    diffusion_output = self.non_overlapping_inference(batch)
             
             # visualize the output
             if self.vis:
@@ -587,6 +586,7 @@ class MotionTracker:
                     self.writer = imageio.get_writer(gif_fname, mode='I')
 
                 # batch visualiza all frames
+                print(diffusion_output.shape)
                 for i in range(0, self.num_frames, self.visualization_batch):
                     batch_sample = diffusion_output[i:i+self.visualization_batch]
                     gt_data = {}
@@ -624,8 +624,13 @@ class MotionTracker:
                 np.save(save_path, diffusion_output.numpy())
 
                 # save the occlusion mask
+                mask_info = {
+                    'mask_path': batch['mask_path'],
+                    'frame_ids': batch['frame_ids'].numpy()
+                }
+                print(mask_info)
                 if self.config.exp_name not in ['non_occ', 'all'] and self.config.mask_path is None:
-                    np.save(f"{self.sample_folder}/{motion_id}_mask.npy", batch['img_mask'].cpu().numpy())
+                    np.save(f"{self.sample_folder}/{motion_id}_mask.npy", mask_info)
             torch.cuda.empty_cache()
 
         logger.info("==========Metrics for all test motion sequences:===========")
@@ -650,7 +655,7 @@ def main():
     emotion_list = [args.emotion] if args.emotion else None
 
     if args.test_dataset == "MEAD":
-        from data_loaders.dataloader_MEAD_flint import load_test_data, TestMeadDataset
+        from data_loaders.dataloader_MEAD_flint import load_test_data, TestMeadDatasetRandomOcclusion
         test_video_list = load_test_data(
             args.dataset, 
             args.dataset_path, 
@@ -659,12 +664,14 @@ def main():
             emotion_list=emotion_list, 
             level_list=level_list, 
             sent_list=sent_list)
+        shuffle_id = np.random.permutation(len(test_video_list))[:20]
+        print("shuffle id: ", shuffle_id)
 
         print(f"number of test sequences: {len(test_video_list)}")
-        test_dataset = TestMeadDataset(
+        test_dataset = TestMeadDatasetRandomOcclusion(
             args.dataset,
             args.dataset_path,
-            test_video_list,
+            test_video_list[shuffle_id],
             args.fps,
             args.n_shape,
             args.n_exp,
@@ -673,12 +680,11 @@ def main():
             args.use_iris,
             load_audio_input=True,
             vis=args.vis,
-            use_segmask=True,
-            mask_path=args.mask_path
+            mask_folder=args.mask_path
         )
     elif args.test_dataset == "RAVDESS":
         pretrained_args.model.n_shape = 100
-        from data_loaders.dataloader_RAVDESS import load_RAVDESS_test_data, TestRAVDESSDataset
+        from data_loaders.dataloader_RAVDESS import load_RAVDESS_test_data, TestRAVDESSDatasetRandomOcclusion
         test_video_list = load_RAVDESS_test_data(
             args.test_dataset, 
             args.dataset_path, 
@@ -686,12 +692,12 @@ def main():
             emotion_list=emotion_list, 
             level_list=level_list, 
             sent_list=sent_list)
-        
+        shuffle_id = np.random.permutation(len(test_video_list))[:20]
         print(f"number of test sequences: {len(test_video_list)}")
-        test_dataset = TestRAVDESSDataset(
+        test_dataset = TestRAVDESSDatasetRandomOcclusion(
             args.test_dataset,
             args.dataset_path,
-            test_video_list,
+            test_video_list[shuffle_id],
             args.fps,
             args.exp_name,
             args.use_iris,
@@ -708,3 +714,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# python3 test_with_random_mask/test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name mouth --save_rec --test_dataset RAVDESS --save_folder vis_RAVDESS

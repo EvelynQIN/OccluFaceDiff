@@ -104,7 +104,7 @@ class DiffusionModel(GaussianDiffusion):
             self._load_flint_decoder()
             self._setup_renderer()
             self._load_evalnet()
-            self._load_video_emotion_classifier()
+            # self._load_video_emotion_classifier()
 
             # set up loss weight
             self.loss_weight = {

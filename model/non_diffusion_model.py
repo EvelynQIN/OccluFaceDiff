@@ -197,6 +197,45 @@ class FaceTransformerFLINT(nn.Module):
                 new_output = self.input_process(output[:,-1:,:])
                 target_input = torch.cat([target_input, new_output], dim=0)
         return output
+    
+    def predict(self, lmk_2d, lmk_mask, audio_input, **kwargs):
+        bs, n = lmk_2d.shape[:2]
+        # print(lmk_mask.shape)
+        # print(lmk_2d.shape)
+        lmk_2d = lmk_2d[...,:2].clone() * (lmk_mask.unsqueeze(-1))
+
+        vis_cond = self.lmk_process(lmk_2d.reshape(bs, n, -1))  # [seqlen, bs, d]
+        
+        audio_input = self.mask_audio_cond(audio_input)
+        audio_emb = self.audio_encoder(audio_input, frame_num=n).last_hidden_state
+        audio_cond = self.audio_process(audio_emb)
+        
+        # # concat the condition
+        cond_emb = torch.cat([vis_cond, audio_cond], dim=-1) # [bs, seqlen, 2d]
+        condseq = self.sequence_pos_encoder(cond_emb)  # [seqlen, bs, 2d]
+        # transformer encoder to get memory
+        encoder_output = self.transformer_encoder(condseq)
+        # downsample tp match x
+        src_seq = self.squash_layer(encoder_output.permute(1,2,0)).permute(2,0,1)    # [seqlen//8, bs, d] transformer condition
+
+        for i in range(n//8):
+            if i == 0:
+                target_input = torch.zeros((1, bs, self.latent_dim_transformer_decoder)).to(src_seq.device)
+            target_seq = self.sequence_pos_decoder(target_input)
+                # alibi mask for self attention in transformer decoder
+            T = target_seq.shape[0]
+            tgt_mask = self.tgt_mask[:, :T, :T].clone().detach().to(device=target_seq.device)    # (num_heads, seqlen, seqlen)
+            tgt_mask = tgt_mask.repeat(bs, 1, 1)
+
+            # alignment mask for cross attention
+            memory_mask = enc_dec_mask(target_seq.device, target_seq.shape[0], src_seq.shape[0])
+            decoder_output = self.transformer_decoder(target_seq, src_seq, tgt_mask=tgt_mask, memory_mask=memory_mask)
+            output = self.outputprocess_motion(decoder_output)  # [bs, i, 128]
+
+            new_output = self.input_process(output[:,-1:,:])
+            target_input = torch.cat([target_input, new_output], dim=0)
+        return output
+
 
 
 class InputProcessBN(nn.Module):

@@ -20,7 +20,7 @@ cond_mask_prob: 0
 audio_mask_prob: 0.1
 fps: 25
 freeze_audio_encoder_interval: 6
-# resume_checkpoint: 
+# resume_checkpoint: checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_woFiLM/model_10.pt
 
 # flame_params
 n_shape: 300

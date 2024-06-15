@@ -1,10 +1,11 @@
 # # run reconstruction
-# # python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_video_classifier_s2/model_53.pt --split test --input_motion_length 64 --exp_name non_occ --save_rec --test_dataset RAVDESS --save_folder vis_RAVDESS
-# # python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name all --save_rec --test_dataset RAVDESS --save_folder vis_RAVDESS
-# # python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name mouth --save_rec --test_dataset RAVDESS --save_folder vis_RAVDESS
-# # python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name upper --save_rec --test_dataset RAVDESS --save_folder vis_RAVDESS
-# # python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name random --save_rec --test_dataset RAVDESS --save_folder vis_RAVDESS
-# # python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name asym --save_rec --test_dataset RAVDESS --save_folder vis_RAVDESS
+# python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name non_occ --save_rec --test_dataset RAVDESS --save_folder vis_RAVDESS
+# python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name all --save_rec --test_dataset RAVDESS --save_folder vis_RAVDESS
+python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name mouth --save_rec --test_dataset RAVDESS --save_folder vis_RAVDESS 
+python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name upper --save_rec --test_dataset RAVDESS --save_folder vis_RAVDESS 
+python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name random --save_rec --test_dataset RAVDESS --save_folder vis_RAVDESS
+python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name missing_frames --save_rec --test_dataset RAVDESS --save_folder vis_RAVDESS
+# python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/model_46.pt --split test --input_motion_length 64 --exp_name asym --save_rec --test_dataset RAVDESS --save_folder vis_RAVDESS
 
 
 # # test lip reading
@@ -16,13 +17,14 @@
 # python3 test_lipreading.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/random --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
 # python3 test_lipreading.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/missing_frames --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
 
-# test emotion
-python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/non_occ --split test --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
-python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/mouth --split test --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
-python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/upper --split test --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
-python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/asym --split test --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
-python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/random --split test --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
-python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/missing_frames --split test --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
-python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/all --split test --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
+# # test emotion
+# python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/non_occ --split test --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
+# python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/mouth --split test --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
+# python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/upper --split test --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
+# python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/asym --split test --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
+# python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/random --split test --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
+# python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/missing_frames --split test --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
+# python3 test_emotion_classification_EMOTE.py --output_folder vis_RAVDESS/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/all --split test --model_type diffusion --rec_folder reconstruction --dataset RAVDESS
 
 
+# python3 test_motion_mead_lmk_flint.py --model_path checkpoints/Transformer_768d_cat_mediapipelmk_FLINT_wpad/model_58.pt --split test --input_motion_length 64 --exp_name all --test_dataset RAVDESS --save_folder vis_RAVDESS --vis --emotion 08 --level 02 --sent 02 --subject_id 04 

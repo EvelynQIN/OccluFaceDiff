@@ -13,12 +13,15 @@ import subprocess
 from loguru import logger
 from time import time
 from matplotlib import cm
+from copy import deepcopy
 from collections import defaultdict
-import argparse
+
+from diffusion.cfg_sampler import ClassifierFreeSampleModel
 
 from utils import utils_transform, utils_visualize
 from utils.metrics import get_metric_function
-from utils.model_util import create_model_and_diffusion, load_model_wo_clip
+from utils.model_util import load_model_wo_clip
+from model.non_diffusion_model import FaceTransformerFLINT
 from utils.parser_util import test_args
 from model.FLAME import FLAME_mediapipe
 from configs.config import get_cfg_defaults
@@ -26,6 +29,7 @@ from utils import dataset_setting
 from utils.renderer import SRenderY
 from utils.data_util import batch_orth_proj, face_vertices
 from pathlib import Path
+
 import torch
 import torchvision.transforms.functional as F_v
 import torch.nn.functional as F
@@ -36,10 +40,12 @@ from pytorch3d.structures import Meshes
 
 import imageio
 from skimage.io import imread
-from data_loaders.dataloader_MEAD_flint import load_test_data, TestMeadDataset
 import ffmpeg
 import pickle
-from model.spectre import SPECTRE
+from model.wav2vec import Wav2Vec2Model
+from munch import Munch, munchify
+from model.motion_prior import L2lVqVae
+
 
 os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
 
@@ -50,18 +56,22 @@ class MotionTracker:
         self.config = config
         self.model_cfg = model_cfg
         self.device = device
+        self.sld_wind_size = config.sld_wind_size
+        self.input_motion_length = config.input_motion_length
+        self.target_nfeat = config.n_exp + config.n_pose
+        self.flint_dim = 128
+        self.flint_factor = 8
         self.test_data = test_data
-        self.original_data_folder = 'dataset/mead_25fps/original_data'
+        self.original_data_folder = 'dataset/mead_25fps/original_data' if config.test_dataset == 'MEAD' else 'dataset/RAVDESS'
         self.vis = config.vis
         self.save_rec = config.save_rec
         # IO setups
                         
         # name of the tested motion sequence
         self.save_folder = self.config.save_folder
-        self.output_folder = os.path.join(self.save_folder, 'SPECTRE', config.exp_name)
-        
+        self.output_folder = os.path.join(self.save_folder, 'pureTrans', config.exp_name)
+        self.sample_folder = os.path.join(self.output_folder, 'reconstruction')
         if self.save_rec:
-            self.sample_folder = os.path.join(self.output_folder, 'SPECTRE_reconstruction')
             if not os.path.exists(self.sample_folder):
                 os.makedirs(self.sample_folder)
         
@@ -71,9 +81,9 @@ class MotionTracker:
         # vis settings
         self.to_mp4 = True # if true then to mp4, false then to gif wo audio
         self.visualization_batch = 32
-        self.image_size = model_cfg.image_size
+        self.image_size = config.image_size
         self.resize_factor=1.0  # resize the final grid image
-        self.heatmap_view = False
+        self.heatmap_view = True
         if self.heatmap_view:
             self.n_views = 5
         else:
@@ -87,11 +97,13 @@ class MotionTracker:
         self.min_error = 0.
         self.max_error = 10.
 
-        # load emoca model
-        self.load_spectre()
+        # diffusion models
+        self.load_model_from_ckpt(config, model_cfg)
         
         self._create_flame()
         self._setup_renderer()
+
+        self._load_flint_decoder()
 
         # eval metrics
         pred_metrics = [
@@ -105,18 +117,27 @@ class MotionTracker:
             "lve",
             "mouth_closure",
             "lmk2d_reproj_error",
-            "lmk2d_vis_reproj_error",
-            "lmk2d_invis_reproj_error"
         ]
 
         # from emica pseudo gt
         gt_metrics = [
-            # "gt_jitter",
-            # "gt_mouth_closure",
+            "gt_jitter",
+            "gt_mouth_closure",
         ]
-
+        gt_metrics = []
         self.all_metrics = pred_metrics + gt_metrics
     
+    def _load_flint_decoder(self):
+        ckpt_path = self.model_cfg.flint_ckpt_path
+        f = open(self.model_cfg.flint_config_path)
+        cfg = Munch.fromYAML(f)
+        flint = L2lVqVae(cfg)
+        flint.load_model_from_checkpoint(ckpt_path)
+        self.flint_decoder = flint.motion_decoder.to(self.device)
+        print(f"[FLINT Decoder] Load and Frozen.")
+        self.flint_decoder.requires_grad_(False)
+        self.flint_decoder.eval()
+
     def _create_flame(self):
         self.flame = FLAME_mediapipe(self.model_cfg).to(self.device)
         flame_template_file = 'flame_2020/head_template_mesh.obj'
@@ -169,73 +190,102 @@ class MotionTracker:
         face_colors = face_vertices(verts_rgb, faces)
         return face_colors
 
-    def load_spectre(self):
-        self.spectre = SPECTRE(self.model_cfg, self.device)
-        self.spectre.eval()
+    def load_model_from_ckpt(self, args, model_cfg):
+        logger.info("Creating model and diffusion...")
+        args.arch = args.arch[len("diffusion_") :]
+        self.model = FaceTransformerFLINT(
+            args.arch,
+            args.latent_dim, 
+            args.ff_size, 
+            args.num_enc_layers, 
+            args.num_dec_layers, 
+            args.num_heads, 
+            args.dropout
+        )
+
+        logger.info(f"Loading checkpoints from [{args.model_path}]...")
+        state_dict = torch.load(args.model_path, map_location="cpu")
+        self.model.load_state_dict(state_dict, strict=True)
+
+        self.model.to(self.device)  # dist_util.dev())
+        self.model.eval()  # disable random masking
+
+        self.diffusion_input_keys = ['lmk_2d', 'lmk_mask', 'audio_input']
     
     def output_video(self, fps=30):
         utils_visualize.images_to_video(self.output_folder, fps, self.motion_name)
     
-    def vis_motion_split(self, gt_data, pred_codes):
+    def sample_motion_non_overlap(self, batch_split):
+
+        with torch.no_grad():
+            bs, n = batch_split['lmk_2d'].shape[:2]
+            split_length = n // self.flint_factor
+            
+            model_kwargs = {}
+            for key in self.diffusion_input_keys:
+                model_kwargs[key] = batch_split[key].to(self.device)
+            model_kwargs['audio_input'] = model_kwargs['audio_input'].reshape(bs, -1)
+
+            output = self.model.predict(**model_kwargs)
+
+            flint_output = self.flint_decoder(output) # (bs, k, c)
+        return flint_output
     
+    def vis_motion_split(self, gt_data, diffusion_sample):
+        diffusion_sample = diffusion_sample.to(self.device)
         # to gpu
         for k in gt_data:
             gt_data[k] = gt_data[k].to(self.device)
-        for k in pred_codes:
-            pred_codes[k] = pred_codes[k].to(self.device)
         
-        global_rot_aa = gt_data['global_pose']
-        
-        pred_exp = pred_codes['exp']
-        pred_jaw_aa = pred_codes['pose'][3:]
-        pred_pose_aa = torch.cat([global_rot_aa, pred_jaw_aa], dim=-1)
+        # prepare vis data dict 
+        diff_expr = diffusion_sample[...,:self.config.n_exp]
+        diff_jaw_aa = diffusion_sample[...,self.config.n_exp:]
 
         gt_jaw_aa = gt_data['jaw']
         gt_exp = gt_data['exp']
+
         cam = gt_data['cam']
+
+        global_rot_aa = gt_data['global_pose']
+        diff_rot_aa = torch.cat([global_rot_aa, diff_jaw_aa], dim=-1)
         gt_rot_aa = torch.cat([global_rot_aa, gt_jaw_aa], dim=-1)
         
         # flame decoder
         emica_verts, _ = self.flame(gt_data['shape'], gt_exp, gt_rot_aa)
+        diff_verts, diff_lmk3d = self.flame(gt_data['shape'], diff_expr, diff_rot_aa)
+        
+        # 2d orthogonal projection
+        diff_lmk2d = batch_orth_proj(diff_lmk3d, cam)
+        diff_lmk2d[:, :, 1:] = -diff_lmk2d[:, :, 1:]
+
+        diff_trans_verts = batch_orth_proj(diff_verts, cam)
+        diff_trans_verts[:, :, 1:] = -diff_trans_verts[:, :, 1:]
+
         emica_trans_verts = batch_orth_proj(emica_verts, cam)
         emica_trans_verts[:, :, 1:] = -emica_trans_verts[:, :, 1:]
-
-        # flame decoder for deca    
-        pred_verts, pred_lmk3d = self.flame(gt_data['shape'], pred_exp, pred_pose_aa)
-        pred_trans_verts = batch_orth_proj(pred_verts, cam)
-        pred_trans_verts[:, :, 1:] = -pred_trans_verts[:, :, 1:]
-        pred_lmk2d = batch_orth_proj(pred_lmk3d, cam)
-        pred_lmk2d[:, :, 1:] = -pred_lmk2d[:, :, 1:]
-
-
-        # flame decoder for emoca
-        pred_verts, _ = self.flame(gt_data['shape'], pred_exp, pred_pose_aa)
-        pred_trans_verts = batch_orth_proj(pred_verts, cam)
-        pred_trans_verts[:, :, 1:] = -pred_trans_verts[:, :, 1:]   
-
         
         # # render
-        pred_render_images = self.render.render_shape(pred_verts, pred_trans_verts, images=gt_data['image'])
+        diff_render_images = self.render.render_shape(diff_verts, diff_trans_verts, images=gt_data['image'])
         emica_render_images = self.render.render_shape(emica_verts, emica_trans_verts, images=gt_data['image'])
-        # if self.heatmap_view:
-        #     vertex_error = torch.norm(emica_verts - diff_verts, p=2, dim=-1) * 1000. # vertex dist in mm
-        #     face_error_colors = self.get_vertex_error_heat_color(vertex_error).to(self.device)
-        #     heat_maps = self.render.render_shape(diff_verts, diff_trans_verts,colors=face_error_colors)
+        if self.heatmap_view:
+            vertex_error = torch.norm(emica_verts - diff_verts, p=2, dim=-1) * 1000. # vertex dist in mm
+            face_error_colors = self.get_vertex_error_heat_color(vertex_error).to(self.device)
+            heat_maps = self.render.render_shape(diff_verts, diff_trans_verts,colors=face_error_colors)
         
         # landmarks vis
-        lmk2d_vis = utils_visualize.tensor_vis_landmarks(gt_data['image'], pred_lmk2d[...,:2], gt_data['lmk_2d'])
+        lmk2d_vis = utils_visualize.tensor_vis_landmarks(gt_data['image'], diff_lmk2d[...,:2], gt_data['lmk_2d'])
         
         gt_img = gt_data['image'] * gt_data['img_mask'].unsqueeze(1)
 
-        for i in range(gt_img.shape[0]):
+        for i in range(diff_lmk2d.shape[0]):
             vis_dict = {
                 'gt_img': gt_img[i].detach().cpu(),   # (3, h, w)
                 'gt_mesh': emica_render_images[i].detach().cpu(),  # (3, h, w)
-                'emoca_mesh': pred_render_images[i].detach().cpu(),  # (3, h, w)
-                'lmk2d': lmk2d_vis[i].detach().cpu()
+                'diff_mesh': diff_render_images[i].detach().cpu(),  # (3, h, w)
+                'lmk': lmk2d_vis[i].detach().cpu()
             }
-            # if self.heatmap_view:
-            #     vis_dict['heatmap'] = heat_maps[i].detach().cpu()
+            if self.heatmap_view:
+                vis_dict['heatmap'] = heat_maps[i].detach().cpu()
             grid_image = self.visualize(vis_dict)
             if self.to_mp4:
                 self.writer.write(grid_image[:,:,[2,1,0]])
@@ -264,14 +314,13 @@ class MotionTracker:
     
     def evaluate_one_motion(
         self,
-        code_dict,
+        diffusion_output,
         batch, 
     ):      
         global_rot_aa = batch['global_pose']
-        
-        spectre_exp = code_dict['exp']
-        spectre_jaw_aa = code_dict['pose'][...,3:]
-        spectre_pose_aa = torch.cat([global_rot_aa, spectre_jaw_aa], dim=-1)
+        diff_expr = diffusion_output[...,:self.config.n_exp]
+        diff_jaw_aa = diffusion_output[...,self.config.n_exp:]
+        diff_rot_aa = torch.cat([global_rot_aa, diff_jaw_aa], dim=-1)
 
         gt_jaw_aa = batch['jaw']
         gt_expr = batch['exp']
@@ -280,8 +329,8 @@ class MotionTracker:
         # flame decoder
         verts_gt, lmk_3d_gt = self.flame(batch['shape'], gt_expr, gt_rot_aa)
         
-        #===== eval for spectre ========#
-        verts_pred, lmk_3d_pred = self.flame(batch['shape'], spectre_exp, spectre_pose_aa)
+        # flame decoder
+        verts_pred, lmk_3d_pred = self.flame(batch['shape'], diff_expr, diff_rot_aa)
 
         # 2d orthogonal projection
         lmk_2d_pred = batch_orth_proj(lmk_3d_pred, batch['cam'])[...,:2]
@@ -292,107 +341,111 @@ class MotionTracker:
         lmk_2d_emica[:, :, 1:] = -lmk_2d_emica[:, :, 1:]
 
         lmk_2d_gt = batch['lmk_2d'][:,self.flame.landmark_indices_mediapipe]
-        lmk_mask_emb = batch['lmk_mask'][:, self.flame.landmark_indices_mediapipe]
 
         eval_log = {}
         for metric in self.all_metrics:
             eval_log[metric] = (
                 get_metric_function(metric)(
-                    spectre_exp, spectre_jaw_aa, verts_pred, lmk_3d_pred, lmk_2d_pred, lmk_2d_emica,
+                    diff_expr, diff_jaw_aa, verts_pred, lmk_3d_pred, lmk_2d_pred, lmk_2d_emica,
                     gt_expr, gt_jaw_aa, verts_gt, lmk_3d_gt, lmk_2d_gt,
-                    self.config.fps, self.flame_v_mask, lmk_mask_emb
+                    self.config.fps, self.flame_v_mask 
                 )
                 .numpy()
             )
         
         return eval_log
+
+    def prepare_chunk_diffusion_input(self, batch, start_id, num_frames):
+        motion_split = {}
+        flag_index = 0
+        for key in self.diffusion_input_keys:
+            motion_split[key] = batch[key][start_id:start_id+self.input_motion_length]
+
+        # if sequnce is short, pad with same motion to the beginning
+        if motion_split['lmk_2d'].shape[0] < self.input_motion_length:
+            flag_index = self.input_motion_length - motion_split['lmk_2d'].shape[0]
+            for key in motion_split:
+                original_split = motion_split[key]
+                n_dims = len(original_split.shape)
+                if n_dims == 2:
+                    tmp_init = original_split[:1].repeat(flag_index, 1).clone()
+                elif n_dims == 3:
+                    tmp_init = original_split[:1].repeat(flag_index, 1, 1).clone()
+                elif n_dims == 4:
+                    tmp_init = original_split[:1].repeat(flag_index, 1, 1, 1).clone()
+                motion_split[key] = torch.concat([tmp_init, original_split], dim=0)
+        return motion_split, flag_index
+
+    def non_overlapping_inference(self, batch):
+
+        if self.num_frames < self.input_motion_length:
+            # pad the beginning frames
+            flag_index = self.input_motion_length - self.num_frames
+            batch_split = deepcopy(batch)
+            batch_split['lmk_2d'] = torch.cat([batch_split['lmk_2d'][:1].repeat(flag_index, 1, 1), batch_split['lmk_2d']], dim=0).unsqueeze(0)    # (1, k, c)
+            batch_split['lmk_mask'] = torch.cat([batch_split['lmk_mask'][:1].repeat(flag_index, 1), batch_split['lmk_mask']], dim=0).unsqueeze(0)    # (1, k, c)
+            batch_split['audio_input'] = torch.cat([batch_split['audio_input'][:1].repeat(flag_index, 1), batch_split['audio_input']], dim=0).unsqueeze(0)    # (1, k, c)
+            flag_index = [flag_index]
+        else:
+            start_id = 0
+            batch_split = defaultdict(list)
+            flag_index = []
+            while start_id + self.input_motion_length <= self.num_frames:
+                for key in self.diffusion_input_keys:
+                    batch_split[key].append(batch[key][start_id:start_id+self.input_motion_length].unsqueeze(0))
+                flag_index.append(0)
+                start_id += self.input_motion_length
             
-    def spectre_inference(self, batch):
-        """ SPECTRE uses a temporal convolution of size 5. 
-        Thus, in order to predict the parameters for a contiguous video with need to 
-        process the video in chunks of overlap 2, dropping values which were computed from the 
-        temporal kernel which uses pad 'same'. For the start and end of the video we
-        pad using the first and last frame of the video. 
-        e.g., consider a video of size 48 frames and we want to predict it in chunks of 20 frames 
-        (due to memory limitations). We first pad the video two frames at the start and end using
-        the first and last frames correspondingly, making the video 52 frames length.
-        
-        Then we process independently the following chunks:
-        [[ 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19]
-        [16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35]
-        [32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51]]
-        
-        In the first chunk, after computing the 3DMM params we drop 0,1 and 18,19, since they were computed 
-        from the temporal kernel with padding (we followed the same procedure in training and computed loss 
-        only from valid outputs of the temporal kernel) In the second chunk, we drop 16,17 and 34,35, and in 
-        the last chunk we drop 32,33 and 50,51. As a result we get:
-        [2..17], [18..33], [34..49] (end included) which correspond to all frames of the original video 
-        (removing the initial padding).     
-        """
-         # pad
-        image = batch['image'].clone()
-        img_mask = batch['img_mask']
-        image =  image * img_mask.unsqueeze(1)  # (n, 3, 224, 224)
-        image = torch.cat([
-            image[:1].repeat(2, 1, 1, 1), image, image[-1:].repeat(2, 1, 1, 1)], dim=0) # (n+4, 3, 224, 224)
-        L = 50 # chunk size
+            if start_id < self.num_frames:
+                flag_index.append(self.input_motion_length - self.num_frames + start_id)
+                for key in self.diffusion_input_keys:
+                    batch_split[key].append(batch[key][-self.input_motion_length:].unsqueeze(0))
+            for key in batch_split:
+                batch_split[key] = torch.cat(batch_split[key], dim=0)
 
-        # create lists of overlapping indices
-        indices = list(range(image.shape[0]))
-        overlapping_indices = [indices[i: i + L] for i in range(0, len(indices), L-4)]
+        sample = self.sample_motion_non_overlap(batch_split).cpu()
 
-        if len(overlapping_indices[-1]) < 5:
-            # if the last chunk has less than 5 frames, pad it with the semilast frame
-            overlapping_indices[-2] = overlapping_indices[-2] + overlapping_indices[-1]
-            overlapping_indices[-2] = np.unique(overlapping_indices[-2]).tolist()
-            overlapping_indices = overlapping_indices[:-1]
+        final_output = []
+        for i in range(sample.shape[0]):
+            final_output.append(sample[i, flag_index[i]:])
+        final_output = torch.cat(final_output, dim=0)
 
-        overlapping_indices = np.array(overlapping_indices)
-        code_dict_all = defaultdict(list)
-        with torch.no_grad():
-            for chunk_id in range(len(overlapping_indices)):
-                print('Processing frames {} to {}'.format(overlapping_indices[chunk_id][0], overlapping_indices[chunk_id][-1]))
-                image_chunk = image[overlapping_indices[chunk_id]].to(self.device) #K,3,224,224
-                codedict = self.spectre.encode(image_chunk)
-                for key in codedict.keys():
-                    """ filter out invalid indices - see explanation at the top of the function """
+        assert final_output.shape[0] == self.num_frames
+        return final_output 
 
-                    if chunk_id == 0 and chunk_id == len(overlapping_indices) - 1:
-                        pass
-                    elif chunk_id == 0:
-                        codedict[key] = codedict[key][:-2]
-                    elif chunk_id == len(overlapping_indices) - 1:
-                        codedict[key] = codedict[key][2:]
-                    else:
-                        codedict[key] = codedict[key][2:-2]
-                    
-                    code_dict_all[key].append(codedict[key])
-
-        for k in code_dict_all:
-            code_dict_all[k] = torch.cat(code_dict_all[k], dim=0).detach().cpu()
-            code_dict_all[k] = code_dict_all[k][2:-2]
-            # print(f"{k} {code_dict_all[k].shape}")
-        return code_dict_all
-    
+            
     def track(self):
         
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')      
+        # make prediction by split the whole sequences into chunks
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        eval_all = {}
+        for metric in self.all_metrics:
+            eval_all[metric] = 0.0
         num_test_motions = len(self.test_data)
         eval_motion_num = 0
-        eval_all = defaultdict(float)
         for i in tqdm(range(num_test_motions)):
             self.flame.to(self.device)
             batch, motion_id = self.test_data[i]
-            self.num_frames = batch['image'].shape[0]
+            self.num_frames = batch['lmk_2d'].shape[0]
+            if batch['exp'].shape[1] != self.config.n_exp:
+                batch['exp'] = torch.cat([batch['exp'], torch.ones(self.num_frames, 50)], dim=-1)
             if self.num_frames < 25:
                 logger.info(f'[{motion_id}] is shorter than 1 sec, skipped.')
                 continue
             eval_motion_num += 1
-            logger.info(f'Process [{motion_id}].')
-            video_path = self.output_folder + f'/{motion_id}'
+            logger.info(f'Process [{motion_id}]. with {self.num_frames} frames')
+            # diffusion sample
+
+            save_path = f"{self.sample_folder}/{motion_id}.npy"
+            if os.path.exists(save_path):
+                diffusion_output = np.load(save_path, allow_pickle=True)[()]
+                diffusion_output = torch.from_numpy(diffusion_output)
+            else:
+                diffusion_output = self.non_overlapping_inference(batch)
             
-            # set the output writer
+            # visualize the output
             if self.vis:
+                video_path = self.output_folder + f'/{motion_id}'
                 if self.to_mp4:
                     video_fname = video_path + '.mp4'
                     Path(video_fname).parent.mkdir(exist_ok=True, parents=True)
@@ -404,165 +457,58 @@ class MotionTracker:
                     gif_fname = video_path + '.gif'
                     Path(gif_fname).parent.mkdir(exist_ok=True, parents=True)
                     self.writer = imageio.get_writer(gif_fname, mode='I')
-            
-            # batch inference
-            code_dict = None
-            # if self.save_rec:
-            #     # save inference results
-            #     save_path = f"{self.sample_folder}/{motion_id}.npy"
-            #     if os.path.exists(save_path):
-            #         code_dict = np.load(save_path, allow_pickle=True)[()]
-            #         for key in code_dict:
-            #             code_dict[key] = torch.from_numpy(code_dict[key])
-            if code_dict is None:
-                code_dict = self.spectre_inference(batch)
 
-            if self.vis:
                 # batch visualiza all frames
+                print(diffusion_output.shape)
                 for i in range(0, self.num_frames, self.visualization_batch):
+                    batch_sample = diffusion_output[i:i+self.visualization_batch]
                     gt_data = {}
-                    rec_data = {}
                     for key in batch:
-                        gt_data[key] = batch[key][i:i+self.visualization_batch]
-                        rec_data[key] = code_dict[key][i:i+self.visualization_batch]
-                    self.vis_motion_split(gt_data, rec_data)
+                        if key != 'audio_input':
+                            gt_data[key] = batch[key][i:i+self.visualization_batch]
+                    self.vis_motion_split(gt_data, batch_sample)
 
                 # concat audio 
                 if self.to_mp4:
                     self.writer.release()
-                    subject, view, emotion, level, sent = motion_id.split('/')
-                    audio_path = os.path.join(self.original_data_folder, subject, 'audio', emotion, level, f"{sent}.m4a")
-                    assert os.path.exists(audio_path)
-                    os.system(f"ffmpeg -i {video_path}.mp4 -i {audio_path} -c:v copy -c:a copy {video_path}_audio.mp4")
+                    if self.config.test_dataset == 'MEAD':
+                        subject, view, emotion, level, sent = motion_id.split('/')
+                        audio_path = os.path.join(self.original_data_folder, subject, 'audio', emotion, level, f"{sent}.m4a")
+                        os.system(f"ffmpeg -i {video_path}.mp4 -i {audio_path} -c:v copy -c:a copy {video_path}_audio.mp4")
+                    else:
+                        vocal, emotion, level, sent, rep, subject = motion_id.split('-')
+                        audio_path = os.path.join(self.original_data_folder, 'audio','03-' + motion_id + '.wav')
+                        os.system(f"ffmpeg -i {video_path}.mp4 -i {audio_path} -c:v copy {video_path}_audio.mp4")
                     os.system(f"rm {video_path}.mp4")
             
             # start evaluation
             self.flame.to('cpu')
-            for k in batch:
-                batch[k] = batch[k].to('cpu')
-            for k in code_dict:
-                code_dict[k] = code_dict[k].to('cpu')
-            eval_log = self.evaluate_one_motion(code_dict, batch)
-
-            for metric in self.all_metrics:
+            diffusion_output.to('cpu')
+            eval_log = self.evaluate_one_motion(diffusion_output, batch)
+                 
+            for metric in eval_log:
                 logger.info(f"{metric} : {eval_log[metric]}")
                 eval_all[metric] += eval_log[metric]
 
-            if self.save_rec:
+            if self.save_rec and not os.path.exists(save_path):
                 # save inference results
                 save_path = f"{self.sample_folder}/{motion_id}.npy"
                 Path(save_path).parent.mkdir(exist_ok=True, parents=True)
-                for k in code_dict:
-                    code_dict[k] = code_dict[k].numpy()
-                np.save(save_path, code_dict)
+                np.save(save_path, diffusion_output.numpy())
+
+                # save the occlusion mask
+                if self.config.exp_name not in ['non_occ', 'all'] and self.config.mask_path is None:
+                    np.save(f"{self.sample_folder}/{motion_id}_mask.npy", batch['img_mask'].cpu().numpy())
             torch.cuda.empty_cache()
 
-        logger.info("==========SPECTRE Metrics for all test motion sequences:===========")
+        logger.info("==========Metrics for all test motion sequences:===========")
         for metric in eval_all:
             logger.info(f"{metric} : {eval_all[metric] / eval_motion_num}")
 
 def main():
-    
-    parser = argparse.ArgumentParser()
+    args = test_args()
 
-    parser.add_argument(
-        "--split",
-        default="test",
-        type=str,
-        help="split in the dataset",
-    )
-    
-    parser.add_argument(
-        "--save_folder",
-        default="vis_result",
-        type=str,
-        help="folder to save visualization result.",
-    )
-    
-    parser.add_argument(
-        "--exp_name",
-        type=str,
-        help="name of the experiment.",
-    )
-    
-    parser.add_argument(
-        "--subject_id",
-        default=None,
-        type=str,
-        help="subject id.",
-    )
-
-    parser.add_argument(
-        "--level",
-        default=None,
-        type=str,
-        help="emotion level.",
-    )
-
-    parser.add_argument(
-        "--sent",
-        default=None,
-        type=int,
-        help="sent id in MEAD [1 digit].",
-    )
-
-    parser.add_argument(
-        "--emotion",
-        default=None,
-        type=str,
-        help="emotion id in MEAD.",
-    )
-
-    parser.add_argument(
-        "--vis",
-        action="store_true",
-        help="whether to visualize the output.",
-    )
-
-    parser.add_argument(
-        "--with_audio",
-        action="store_true",
-        help="whether the input with audio.",
-    )
-
-    parser.add_argument(
-        "--save_rec",
-        action="store_true",
-        help="whether to store the diffusion reconstruction.",
-    )
-
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=10,
-        help="fix to random seed.",
-    )
-    
-    parser.add_argument(
-        "--fps",
-        type=int,
-        default=25,
-        help="video fps.",
-    )
-
-    parser.add_argument(
-        "--mask_path",
-        type=str,
-        default=None,
-        help="whether to assign mask path to it.",
-    )
-
-    parser.add_argument(
-        "--test_dataset",
-        type=str,
-        default='MEAD',
-        help="name of the test dataset.",
-    )
-
-    parser.add_argument('--dataset', type=str, default='mead_25fps', help='dataset name')
-    parser.add_argument('--dataset_path', type=str, default='./dataset',help='dataset name')
-
-    args = parser.parse_args()
+    args.timestep_respacing = '100' # use DDIM samper
     pretrained_args = get_cfg_defaults()
     # to guanrantee reproducibility
     torch.backends.cudnn.benchmark = False
@@ -577,6 +523,7 @@ def main():
     emotion_list = [args.emotion] if args.emotion else None
 
     if args.test_dataset == "MEAD":
+        from data_loaders.dataloader_MEAD_flint import load_test_data, TestMeadDataset
         test_video_list = load_test_data(
             args.dataset, 
             args.dataset_path, 
@@ -585,21 +532,22 @@ def main():
             emotion_list=emotion_list, 
             level_list=level_list, 
             sent_list=sent_list)
-    
+
         print(f"number of test sequences: {len(test_video_list)}")
         test_dataset = TestMeadDataset(
             args.dataset,
             args.dataset_path,
             test_video_list,
             args.fps,
-            pretrained_args.emoca.n_shape,
-            pretrained_args.emoca.n_exp,
+            args.n_shape,
+            args.n_exp,
             args.exp_name,
-            load_tex=args.vis,
-            use_iris=False,
-            load_audio_input=False,
-            vis=True,
-            mask_path = args.mask_path  # 
+            args.load_tex,
+            args.use_iris,
+            load_audio_input=True,
+            vis=args.vis,
+            use_segmask=True,
+            mask_path=args.mask_path
         )
     elif args.test_dataset == "RAVDESS":
         from data_loaders.dataloader_RAVDESS import load_RAVDESS_test_data, TestRAVDESSDataset
@@ -618,15 +566,15 @@ def main():
             test_video_list,
             args.fps,
             args.exp_name,
-            use_iris=False,
-            load_audio_input=False,
-            vis=True,
-            mask_path = args.mask_path
+            args.use_iris,
+            load_audio_input=True,
+            vis=args.vis,
+            mask_path=args.mask_path
         )
     else:
         raise ValueError(f"{args.test_dataset} not supported!")
 
-    motion_tracker = MotionTracker(args, pretrained_args.emoca, test_dataset, 'cuda')
+    motion_tracker = MotionTracker(args, pretrained_args.model, test_dataset, 'cuda')
     
     motion_tracker.track()
 

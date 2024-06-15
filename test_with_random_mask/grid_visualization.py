@@ -13,6 +13,9 @@ import subprocess
 from loguru import logger
 from time import time
 
+import sys
+sys.path.append('./')
+
 from utils import utils_transform, utils_visualize
 from utils.parser_util import test_args
 from model.FLAME import FLAME_mediapipe, FLAMETex
@@ -40,6 +43,7 @@ import pickle
 import h5py
 from torch.utils.data import DataLoader, Dataset
 from utils.MediaPipeLandmarkLists import *
+from utils.occlusion import RandomOcclusion
 
 class TestRAVDESSDataset(Dataset):
     def __init__(
@@ -64,6 +68,7 @@ class TestRAVDESSDataset(Dataset):
             '02': 'DOGS ARE SITTING BY THE DOOR'
         }
         self.video_folder = os.path.join(self.processed_folder, 'cropped_videos')
+        self.random_occluder = RandomOcclusion()
 
     def __len__(self):
         return len(self.split_data)
@@ -109,7 +114,7 @@ class TestRAVDESSDataset(Dataset):
             rec_dict[key] = torch.from_numpy(rec_dict[key]).float()
         
         # get image
-        rec_dict['image'] = self._get_video_input(motion_id)['image']
+        rec_dict['original_image'] = self._get_video_input(motion_id)['image']
 
         return rec_dict
     
@@ -126,8 +131,8 @@ class TestRAVDESSDataset(Dataset):
         print(mask_path)
         if os.path.exists(mask_path):
             print(f"found mask")
-            mask = np.load(mask_path, allow_pickle=True)[()]
-            diffusion_codes['mask'] = torch.from_numpy(mask).float()
+            mask_info = np.load(mask_path, allow_pickle=True)[()]
+            diffusion_codes['mask_info'] = mask_info
 
         return diffusion_codes
     
@@ -145,19 +150,6 @@ class TestRAVDESSDataset(Dataset):
             rec_dict['exp'] = torch.from_numpy(emoca_codes['exp_emoca']).float()
         return rec_dict
     
-    def _get_verts_reconstruction(self, motion_path, rec_path):
-        sample_path = os.path.join(rec_path, f"{motion_path}.npy")
-        if not os.path.exists(sample_path):
-            return None
-        rec_dict = {}
-        verts_reconstruciton = np.load(sample_path, allow_pickle=True)[()]
-        rec_dict['verts'] = torch.from_numpy(verts_reconstruciton).float()
-
-        # fix a dummy camera
-        # rec_dict['cam'] = torch.FloatTensor([[ 8.8514, -0.0149,  0.0190]]).repeat(verts_reconstruciton.shape[0], 1)
-
-        return rec_dict
-    
     def __getitem__(self, idx):
         motion_path = self.split_data[idx]
 
@@ -166,16 +158,7 @@ class TestRAVDESSDataset(Dataset):
         model_reconstructions['gt'] = gt_flame
         for model_type in self.model_types:
             rec_path = self.rec_paths[model_type]
-            if model_type in ['faceformer', 'facediffuser', 'codetalker', 'voca']:
-                rec_dict = self._get_verts_reconstruction(motion_path, rec_path)
-                n_verts = rec_dict['verts'].shape[0]
-                num_frames = gt_flame['shape'].shape[0]
-                if num_frames < n_verts:
-                    rec_dict['verts'] = rec_dict['verts'][:num_frames]
-                elif num_frames > n_verts:
-                    rec_dict['verts'] = torch.cat([rec_dict['verts'], rec_dict['verts'][-1:].repeat(num_frames-n_verts, 1, 1)], dim=0)
-                assert gt_flame['shape'].shape[0] == rec_dict['verts'].shape[0]
-            elif model_type in ['diffusion', 'emote']:
+            if model_type in ['diffusion']:
                 rec_dict = self._get_diffusion_reconstruction(motion_path, rec_path)
             elif model_type in ['emoca', 'deca', 'spectre']:
                 rec_dict = self._get_emoca_reconstruction(motion_path, model_type, rec_path)
@@ -187,17 +170,12 @@ class TestRAVDESSDataset(Dataset):
                 return None, None
             model_reconstructions[model_type] = rec_dict
         
-        for model in model_reconstructions:
-                print(f"====={model}=====")
-                for key in model_reconstructions[model]:
-                    print(f'shape {key} {model_reconstructions[model][key].shape}')
-
-        if 'emote' in model_reconstructions:
-            seq_len = min(model_reconstructions['emote']['exp'].shape[0], model_reconstructions['gt']['image'].shape[0])
-            for model in model_reconstructions:
-                for key in model_reconstructions[model]:
-                    model_reconstructions[model][key] = model_reconstructions[model][key][:seq_len]
-                          
+        # for model in model_reconstructions:
+        #         print(f"====={model}=====")
+        #         for key in model_reconstructions[model]:
+        #             print(f'shape {key} {model_reconstructions[model][key].shape}')
+        mask_info = model_reconstructions['diffusion']['mask_info']
+        model_reconstructions['gt']['image'] = self.random_occluder.get_image_with_mask(model_reconstructions['gt']['original_image'], mask_info['mask_path'], mask_info['frame_ids'])              
         print(model_reconstructions.keys())
         return model_reconstructions, motion_path
 
@@ -222,6 +200,7 @@ class TestMeadDataset(Dataset):
         self.reconstruction_folder = os.path.join(self.processed_folder, 'reconstructions/EMICA-MEAD_flame2020')
         transcript_path = 'dataset/mead_25fps/processed/video_id_to_sent.npy'
         self.video_id_to_sent = np.load(transcript_path, allow_pickle=True)[()]
+        self.random_occluder = RandomOcclusion()
 
     def __len__(self):
         return len(self.split_data)
@@ -247,7 +226,7 @@ class TestMeadDataset(Dataset):
         code_dict['light'] = code_dict['light'].reshape(-1, 9, 3)
 
         with h5py.File(os.path.join(self.image_folder, motion_path, 'cropped_frames.hdf5'), "r") as f:
-            code_dict['image'] = torch.from_numpy(f['images'][:]).float()
+            code_dict['original_image'] = torch.from_numpy(f['images'][:]).float()
 
         return code_dict 
 
@@ -265,8 +244,8 @@ class TestMeadDataset(Dataset):
         print(mask_path)
         if os.path.exists(mask_path):
             print(f"found mask")
-            mask = np.load(mask_path, allow_pickle=True)[()]
-            diffusion_codes['mask'] = torch.from_numpy(mask).float()
+            mask_info = np.load(mask_path, allow_pickle=True)[()]
+            diffusion_codes['mask_info'] = mask_info
         return diffusion_codes
 
     def _get_emoca_reconstruction(self, motion_path, model_type, rec_path):
@@ -282,23 +261,6 @@ class TestMeadDataset(Dataset):
         else:
             rec_dict['exp'] = torch.from_numpy(emoca_codes['exp_emoca']).float()
         return rec_dict
-    
-    def _get_verts_reconstruction(self, motion_path, rec_path):
-        sample_path = os.path.join(rec_path, f"{motion_path}.npy")
-        if not os.path.exists(sample_path):
-            print(f"recons not existed for {sample_path}")
-            return None
-        rec_dict = {}
-        verts_reconstruciton = np.load(sample_path, allow_pickle=True)[()]
-        rec_dict['verts'] = torch.from_numpy(verts_reconstruciton).float()
-
-        # fix a dummy camera
-        # rec_dict['cam'] = torch.FloatTensor([[ 8.8514, -0.0149,  0.0190]]).repeat(verts_reconstruciton.shape[0], 1)
-
-        return rec_dict
-
-    def _get_transcript(self, motion_path):
-        return self.video_id_to_sent[motion_path]
 
     def __getitem__(self, idx):
         motion_path, _ = self.split_data[idx]
@@ -307,16 +269,7 @@ class TestMeadDataset(Dataset):
         model_reconstructions['gt'] = gt_flame
         for model_type in self.model_types:
             rec_path = self.rec_paths[model_type]
-            if model_type in ['faceformer', 'facediffuser', 'codetalker', 'voca']:
-                rec_dict = self._get_verts_reconstruction(motion_path, rec_path)
-                n_verts = rec_dict['verts'].shape[0]
-                num_frames = gt_flame['shape'].shape[0]
-                if num_frames < n_verts:
-                    rec_dict['verts'] = rec_dict['verts'][:num_frames]
-                elif num_frames > n_verts:
-                    rec_dict['verts'] = torch.cat([rec_dict['verts'], rec_dict['verts'][-1:].repeat(num_frames-n_verts, 1, 1)], dim=0)
-                assert gt_flame['shape'].shape[0] == rec_dict['verts'].shape[0]
-            elif model_type in ['diffusion', 'emote']:
+            if model_type in ['diffusion']:
                 rec_dict = self._get_diffusion_reconstruction(motion_path, rec_path)
             elif model_type in ['emoca', 'deca', 'spectre']:
                 rec_dict = self._get_emoca_reconstruction(motion_path, model_type, rec_path)
@@ -325,7 +278,8 @@ class TestMeadDataset(Dataset):
             if rec_dict is None:
                 return None, None
             model_reconstructions[model_type] = rec_dict
-
+        mask_info = model_reconstructions['diffusion']['mask_info']
+        model_reconstructions['gt']['image'] = self.random_occluder.get_image_with_mask(model_reconstructions['gt']['original_image'], mask_info['mask_path'], mask_info['frame_ids'])
         print(model_reconstructions.keys())
         return model_reconstructions, motion_path
 
@@ -341,14 +295,14 @@ class GridVis:
         self.fps = 25
         self.sld_wind_size = 64
         self.model_types = config.model_types
-        self.n_views = len(self.model_types) + 1 # add gt image
+        self.n_views = len(self.model_types) + 2 # add gt image
         self.with_audio = config.with_audio
         self.image_size = 224
 
         # IO setups
                         
         # name of the tested motion sequence
-        self.output_folder = os.path.join(self.config.output_folder, 'grid_vis')
+        self.output_folder = os.path.join(self.config.output_folder, 'grid_vis_occ_mask')
         if not os.path.exists(self.output_folder):
             os.makedirs(self.output_folder)
         
@@ -391,8 +345,8 @@ class GridVis:
         cam = motion_split['gt']['cam']
         global_pose = motion_split['gt']['global_pose']
         shape = motion_split['gt']['shape']
+        original_image = motion_split['gt']['original_image']
         image = motion_split['gt']['image']
-        mask = motion_split['diffusion'].get('mask', None)
 
         for model_type in self.model_types:
             motion_split_model = motion_split[model_type]
@@ -425,14 +379,13 @@ class GridVis:
             # lmk_2d = batch_orth_proj(lmk_3d, cam)
             # lmk_2d[:, :, 1:] = -lmk_2d[:, :, 1:]
         
-            render_image = self.render.render_shape(verts, trans_verts, images = image) # images = image
+            render_image = self.render.render_shape(verts, trans_verts, images = original_image) # images = image
             render_images[model_type] = render_image
 
-        if mask is not None:
-            image = image * mask.unsqueeze(1)
         for i in range(image.shape[0]):
             vis_dict = {}
-            vis_dict['gt_img'] = image[i].detach().cpu()
+            vis_dict['occ_img'] = image[i].detach().cpu()
+            vis_dict['gt_img'] = original_image[i].detach().cpu()
             for model_type in self.model_types:
                 vis_dict[model_type] = render_images[model_type][i].detach().cpu()
             grid_image = self.visualize(vis_dict)
@@ -480,7 +433,8 @@ class GridVis:
             for model_type in batch:
                 motion_split[model_type] = {}
                 for k in batch[model_type]:
-                    motion_split[model_type][k] = batch[model_type][k][start_id:start_id+self.sld_wind_size].to(self.device)
+                    if k not in ['mask_info']:
+                        motion_split[model_type][k] = batch[model_type][k][start_id:start_id+self.sld_wind_size].to(self.device)
             self.vis_motion_split(motion_split)
         if self.with_audio:
             self.writer.release()
@@ -510,7 +464,7 @@ class GridVis:
             self.idx += 1
 
 def main():
-    # sample use:
+    # sample use: python3 test_with_random_mask/grid_visualization.py --exp_name mouth --split test --with_audio
     parser = argparse.ArgumentParser()
     parser.add_argument('--output_folder', type=str, help='folder to store vis cases.', default='vis_result')
     parser.add_argument('--exp_name', type=str, help='.', default='non_occ')
@@ -556,8 +510,7 @@ def main():
     args = parser.parse_args()
     pretrained_args = get_cfg_defaults()
 
-    # args.model_types = ['diffusion', 'emote', 'faceformer', 'facediffuser', 'codetalker'] 
-    args.model_types = ['diffusion', 'spectre'] 
+    args.model_types = ['diffusion', 'deca', 'emoca', 'spectre'] 
 
     diffusion_model_base = 'diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc'    # base model to get the image mask
     
@@ -572,18 +525,16 @@ def main():
     exp_name = args.exp_name
 
     print("loading test data...")
+    rec_folder_name = 'occ_mask'
     if args.dataset == 'mead_25fps':
         rec_paths = {
-            'diffusion': os.path.join(args.vis_folder, diffusion_model_base , exp_name, 'diffusion_sample'),
-            'emoca': os.path.join(args.vis_folder, 'EMOCA', exp_name, 'EMOCA_reconstruction'),
-            'deca': os.path.join(args.vis_folder, 'EMOCA', exp_name, 'EMOCA_reconstruction'),
-            'spectre': os.path.join(args.vis_folder,'SPECTRE', exp_name, 'SPECTRE_reconstruction'),
-            'faceformer': os.path.join(args.vis_folder, 'FaceFormer', 'reconstruction'),
-            'facediffuser': os.path.join(args.vis_folder, 'FaceDiffuser', 'reconstruction'),
-            'codetalker': os.path.join(args.vis_folder, 'CodeTalker', 'reconstruction'),
+            'diffusion': os.path.join(args.vis_folder, diffusion_model_base , exp_name, rec_folder_name),
+            'emoca': os.path.join(args.vis_folder, 'EMOCA', exp_name, rec_folder_name ),
+            'deca': os.path.join(args.vis_folder, 'EMOCA', exp_name, rec_folder_name ),
+            'spectre': os.path.join(args.vis_folder,'SPECTRE', exp_name, rec_folder_name ),
         }
         
-        test_video_list = load_test_data(
+        test_video_list_all = load_test_data(
             args.dataset, 
             args.dataset_path, 
             args.split, 
@@ -591,7 +542,12 @@ def main():
             emotion_list=emotion_list, 
             level_list=level_list, 
             sent_list=sent_list)
-        shuffle_id = np.random.permutation(len(test_video_list))[:20]
+
+        test_video_list = []
+        for motion_path, seqlen in test_video_list_all:
+            if os.path.exists(os.path.join(rec_paths['diffusion'], f"{motion_path}_mask.npy")):
+                test_video_list.append((motion_path, seqlen))
+        
         print(f"number of test sequences: {len(test_video_list)}")
 
     
@@ -599,24 +555,20 @@ def main():
             args.dataset,
             args.dataset_path,
             rec_paths,
-            test_video_list[shuffle_id],
+            test_video_list,
             model_types=args.model_types
         )
     elif args.dataset == 'RAVDESS':
-
+        pretrained_args.model.n_shape = 100
         rec_paths = {
-            'diffusion': os.path.join(args.vis_folder, diffusion_model_base , exp_name, 'reconstruction'),
-            'emoca': os.path.join(args.vis_folder, 'EMOCA', exp_name, 'reconstruction'),
-            'deca': os.path.join(args.vis_folder, 'EMOCA', exp_name, 'reconstruction'),
-            'spectre': os.path.join(args.vis_folder,'SPECTRE', exp_name, 'SPECTRE_reconstruction'),
-            'faceformer': os.path.join(args.vis_folder, 'FaceFormer', 'reconstruction'),
-            'facediffuser': os.path.join(args.vis_folder, 'FaceDiffuser', 'reconstruction'),
-            'codetalker': os.path.join(args.vis_folder, 'CodeTalker', 'reconstruction'),
-            'emote': os.path.join(args.vis_folder, 'EMOTE', 'reconstruction'),
+            'diffusion': os.path.join(args.vis_folder, diffusion_model_base , exp_name, rec_folder_name),
+            'emoca': os.path.join(args.vis_folder, 'EMOCA', exp_name, rec_folder_name ),
+            'deca': os.path.join(args.vis_folder, 'EMOCA', exp_name, rec_folder_name ),
+            'spectre': os.path.join(args.vis_folder,'SPECTRE', exp_name, rec_folder_name ),
         }
 
         from data_loaders.dataloader_RAVDESS import load_RAVDESS_test_data
-        test_video_list = load_RAVDESS_test_data(
+        test_video_list_all = load_RAVDESS_test_data(
             args.dataset, 
             args.dataset_path,
             subject_list=subject_list,
@@ -624,14 +576,18 @@ def main():
             level_list=level_list, 
             sent_list=sent_list)
         
+        test_video_list = []
+        for motion_path in test_video_list_all:
+            if os.path.exists(os.path.join(rec_paths['diffusion'], f"{motion_path}_mask.npy")):
+                test_video_list.append(motion_path)
+        
         print(f"number of test sequences: {len(test_video_list)}")
-        shuffle_id = np.random.permutation(len(test_video_list))[:20]
 
         test_dataset = TestRAVDESSDataset(
             args.dataset,
             args.dataset_path,
             rec_paths,
-            test_video_list[shuffle_id],
+            test_video_list,
             model_types=args.model_types
         )
     

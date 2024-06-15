@@ -9,7 +9,7 @@ from tqdm import tqdm
 from skimage.transform import estimate_transform, warp
 from collections import defaultdict
 import random
-from utils.occlusion import MediaPipeFaceOccluder, get_test_img_occlusion_mask
+from utils.occlusion import MediaPipeFaceOccluder, get_test_img_occlusion_mask, RandomOcclusion
 import cv2 
 from torchvision import transforms
 import torchvision.transforms.functional as F 
@@ -19,154 +19,6 @@ import h5py
 from utils.MediaPipeLandmarkLists import *
 
 MEDIAPIPE_LANDMARK_NUMBER = 478
-
-# pad the sequence with init / endding poses
-class TrainMeadDatasetPad(Dataset):
-    def __init__(
-        self,
-        dataset_name, # list of dataset names
-        dataset_path,
-        split_data,
-        input_motion_length=120,
-        train_dataset_repeat_times=1,
-        no_normalization=True,
-        fps=25,
-        n_shape=300,
-        n_exp=50,
-        load_tex=False,
-        use_iris=False
-    ):
-        self.split_data = split_data
-        self.fps = fps
-        self.dataset = dataset_name
-        self.load_tex = load_tex # whether to use texture from emica
-        self.use_iris = use_iris # whether to use iris landmarks from mediapipe (last 10)
-        self.n_shape = n_shape 
-        self.n_exp = n_exp
-        # for audio alignment
-        sampling_rate = 16000
-        self.wav_per_frame = int(sampling_rate / self.fps)
-
-        # apply occlusion
-        # self.occluder = MediaPipeFaceOccluder()
-
-        # image process
-        self.image_size = 224 
-        
-        self.train_dataset_repeat_times = train_dataset_repeat_times
-        self.no_normalization = no_normalization
-        self.input_motion_length = input_motion_length
-
-        # paths to processed folder
-        self.processed_folder = os.path.join(dataset_path, dataset_name, 'processed')
-        self.audio_input_folder = os.path.join(self.processed_folder, 'audio_inputs')
-        self.cropped_landmark_folder = os.path.join(self.processed_folder,'cropped_landmarks')
-        self.reconstruction_folder = os.path.join(self.processed_folder, 'reconstructions/EMICA-MEAD_flame2020')
-        self.emotion_folder = os.path.join(self.processed_folder, 'emotions/resnet50')
-        self.image_folder = os.path.join(self.processed_folder,'images')
-       
-    def __len__(self):
-        return len(self.split_data) * self.train_dataset_repeat_times
-    
-    def _get_lmk_mediapipe(self, motion_path, start_id, motion_len):
-        """ get mediapipe landmarks normlized to [-1, 1]
-        """
-        lmk_path = os.path.join(self.cropped_landmark_folder, motion_path, 'landmarks_mediapipe.hdf5')
-        with h5py.File(lmk_path, "r") as f:
-            lmk_2d = torch.from_numpy(f['lmk_2d'][start_id:start_id+motion_len]).float()
-
-        if not self.use_iris:
-            lmk_2d = lmk_2d[:,:468] # exclude pupil parts
-
-        return lmk_2d # (n,478,2)
-
-    def _get_images(self, motion_path, start_id, motion_len):
-        """ get mediapipe landmarks normlized to [-1, 1]
-        """
-        img_path = os.path.join(self.image_folder, motion_path, 'cropped_frames.hdf5')
-        with h5py.File(img_path, "r") as f:
-            image = torch.from_numpy(f['images'][start_id:start_id+motion_len]).float()
-            # img_mask = torch.from_numpy(f['img_masks'][start_id:start_id+self.input_motion_length]).float()
-
-        return image
-
-    def _get_audio_input(self, motion_path, start_id, motion_len):
-        path_sep = motion_path.split('/')
-        sbj = path_sep[0]
-        emotion, level, sent = path_sep[-3:]
-        audio_path = os.path.join(self.audio_input_folder, f'{sbj}/{emotion}/{level}/{sent}.pt')
-        audio_input = torch.load(audio_path)
-
-        sid = start_id * self.wav_per_frame
-        audio_len = motion_len * self.wav_per_frame 
-        audio_split = audio_input[0, sid:sid + audio_len]
-
-        # pad zero to the end if not long enough
-        remain_audio_len = audio_len - len(audio_split)
-        if remain_audio_len > 0:
-            audio_split = nn.functional.pad(audio_split, (0, remain_audio_len))
-            
-        return audio_split # (n*wavperframe,)
-
-    def _get_emica_codes(self, motion_path, start_id, motion_len):
-        code_dict = {}
-
-        with h5py.File(os.path.join(self.reconstruction_folder, motion_path, 'shape_pose_cam.hdf5'), "r") as f:
-        # cam : (1, n, 3)
-        # exp : (1, n, 100)
-        # global_pose : (1, n, 3)
-        # jaw : (1, n, 3)
-        # shape : (1, n, 300)
-            for k in f.keys():
-                code_dict[k] = torch.from_numpy(f[k][0,start_id:start_id+motion_len]).float()
-        if self.load_tex:
-            with h5py.File(os.path.join(self.reconstruction_folder, motion_path, 'appearance.hdf5'), "r") as f:
-            # light : (1, n, 27)
-            # tex : (1, n, 50)
-                for k in f.keys():
-                    code_dict[k] = torch.from_numpy(f[k][0,start_id:start_id+motion_len]).float()
-        code_dict['shape'] = code_dict['shape'][:,:self.n_shape]
-        code_dict['exp'] = code_dict['exp'][:,:self.n_exp]
-
-        return code_dict 
-
-    def __getitem__(self, idx):
-        id = idx % len(self.split_data)
-        motion_path, seqlen = self.split_data[id]
-        seqlen = int(seqlen)
-
-        pad_prob = np.random.rand()
-        if pad_prob < 0.6:
-            motion_len = torch.randint(low=self.input_motion_length-25, high=60, size=(1,))[0]
-            if np.random.rand() < 0.5:
-                start_id = 0
-            else:
-                start_id = seqlen-motion_len
-        else:
-            motion_len = self.input_motion_length
-            start_id = torch.randint(0, int(seqlen - motion_len), (1,))[0] if seqlen > motion_len else 0 # random crop a motion seq
-        
-        pad_size = self.input_motion_length - motion_len       
-
-        batch = self._get_emica_codes(motion_path, start_id, motion_len)
-        batch['lmk_2d'] = self._get_lmk_mediapipe(motion_path, start_id, motion_len)
-        batch['audio_input'] = self._get_audio_input(motion_path, start_id, motion_len)
-
-        # pading applied
-        if pad_size > 0:
-            batch['audio_input'] = batch['audio_input'].reshape(motion_len, -1)
-            if start_id == 0:
-                for key in batch:
-                    tmp = torch.repeat_interleave(batch[key][:1], pad_size, dim=0)
-                    batch[key] = torch.cat([tmp, batch[key]], dim=0)
-            else:
-                for key in batch:
-                    tmp = torch.repeat_interleave(batch[key][-1:], pad_size, dim=0)
-                    batch[key] = torch.cat([batch[key], tmp], dim=0)
-            batch['audio_input'] = batch['audio_input'].reshape(-1)
-
-        
-        return batch
 
 class TrainMeadDataset(Dataset):
     def __init__(
@@ -450,18 +302,157 @@ class TestMeadDataset(Dataset):
             batch['audio_input'] = self._get_audio_input(motion_path, seqlen)
         if self.vis:
             batch.update(self._get_image_info(motion_path))
-            if self.mask_path is not None and os.path.exists(os.path.join(self.mask_path, f"{motion_path}_mask.npy")):
-                mask_path_motion = os.path.join(self.mask_path, f"{motion_path}_mask.npy")
-                img_mask = np.load(mask_path_motion, allow_pickle=True)[()]
-                batch['img_mask'] = torch.from_numpy(img_mask).float()
-            else:
-                batch['img_mask'], batch['lmk_mask'] = self._get_occlusion_mask(batch['img_mask'], batch['lmk_2d'])
+        
+        if self.mask_path is not None and os.path.exists(os.path.join(self.mask_path, f"{motion_path}_mask.npy")):
+            mask_path_motion = os.path.join(self.mask_path, f"{motion_path}_mask.npy")
+            img_mask = np.load(mask_path_motion, allow_pickle=True)[()]
+            batch['img_mask'] = torch.from_numpy(img_mask).float()
+            kpts = (batch['lmk_2d'].clone() * 112 + 112).long()
+            batch['lmk_mask'] = self._get_lmk_mask_from_img_mask(batch['img_mask'], kpts)
         else:
             batch['img_mask'] = torch.ones((seqlen, self.image_size, self.image_size))
             batch['img_mask'], batch['lmk_mask'] = self._get_occlusion_mask(batch['img_mask'], batch['lmk_2d'])
+        # else:
+        #     batch['img_mask'] = torch.ones((seqlen, self.image_size, self.image_size))
+        #     batch['img_mask'], batch['lmk_mask'] = self._get_occlusion_mask(batch['img_mask'], batch['lmk_2d'])
         # for key in batch:
         #     print(f"shape of {key}: {batch[key].shape}")
         
+        return batch, motion_path
+
+
+class TestMeadDatasetRandomOcclusion(Dataset):
+    def __init__(
+        self,
+        dataset_name, # list of dataset names
+        dataset_path,
+        split_data,
+        fps=25,
+        n_shape=300,
+        n_exp=50,
+        occ_type='non_occ',
+        load_tex=False,
+        use_iris=False,
+        load_audio_input=True,
+        vis=False,
+        mask_folder=None # dict of mask_path & frame_ids
+    ):
+        self.split_data = split_data
+        self.fps = fps
+        self.dataset = dataset_name
+        self.load_tex = load_tex # whether to use texture from emica
+        self.use_iris = use_iris # whether to use iris landmarks from mediapipe (last 10)
+        self.load_audio_input = load_audio_input
+        self.n_shape = n_shape 
+        self.n_exp = n_exp
+        self.occ_type = occ_type # occlusion type
+        self.vis = vis
+        # # apply occlusion
+        # self.occluder = MediaPipeFaceOccluder()
+
+        # image process
+        self.image_size = 224 
+        self.wav_per_frame = int(16000 / self.fps)
+
+        # paths to processed folder
+        self.processed_folder = os.path.join(dataset_path, dataset_name, 'processed')
+        self.audio_input_folder = os.path.join(self.processed_folder, 'audio_inputs')
+        self.cropped_landmark_folder = os.path.join(self.processed_folder,'cropped_landmarks')
+        self.reconstruction_folder = os.path.join(self.processed_folder, 'reconstructions/EMICA-MEAD_flame2020')
+        self.emotion_folder = os.path.join(self.processed_folder, 'emotions/resnet50')
+        self.image_folder = os.path.join(self.processed_folder, 'images')
+        self.random_occluder = RandomOcclusion()
+        self.mask_folder = mask_folder
+
+    def __len__(self):
+        return len(self.split_data)
+    
+    def _get_lmk_mediapipe(self, motion_path):
+        """ get mediapipe landmarks normlized to [-1, 1]
+        """
+        lmk_path = os.path.join(self.cropped_landmark_folder, motion_path, 'landmarks_mediapipe.hdf5')
+        with h5py.File(lmk_path, "r") as f:
+            lmk_2d = torch.from_numpy(f['lmk_2d'][:]).float()
+
+        if not self.use_iris:
+            lmk_2d = lmk_2d[:,:468] # exclude pupil parts
+
+        return lmk_2d # (n,478,2)
+
+    def _get_audio_input(self, motion_path, num_frames):
+        path_sep = motion_path.split('/')
+        sbj = path_sep[0]
+        emotion, level, sent = path_sep[-3:]
+        audio_path = os.path.join(self.audio_input_folder, f'{sbj}/{emotion}/{level}/{sent}.pt')
+        audio_input = torch.load(audio_path)[0]
+
+        remain_audio_len = num_frames * self.wav_per_frame - len(audio_input)
+        if remain_audio_len > 0:
+            audio_input = nn.functional.pad(audio_input, (0, remain_audio_len))
+        
+        audio_input = audio_input.reshape(num_frames, -1)
+
+        return audio_input  # (n, wav_per_frame)
+
+    def _get_emica_codes(self, motion_path):
+        code_dict = {}
+
+        with h5py.File(os.path.join(self.reconstruction_folder, motion_path, 'shape_pose_cam.hdf5'), "r") as f:
+        # cam : (1, n, 3)
+        # exp : (1, n, 100)
+        # global_pose : (1, n, 3)
+        # jaw : (1, n, 3)
+        # shape : (1, n, 300)
+            for k in f.keys():
+                code_dict[k] = torch.from_numpy(f[k][0]).float()
+        if self.load_tex:
+            with h5py.File(os.path.join(self.reconstruction_folder, motion_path, 'appearance.hdf5'), "r") as f:
+            # light : (1, n, 27)
+            # tex : (1, n, 50)
+                for k in f.keys():
+                    code_dict[k] = torch.from_numpy(f[k][0]).float()
+        code_dict['shape'] = code_dict['shape'][:,:self.n_shape]
+        code_dict['exp'] = code_dict['exp'][:,:self.n_exp]
+
+        return code_dict 
+
+    def _get_image_info(self, motion_path):
+        data_dict = {}
+        with h5py.File(os.path.join(self.image_folder, motion_path, 'cropped_frames.hdf5'), "r") as f:
+            data_dict['original_image'] = torch.from_numpy(f['images'][:]).float()
+        return data_dict
+    
+
+    def __getitem__(self, idx):
+        motion_path, seqlen = self.split_data[idx]
+
+        batch = self._get_emica_codes(motion_path)
+        batch['lmk_2d'] = self._get_lmk_mediapipe(motion_path)
+        seqlen = batch['lmk_2d'].shape[0]
+        if self.load_audio_input:
+            batch['audio_input'] = self._get_audio_input(motion_path, seqlen)
+        batch.update(self._get_image_info(motion_path))
+        
+        if self.mask_folder is not None:
+            mask_info = np.load(os.path.join(self.mask_folder, f"{motion_path}_mask.npy"), allow_pickle=True)[()]
+            frame_ids = mask_info['frame_ids']
+            mask_path = mask_info['mask_path']
+        else:
+            if seqlen <= 45:
+                sid = 5
+                occ_num_frames = min(30, seqlen-sid)
+            else:
+                sid = torch.randint(low=0, high=seqlen-45, size=(1,))[0]
+                occ_num_frames = torch.randint(low=45, high=seqlen-sid+1, size=(1,))[0]
+            frame_ids = torch.arange(sid, sid+occ_num_frames)
+            batch['lmk_mask'], mask_path = self.random_occluder.get_landmark_mask(batch['lmk_2d'], frame_ids, self.occ_type)
+        
+        batch['image'] = self.random_occluder.get_image_with_mask(batch['original_image'], mask_path, frame_ids)
+        batch['mask_path'] = mask_path
+        batch['frame_ids'] = frame_ids
+        
+        # for key in batch:
+        #     print(f"shape of {key}: {batch[key].shape}")
         return batch, motion_path
 
 def get_split_MEAD(split):

@@ -84,7 +84,7 @@ def main():
     )
 
     print(f"number of train sequences: {len(train_processed_path)}")
-    train_dataset = TrainMeadDatasetPad(
+    train_dataset = TrainMeadDataset(
         args.dataset,
         args.dataset_path,
         train_processed_path,
@@ -111,7 +111,7 @@ def main():
         args.input_motion_length
     )
     print(f"number of test sequences: {len(val_processed_path)}")
-    val_dataset = TrainMeadDatasetPad(
+    val_dataset = TrainMeadDataset(
         args.dataset,
         args.dataset_path,
         val_processed_path,
