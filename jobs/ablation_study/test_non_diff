@@ -1,1 +1,0 @@
-python3 test_motion_mead_lmk_flint_nondiff.py --model_path checkpoints/TransformerPure_768d_36l_cat_mediapipelmk_FLINT/model_32.pt --split test --input_motion_length 64 --exp_name all --save_rec 

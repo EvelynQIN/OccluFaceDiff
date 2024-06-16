@@ -6,7 +6,6 @@
 
 from diffusion import gaussian_diffusion as gd
 from diffusion.respace import space_timesteps, SpacedDiffusion
-from model.meta_model import MultiBranchMLP
 from model import denoising_model
 import importlib
 
@@ -44,19 +43,7 @@ def load_model_wo_clip(model, state_dict):
     assert all([k.startswith("clip_model.") for k in missing_keys])
 
 def create_model_and_diffusion(args, model_cfg, device):
-    arch = args.arch  
-    if "Audio" in arch:
-        denoise_model = denoising_model.AudioTransformerFiLM(**get_transformer_args(args))
-    elif "woFiLM" in arch:
-        denoise_model = denoising_model.FaceTransformerFLINTwoFiLM(**get_transformer_args(args))
-    elif "FLINT" in arch:
-        denoise_model = denoising_model.FaceTransformerFLINT(**get_transformer_args(args))
-    elif "Trans" in arch:
-        denoise_model = denoising_model.FaceTransformerFiLM(**get_transformer_args(args))
-    elif "MLP" in arch:
-        denoise_model = MultiBranchMLP(**get_mlp_args(args))
-    else:
-        raise  ValueError("Invalid architecture name!")
+    denoise_model = denoising_model.FaceTransformerFLINT(**get_transformer_args(args))
     diffusion = create_gaussian_diffusion(args, model_cfg, device)
     return denoise_model, diffusion
 
@@ -74,26 +61,8 @@ def get_transformer_args(args):
         "cond_mask_prob": args.cond_mask_prob,
         "audio_mask_prob": args.audio_mask_prob,
         "n_exp": args.n_exp,
-        "n_pose": args.n_pose,
-        
+        "n_pose": args.n_pose,  
    }
-
-def get_mlp_args(args):
-
-    return {
-        "lmk2d_dim": args.lmk2d_dim,
-        "cond_latent_dim": args.cond_latent_dim,
-        "num_layers": args.num_layers,
-        "input_latent_dim": args.input_latent_dim,
-        "dropout": args.dropout,
-        "dataset": args.dataset,
-        "cond_mask_prob": args.cond_mask_prob,
-        "audio_mask_prob": args.audio_mask_prob,
-        "input_motion_length": args.input_motion_length,
-        "n_exp": args.n_exp,
-        "n_pose": args.n_pose,
-    }
-
 
 def create_gaussian_diffusion(args, model_cfg, device):
     predict_xstart = True

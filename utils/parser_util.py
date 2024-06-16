@@ -109,9 +109,6 @@ def add_transformer_options(parser):
         type=str,
         help="Architecture types as reported in the paper.",
     )
-    group.add_argument(
-        "--target_nfeat", default=433, type=int, help="motion feature dimension"
-    )
 
     group.add_argument(
         "--num_enc_layers", default=1, type=int, help="Number of encoder layers."
@@ -147,77 +144,6 @@ def add_transformer_options(parser):
     group.add_argument(
         "--use_mask", default=True, type=bool, help="whether to use alibi casual mask for decoder self attention."
     )
-    group.add_argument(
-        "--no_normalization",
-        action="store_true",
-        help="no data normalisation for the 6d motions",
-    )
-    group.add_argument(
-        "--flame_model_path", default='flame_2020/generic_model.pkl', type=str, help="the path to the flame model"
-    )
-    group.add_argument(
-        "--flame_lmk_embedding_path", default='flame_2020/landmark_embedding.npy', type=str, help="the path to the flame landmark embeddings"
-    )
-
-
-def add_mlp_options(parser):
-    group = parser.add_argument_group("mlp")
-    group.add_argument(
-        "--arch",
-        default="DiffMLP",
-        type=str,
-        help="Architecture types as reported in the paper.",
-    )
-    
-    group.add_argument(
-        "--lmk2d_dim", default=68*2, type=int, help="2d lmks signal feature dimension"
-    )
-
-    group.add_argument(
-        "--cond_latent_dim", default=512, type=int, help="latent dimension of the sparse landmarks."
-    )
-    
-    group.add_argument(
-        "--num_layers", default=8, type=int, help="Number of layers of the diffMLP motion branch."
-    )
-    
-    group.add_argument(
-        "--input_latent_dim", default=512, type=int, help="latent dimension of the diffMLP motion branch."
-    )
-
-    group.add_argument(
-        "--dropout", default=0.1, type=float, help="dropout rate."
-    )
-
-    group.add_argument(
-        "--cond_mask_prob",
-        default=0.0,
-        type=float,
-        help="The probability of masking the condition during training."
-        " For classifier-free guidance learning.",
-    )
-
-    group.add_argument(
-        "--audio_mask_prob",
-        default=0.0,
-        type=float,
-        help="The probability of masking the audio condition during training."
-        " For classifier-free guidance learning.",
-    )
-
-    group.add_argument(
-        "--input_motion_length",
-        default=150,
-        type=int,
-        help="Limit for the maximal number of frames.",
-    )
-
-    group.add_argument(
-        "--no_normalization",
-        action="store_true",
-        help="no data normalisation for the 6d motions",
-    )
-
 
 def add_data_options(parser):
     group = parser.add_argument_group("dataset")
@@ -225,10 +151,7 @@ def add_data_options(parser):
         "--dataset",
         default=None,
         choices=[
-            "FaMoS",
-            "multiface",
             "mead_25fps",
-            "vocaset"
         ],
         type=str,
         help="Dataset name (choose from list).",
@@ -269,7 +192,7 @@ def add_data_options(parser):
     )
 
     group.add_argument(
-        "--fps", default=30, type=int, help="fps of the motion sequence."
+        "--fps", default=25, type=int, help="fps of the motion sequence."
     )
 
     group.add_argument(
@@ -334,7 +257,7 @@ def add_training_options(parser):
     )
 
     group.add_argument(
-        "--log_interval", default=100, type=int, help="Log losses each N steps"
+        "--log_interval", default=1, type=int, help="Log losses each N epochs"
     )
     group.add_argument(
         "--save_interval",
@@ -371,13 +294,6 @@ def add_training_options(parser):
         default=1,
         type=int,
         help="update gradient every n steps",
-    )
-
-    group.add_argument(
-        "--occlusion_mask_prob",
-        default=0,
-        type=float,
-        help="Probability for adding random occlusion mask.",
     )
     
     group.add_argument(
@@ -629,24 +545,6 @@ def add_evaluation_options(parser):
         type=str,
         help="Path to model####.pt file to be sampled.",
     )
-
-
-def train_mlp_args():
-    parser = ArgumentParser()
-    add_base_options(parser)
-    add_data_options(parser)
-    add_mlp_options(parser)
-    add_diffusion_options(parser)
-    add_training_options(parser)
-    return parser.parse_args()
-
-def train_pureTrans_args():
-    parser = ArgumentParser()
-    add_base_options(parser)
-    add_data_options(parser)
-    add_transformer_options(parser)
-    add_training_options(parser)
-    return parser.parse_args()
 
 def train_trans_args():
     parser = ArgumentParser()

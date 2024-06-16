@@ -5,8 +5,8 @@ import pickle
 import argparse
 
 def convert_to_25fps(MEAD_path, out_folder, subject_list, fps=25):
-    # args = ['ffmpeg', '-r', '1', '-i', str(video_file), '-r', '1', str(out_format)]
-    # out_format = ' -r 1 -i %s ' % str(video_file) + ' "' + "$frame.%03d.png" + '"'
+    """convert videos from MEAD into 25 fps
+    """
     view = 'front'  # currently only focus on the front view
     if not os.path.exists(out_folder):
         os.makedirs(out_folder)
@@ -53,15 +53,7 @@ if __name__ =="__main__":
     MEAD_path = 'dataset/mead_25fps/original_data'
     out_folder = 'dataset/mead_25fps/processed/videos_25fps'
 
-    # parser = argparse.ArgumentParser(description='resample video to 25 fps')
-
-    # parser.add_argument('--num_subjects', default=0, type=int, help='number of subjects to process together')
-
-    # args = parser.parse_args()
-
-    mead_subjects = ['M007', 'M009', 'W011']
-
-    # subject_list = mead_subjects[args.subject_id:args.subject_id+args.num_subjects]
+    mead_subjects = os.listdir(MEAD_path)
     convert_to_25fps(MEAD_path, out_folder, mead_subjects)
 
     # get_video_list(out_folder)

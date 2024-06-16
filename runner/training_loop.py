@@ -1,13 +1,3 @@
-# MIT License
-# Copyright (c) 2021 OpenAI
-#
-# This code is based on https://github.com/openai/guided-diffusion
-# MIT License
-# Copyright (c) 2022 Guy Tevet
-#
-# This code is based on https://github.com/GuyTevet/motion-diffusion-model
-# Copyright (c) Meta Platforms, Inc. All Rights Reserved
-
 import functools
 
 import os
@@ -17,15 +7,14 @@ import gc
 from diffusion.fp16_util import MixedPrecisionTrainer
 from diffusion.resample import create_named_schedule_sampler
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from utils.scheduler import WarmupCosineSchedule
 from tqdm import tqdm
 from utils import dist_util
 import wandb
-# from model.deca import EMOCA
-# from utils import utils_transform
 from memory_profiler import profile
 from utils.occlusion import MediaPipeFaceOccluder
+from model.motion_prior import L2lVqVae
+from munch import Munch, munchify
 
 # training loop for the diffusion given "model" as the denoising model
 class TrainLoop:
@@ -33,9 +22,8 @@ class TrainLoop:
         """
 
         Args:
-            model: the denoising model (diffuseMLP)
+            denoise_model: the denoising model (diffuseMLP)
             diffusion: spaced diffusion
-            data: the data loader
         """
         self.args = args
         self.model_cfg = model_cfg
@@ -82,7 +70,7 @@ class TrainLoop:
             self.mp_trainer.master_params, lr=self.lr, weight_decay=self.weight_decay
         )
         if self.args.cosine_scheduler:
-            self.scheduler = CosineAnnealingWarmRestarts(self.opt, T_0=15, T_mult=1, eta_min=1e-6)   # WarmupCosineSchedule(self.opt, warmup_steps=args.warmup_steps, t_total=self.num_steps)
+            self.scheduler = WarmupCosineSchedule(self.opt, warmup_steps=args.warmup_steps, t_total=self.num_steps)
         
         if self.resume_epoch and self.load_optimizer:
             self._load_optimizer_state()
@@ -104,6 +92,11 @@ class TrainLoop:
         # apply random mask during training
         self.occluder = MediaPipeFaceOccluder()
 
+        # load the motion prior
+        self._load_flint_encoder()
+
+        self.model.freeze_wav2vec()
+
     def _load_and_sync_parameters(self):
         resume_checkpoint = self.resume_checkpoint
 
@@ -116,7 +109,7 @@ class TrainLoop:
                     resume_checkpoint,
                     map_location=dist_util.dev(),
                 ),
-                strict=False
+                strict=True
             )
 
     def _load_optimizer_state(self):
@@ -132,6 +125,17 @@ class TrainLoop:
         )
         self.opt.load_state_dict(state_dict)
     
+    def _load_flint_encoder(self):
+        ckpt_path = self.model_cfg.flint_ckpt_path
+        f = open(self.model_cfg.flint_config_path)
+        cfg = Munch.fromYAML(f)
+        flint = L2lVqVae(cfg)
+        flint.load_model_from_checkpoint(ckpt_path)
+        self.flint_encoder = flint.motion_encoder.to(self.device)
+        print(f"[FLINT Encoder] Loaded and Frozen.")
+        self.flint_encoder.requires_grad_(False)
+        self.flint_encoder.eval()
+    
     # @profile
     def run_loop(self):
         local_step = 0
@@ -141,31 +145,37 @@ class TrainLoop:
             self.epoch = epoch
 
             # focus on visual signals without mouth & all occ type
-            if epoch % self.freeze_audio_encoder_interval == 0:
+            if epoch % self.freeze_audio_encoder_interval < (self.freeze_audio_encoder_interval // 2):
                 self.model.freeze_wav2vec()
-                self.occlusion_regions_prob = {
-                    'all': 0.1,
-                    'left_eye': 0.2,
-                    'right_eye': 0.2,
-                    'mouth': 0.3,
-                    'random': 0.2,
-                    'contour': 0.15
+                self.occluder.occlusion_regions_prob = {
+                    'all': 0.3,
+                    'eye': 0.3,
+                    'left': 0.3,
+                    'right': 0.3,
+                    'left_eye': 0.,
+                    'right_eye': 0.,
+                    'mouth': 0.2,
+                    'random': 0.4,
+                    'contour': 0.4
                 }
-                self.mask_all_prob = 0.
-                self.mask_frame_prob = 0.1
+                self.occluder.mask_all_prob = 0.15
+                self.occluder.mask_frame_prob = 0.15
             # focus on combining audio signals with only mouth & all occ type
             else:
                 self.model.unfreeze_wav2vec()
-                self.occlusion_regions_prob = {
+                self.occluder.occlusion_regions_prob = {
                     'all': 0.2,
+                    'eye': 0.,
+                    'left': 0.1,
+                    'right': 0.1,
                     'left_eye': 0.,
                     'right_eye': 0.,
-                    'mouth': 0.8,
+                    'mouth': 0.5,
                     'random': 0.,
-                    'contour': 0.2
+                    'contour': 0.3
                 }
-                self.mask_all_prob = 0.2
-                self.mask_frame_prob = 0.1
+                self.occluder.mask_all_prob = 0.3
+                self.occluder.mask_frame_prob = 0.2
 
             for batch in tqdm(self.train_loader):
                 local_step += 1
@@ -174,13 +184,12 @@ class TrainLoop:
 
                 for k in batch:
                     batch[k] = batch[k].to(self.device)
-                target = batch['target']
-                model_kwargs = {}
-                for k in batch:
-                    if k != 'target':
-                        model_kwargs[k] = batch[k]
+                motion_target = torch.cat([batch['exp'], batch['jaw']], dim=-1)
+
+                target = self.flint_encoder(motion_target)  # (bs, n//8, 128)
+
                 grad_update = True if local_step % self.gradient_accumulation_steps == 0 else False 
-                self.run_step(target, grad_update, **model_kwargs)
+                self.run_step(target, grad_update, **batch)
 
             if epoch == self.num_epochs or epoch % self.save_interval == 0:
                 self.save()
@@ -199,8 +208,8 @@ class TrainLoop:
             self.forward_backward(batch, log_loss=True, **model_kwargs)
             self.mp_trainer.optimize(self.opt)
             if self.args.cosine_scheduler:
-                self.scheduler.step(self.epoch - self.resume_epoch - 1 + self.step / self.steps_per_epoch)
-                self.lr = self.opt.param_groups[-1]['lr']  # self.scheduler.get_last_lr()[0]
+                self.scheduler.step()
+                self.lr = self.opt.param_groups[-1]['lr']  
             else:
                 self._step_lr()
             self.mp_trainer.zero_grad()
@@ -228,9 +237,6 @@ class TrainLoop:
         if self.loss_keys is None:
             self.loss_keys = loss_dict.keys()
 
-        # if isinstance(self.schedule_sampler, LossAwareSampler):
-        #     self.schedule_sampler.update_with_local_losses(t, losses["loss"].detach())
-
         # normalize loss to account for batch accumulation
         loss = loss_dict['loss'] / self.gradient_accumulation_steps
         self.mp_trainer.backward(loss)
@@ -254,31 +260,29 @@ class TrainLoop:
                 batch['lmk_mask'] = self.occluder.get_lmk_occlusion_mask(batch['lmk_2d'][0]).unsqueeze(0).repeat(self.batch_size, 1, 1)   # (bs, t, v)
                 for k in batch:
                     batch[k] = batch[k].to(self.device)
-                target = batch['target']
-                model_kwargs = {}
-                for k in batch:
-                    if k != 'target':
-                        model_kwargs[k] = batch[k]
+                motion_target = torch.cat([batch['exp'], batch['jaw']], dim=-1)
+                target = self.flint_encoder(motion_target)  # (bs, n//8, 128)
                 t, weights = self.schedule_sampler.sample(target.shape[0], dist_util.dev())
                 compute_losses = functools.partial(
                     self.diffusion.training_losses,
                     self.ddp_model,
                     target,
                     t,
-                    model_kwargs
+                    batch
                 )
 
                 loss_dict = compute_losses()
                 loss_dict['loss'] = loss_dict['loss'].detach().item()
                 for k in val_loss:
                     val_loss[k] +=  loss_dict[k]
-                del batch, model_kwargs, loss_dict
+                del batch
                 # torch.cuda.empty_cache()
                 
             for k in val_loss:
                 val_loss[k] /= eval_steps
             
             self.log_loss_dict(val_loss, phase="validation")
+            
             del val_loss
 
     def _anneal_lr(self):
@@ -311,10 +315,6 @@ class TrainLoop:
             loss_dict['lr'] = self.lr
         if self.args.wandb_log:
             wandb.log(loss_dict)
-            # # Log the quantiles (four quartiles, in particular).
-            # for sub_t, sub_loss in zip(ts.cpu().numpy(), values.detach().cpu().numpy()):
-            #     quartile = int(4 * sub_t / diffusion.num_timesteps)
-            #     logger.logkv_mean(f"{key}_q{quartile}", sub_loss
 
     def ckpt_file_name(self):
         return f"model_{(self.epoch)}.pt"

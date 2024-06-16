@@ -177,7 +177,6 @@ class VideoProcessor:
         frame_id = 0
         if self.save_images:
             frame_list = []
-            seg_list = []
         lmk_list = []
         
         start_time = time()
@@ -250,20 +249,15 @@ if __name__ == "__main__":
         video_folder="dataset/mead_25fps/processed/videos_25fps", # path to the video folder (resampled to 25fps)
         to_folder="dataset/mead_25fps/processed/images", # path to the result folder
         device='cpu',
-        save_images=True
+        save_images=True    # whether to store the cropped video frames (could be used for tesing)
     )
-    # mead_subjects = ['M013', 'M019', 'M024', 'M025', 'M028', 'M029', 'M030', 'M033', 'M037', 'M039', 'M041', 'W009', 'W014', 'W015', 'W016', 'W018', 'W019', 'W023', 'W024', 'W025', 'W026', 'W028', 'W029', 'W033', 'W035', 'W036', 'W037', 'W038', 'W040']
-    # subject_with_img = ['M003', 'M005', 'M011', 'M012', 'M022', 'M023', 'M026', 'M027', 'M030', 'M031', 'M034', 'M040', 'M041', 'W018', 'W024', 'W029', 'W037']
 
-    # mead subject to process with images
-    # mead_subjects_to_do_img = ['W014', 'W029','W037']
-    # mead_subjects_to_do_wo_img = ['M013', 'M019', 'M024', 'M025', 'M028', 'M029', 'M033', 'M037', 'M039', 'W009', 'W014', 'W015', 'W016', 'W019', 'W023', 'W025', 'W026', 'W028', 'W033', 'W035', 'W036', 'W038', 'W040']
-
-    mead_subjects = ['M007', 'M009', 'W011']
+    # subjects selected to preprocess
+    mead_subjects = list(os.listdir("dataset/mead_25fps/processed/videos_25fps"))
 
     video_list = []
     print(f"process subjects: {mead_subjects}")
     for subject in mead_subjects:
         video_list.extend(get_video_list_for_subject("dataset/mead_25fps/processed/videos_25fps", subject))
     video_list.sort()
-    video_processor.process_all_videos(video_list, f"get_new_test_data")
+    video_processor.process_all_videos(video_list, f"get_cropped_landmarks")

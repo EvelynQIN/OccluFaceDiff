@@ -9,9 +9,6 @@ import os
 from glob import glob 
 from tqdm import tqdm
 
-video_id_to_sent_id = np.load(os.path.join('dataset/mead_25fps/' 'processed/video_id_to_sent_id.npy'), allow_pickle=True)[()]
-mead_subjects = ['M007', 'M009', 'W011']
-
 def preoprocess_audio(datafolder, to_folder):
     if not os.path.exists(to_folder):
         os.makedirs(to_folder)
@@ -20,8 +17,6 @@ def preoprocess_audio(datafolder, to_folder):
     empty_audio_list = []
     view = 'front'
     for subject in os.scandir(datafolder):
-        if subject.name not in mead_subjects:
-            continue
         n_subj += 1
         print(f"process No. {n_subj}__{subject.name}")
         
@@ -32,12 +27,7 @@ def preoprocess_audio(datafolder, to_folder):
             for level in os.scandir(emotion.path):
                 for audio in os.scandir(level.path):
                     sent = audio.name[:-4]
-                    
-                    # only extract test audio 
                     video_id = '/'.join([subject.name, view, emotion.name, level.name, sent])
-                    sent_id = video_id_to_sent_id[video_id]
-                    if sent_id >= 10:
-                        continue
 
                     audio_folder = os.path.join(to_folder, subject.name, emotion.name, level.name)
                     if not os.path.exists(audio_folder):

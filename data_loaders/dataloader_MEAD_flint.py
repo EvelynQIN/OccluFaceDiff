@@ -46,9 +46,6 @@ class TrainMeadDataset(Dataset):
         sampling_rate = 16000
         self.wav_per_frame = int(sampling_rate / self.fps)
 
-        # apply occlusion
-        # self.occluder = MediaPipeFaceOccluder()
-
         # image process
         self.image_size = 224 
         
@@ -61,7 +58,6 @@ class TrainMeadDataset(Dataset):
         self.audio_input_folder = os.path.join(self.processed_folder, 'audio_inputs')
         self.cropped_landmark_folder = os.path.join(self.processed_folder,'cropped_landmarks')
         self.reconstruction_folder = os.path.join(self.processed_folder, 'reconstructions/EMICA-MEAD_flame2020')
-        self.emotion_folder = os.path.join(self.processed_folder, 'emotions/resnet50')
         self.image_folder = os.path.join(self.processed_folder,'images')
        
     def __len__(self):
@@ -147,10 +143,6 @@ class TrainMeadDataset(Dataset):
         batch = self._get_emica_codes(motion_path, start_id)
         batch['lmk_2d'] = self._get_lmk_mediapipe(motion_path, start_id)
         batch['audio_input'] = self._get_audio_input(motion_path, start_id)
-        # batch['image'] = self._get_images(motion_path, start_id)
-        # batch['lmk_mask'] = self.occluder.get_lmk_occlusion_mask(batch['lmk_2d'])
-        # for key in batch:
-        #     print(f"shape of {key}: {batch[key].shape}")
         
         return batch
 
@@ -207,16 +199,6 @@ class TestMeadDataset(Dataset):
         lmk_path = os.path.join(self.cropped_landmark_folder, motion_path, 'landmarks_mediapipe.hdf5')
         with h5py.File(lmk_path, "r") as f:
             lmk_2d = torch.from_numpy(f['lmk_2d'][:]).float()
-
-        # # validity check
-        # landmark_validity = np.ones((len(lmk_2d), 1), dtype=np.float32)
-        # for i in range(len(lmk_2d)): 
-        #     if len(lmk_2d[i]) == 0: # dropped detection
-        #         lmk_2d[i] = np.zeros((MEDIAPIPE_LANDMARK_NUMBER, 2))
-        #         landmark_validity[i] = 0.
-        #     else: # multiple faces detected or one face detected
-        #         lmk_2d[i] = lmk_2d[i][0] # just take the first one for now
-        # lmk_2d = np.stack(lmk_2d, axis=0)
 
         if not self.use_iris:
             lmk_2d = lmk_2d[:,:468] # exclude pupil parts
@@ -312,11 +294,6 @@ class TestMeadDataset(Dataset):
         else:
             batch['img_mask'] = torch.ones((seqlen, self.image_size, self.image_size))
             batch['img_mask'], batch['lmk_mask'] = self._get_occlusion_mask(batch['img_mask'], batch['lmk_2d'])
-        # else:
-        #     batch['img_mask'] = torch.ones((seqlen, self.image_size, self.image_size))
-        #     batch['img_mask'], batch['lmk_mask'] = self._get_occlusion_mask(batch['img_mask'], batch['lmk_2d'])
-        # for key in batch:
-        #     print(f"shape of {key}: {batch[key].shape}")
         
         return batch, motion_path
 
@@ -347,8 +324,6 @@ class TestMeadDatasetRandomOcclusion(Dataset):
         self.n_exp = n_exp
         self.occ_type = occ_type # occlusion type
         self.vis = vis
-        # # apply occlusion
-        # self.occluder = MediaPipeFaceOccluder()
 
         # image process
         self.image_size = 224 
@@ -538,7 +513,7 @@ def load_data(dataset, dataset_path, split, input_motion_length):
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
     MEAD_subject_split, MEAD_sentence_split = get_split_MEAD(split)
-    with open(os.path.join(processed_folder, 'video_list_woimg.pkl'), 'rb') as f:
+    with open(os.path.join(processed_folder, 'video_list.pkl'), 'rb') as f:
         video_list = pickle.load(f)
     motion_list = []
     for video_id, num_frames in video_list:

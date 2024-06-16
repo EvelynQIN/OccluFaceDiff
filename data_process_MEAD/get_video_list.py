@@ -51,7 +51,7 @@ def get_video_list_from_lmks(lmks_folder, audio_input_folder):
                             num_frames = f['lmk_2d'].shape[0]
                         video_list[video_id] = num_frames
     print(f"there are {len(video_list)} sequences")
-    with open('dataset/mead_25fps/processed/video_list_woimg.pkl', 'wb') as f:
+    with open('dataset/mead_25fps/processed/video_list.pkl', 'wb') as f:
         pickle.dump(sorted(video_list.items()), f)
 
 if __name__ == '__main__':

@@ -38,7 +38,6 @@ cfg.model.jaw_type = 'aa' # default use axis angle, another option: euler. Note 
 cfg.model.image_size = 224
 
 # diffusion
-cfg.model.train_stage = 1 # training stage of diffusion [1 / 2]
 cfg.model.flint_ckpt_path = 'pretrained/MotionPrior/models/FLINTv2/checkpoints/model-epoch=0758-val/loss_total=0.113977119327.ckpt'
 cfg.model.flint_config_path = 'pretrained/MotionPrior/models/FLINTv2/cfg.yaml'
 

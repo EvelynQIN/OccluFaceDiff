@@ -446,25 +446,8 @@ class LipReadEval:
         self._crop_height = 96
         self._window_margin = 12
         self._lip_idx = torch.from_numpy(LIP_EM).long()
-        # self._start_idx = 48
-        # self._stop_idx = 68
 
         self.fourcc = cv2.VideoWriter_fourcc("F", "F", "V", "1")    # format to write mouth sequence
-
-        # # default render setting for verts only methods
-        # with h5py.File('dataset/mead_25fps/processed/reconstructions/EMICA-MEAD_flame2020/M003/front/neutral/level_1/002/shape_pose_cam.hdf5', "r") as f:
-        # # cam : (1, n, 3)
-        # # exp : (1, n, 100)
-        # # global_pose : (1, n, 3)
-        # # jaw : (1, n, 3)
-        # # shape : (1, n, 300)
-        #     self.cam = torch.from_numpy(f['cam'][0,0]).float()[None,:]
-        #     self.pose = torch.from_numpy(f['global_pose'][0,0]).float()[None,:]
-        # with h5py.File('dataset/mead_25fps/processed/reconstructions/EMICA-MEAD_flame2020/M003/front/neutral/level_1/002/appearance.hdf5', "r") as f:
-        #     # light : (1, n, 27)
-        #     # tex : (1, n, 50)
-        #     self.light = torch.from_numpy(f['light'][0,0]).float().reshape(1, 9, 3)
-        #     self.tex = torch.from_numpy(f['tex'][0,0]).float()[None,:]
 
     def cut_mouth_vectorized(
         self,
@@ -737,15 +720,6 @@ class LipReadEval:
             self.idx += 1
 
 def main():
-    # sample use:
-    # python3 test_lipreading.py --output_folder vis_result/EMOCA/non_occ --model_type emoca --rec_folder EMOCA_reconstruction
-    # python3 test_lipreading.py --output_folder vis_result/diffusion_Transformer_768d_cat_mediapipelmk_FLINT_testsplit_largeocc/all --model_type diffusion --rec_folder diffusion_sample
-    # python3 test_lipreading.py --output_folder vis_result/EMOCA/non_occ --model_type emica --rec_folder dummy
-    # python3 test_lipreading.py --output_folder vis_result/SPECTRE/non_occ --model_type spectre --rec_folder SPECTRE_reconstruction
-    # python3 test_lipreading.py --output_folder vis_result/FaceFormer --model_type faceformer --rec_folder reconstruction
-    # python3 test_lipreading.py --output_folder vis_result/FaceDiffuser --model_type facediffuser --rec_folder reconstruction
-    # python3 test_lipreading.py --output_folder vis_result/CodeTalker --model_type codetalker --rec_folder reconstruction
-    # python3 test_lipreading.py --output_folder vis_result/VOCA --model_type voca --rec_folder reconstruction
     parser = argparse.ArgumentParser()
     parser.add_argument('--output_folder', type=str, help='folder to store diffusion sample.', required=True)
     parser.add_argument('--split', type=str, help='mead split for evaluation.', default='test')
@@ -767,37 +741,22 @@ def main():
     
     print("loading test data...")
     
-    if args.dataset == 'mead_25fps':
-        test_video_list = load_test_data(
-            args.dataset, 
-            args.dataset_path, 
-            args.split)
+    test_video_list = load_test_data(
+        args.dataset, 
+        args.dataset_path, 
+        args.split)
 
-        print(f"number of test sequences: {len(test_video_list)}")
-        
-        test_dataset = TestMeadDataset(
-            args.dataset,
-            args.dataset_path,
-            rec_folder,
-            test_video_list,
-            n_shape=model_cfg.n_shape,
-            n_exp=model_cfg.n_exp,
-            model_type=args.model_type
-        )
-    elif args.dataset == 'RAVDESS':
-        from data_loaders.dataloader_RAVDESS import load_RAVDESS_test_data
-        test_video_list = load_RAVDESS_test_data(
-            args.dataset, 
-            args.dataset_path)
-        
-        print(f"number of test sequences: {len(test_video_list)}")
-        test_dataset = TestRAVDESSDataset(
-            args.dataset,
-            args.dataset_path,
-            rec_folder,
-            test_video_list,
-            args.model_type
-        )
+    print(f"number of test sequences: {len(test_video_list)}")
+    
+    test_dataset = TestMeadDataset(
+        args.dataset,
+        args.dataset_path,
+        rec_folder,
+        test_video_list,
+        n_shape=model_cfg.n_shape,
+        n_exp=model_cfg.n_exp,
+        model_type=args.model_type
+    )
 
 
     lip_reader = LipReadEval(args, model_cfg, test_dataset, 'cuda')
