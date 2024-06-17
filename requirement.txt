@@ -1,0 +1,22 @@
+# pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 --extra-index-url https://download.pytorch.org/whl/cu117
+# pip install --no-index --no-cache-dir pytorch3d -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py310_cu117_pyt1131/download.html
+chumpy
+numpy==1.23.1
+wandb
+tqdm
+scikit-image
+opencv-python
+trimesh
+yacs
+ffmpeg-python
+memory_profiler
+face-alignment
+librosa 
+"mmsegmentation>=1.0.0"
+transformers
+pytorch-lightning
+mediapipe
+h5py
+phonemizer==3.2.1
+jiwer
+sentencepiece
