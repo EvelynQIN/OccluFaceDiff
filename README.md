@@ -70,6 +70,16 @@ python3 data_process_MEAD/extract_lmks.py
 python3 train.py --config_path configs/train_OccluFaceDiff.yaml
 ```
 
-## Demo
-We provide demos to synthesize 3D facial motions from a given RGB video.
+## Test reconstruction on MEAD
+To test the model on a MEAD video for subject M003, level_2 angry emotion and sentence id = 1, with random mouth occlusion, run the following code. It will output the reconstructed video and the evaluation log.
+```bash
+python3 test_mead.py --model_path checkpoints/OccluFaceDiff_768d_FLINT/model_46.pt --split test --subject M003 --emotion angry --level level_2 --sent 1 --input_motion_length 64 --exp_name mouth --vis --to_mp4
+```
 
+## Demo
+We provide the demo to synthesize 3D facial motions from a given RGB video. We support multiple occlusion types ['non_occ', 'audio_driven', 'mouth', 'upper', 'random'], where random occlusion mask of the specified type would be applied to the original video.
+
+You can freely add more occlusion masks to 'dataset/occ_masks'.
+```bash
+python3 predict.py --model_path checkpoints/OccluFaceDiff_768d_FLINT/model_46.pt --save_folder vis_result --input_motion_length 64 --occlusion_type mouth --video_path dataset/videos/demo1.mp4 --to_mp4
+```

@@ -370,7 +370,7 @@ def add_predict_options(parser):
         "--sld_wind_size",
         default=15,
         type=int,
-        help="slide window size.",
+        help="slide window size for overlapping inference.",
     )
     
     group.add_argument(
@@ -386,25 +386,52 @@ def add_predict_options(parser):
         help="Path to model####.pt file to be sampled.",
     )
 
-    
-    group.add_argument(
-        "--mode",
-        type=str,
-        help="what mode for predictin, should be in [audio, visual, both].",
-    )
-
     group.add_argument(
         "--exp_name",
         type=str,
-        default='',
+        default='demo',
         help='expriment name of the prediction'
     )
+
+    group.add_argument(
+        "--occlusion_type",
+        type=str,
+        default='non_occ',
+        choices=['non_occ', 'audio_driven', 'mouth', 'upper', 'random'],
+        help='occlusion type to test'
+    )
     
-    # for in_the_wild mode #
     group.add_argument(
         "--video_path",
         type=str,
-        help="video to track, must provide with in_the_wild test_mode.",
+        help="video path to track.",
+    )
+
+    group.add_argument(
+        "--to_mp4",
+        action="store_true",
+        help="whether to output mp4 visualization with audio, otherwise in gif format.",
+    )
+
+    group.add_argument(
+        "--overlap",
+        action="store_true",
+        help="whether to inference with slid window.",
+    )
+
+    # cfg guidance
+    group.add_argument(
+        "--guidance_param_all",
+        default=None,
+        type=float,
+        help="scale factor of both conditioned sampler.",
+    )
+
+    group.add_argument(
+        "--guidance_param_audio",
+        default=None,
+        type=float,
+        help="scale factor of audio conditioned sampler.",
     )
 
 def add_test_options(parser):
@@ -434,7 +461,7 @@ def add_test_options(parser):
         "--sld_wind_size",
         default=32,
         type=int,
-        help="slide window size.",
+        help="slide window size for overlapping test.",
     )
     
     group.add_argument(
@@ -453,6 +480,7 @@ def add_test_options(parser):
     group.add_argument(
         "--exp_name",
         type=str,
+        choices = ['non_occ', 'mouth', 'upper', 'random', 'asym', 'missing_frames'],
         help="name of the experiment.",
     )
     
@@ -491,28 +519,21 @@ def add_test_options(parser):
     )
 
     group.add_argument(
+        "--to_mp4",
+        action="store_true",
+        help="whether to output mp4 visualization with audio, otherwise in gif format.",
+    )
+
+    group.add_argument(
         "--overlap",
         action="store_true",
         help="whether to inference with slid window.",
     )
 
     group.add_argument(
-        "--with_audio",
-        action="store_true",
-        help="whether the input with audio.",
-    )
-
-    group.add_argument(
         "--save_rec",
         action="store_true",
         help="whether to store the diffusion reconstruction.",
-    )
-
-    group.add_argument(
-        "--test_dataset",
-        default='MEAD',
-        type=str,
-        help="name of the test dataset.",
     )
 
     # cfg guidance
@@ -536,16 +557,6 @@ def add_test_options(parser):
         help="whether to assign mask path to it.",
     )
 
-    
-def add_evaluation_options(parser):
-    group = parser.add_argument_group("eval")
-    group.add_argument(
-        "--model_path",
-        # required=True,
-        type=str,
-        help="Path to model####.pt file to be sampled.",
-    )
-
 def train_trans_args():
     parser = ArgumentParser()
     add_base_options(parser)
@@ -554,13 +565,6 @@ def train_trans_args():
     add_diffusion_options(parser)
     add_training_options(parser)
     return parser.parse_args()
-
-def sample_args():
-    parser = ArgumentParser()
-    # args specified by the user: (all other will be loaded from the model)
-    add_base_options(parser)
-    add_sampling_options(parser)
-    return parse_and_load_from_model(parser)
 
 
 def predict_args():

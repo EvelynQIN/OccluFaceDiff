@@ -4,28 +4,21 @@ import numpy as np
 import torch
 from torch import nn
 from tqdm import tqdm 
-import glob
-from utils.data_util import linear_interpolate_landmarks, point2bbox, point2transform
-from skimage.transform import estimate_transform, warp, resize, rescale
-import face_alignment 
+from utils.data_util import linear_interpolate_landmarks, point2transform
+from skimage.transform import warp
 import cv2 
 from loguru import logger
 from transformers import Wav2Vec2Processor
 import librosa
-# from model.wav2vec import Wav2Vec2Model
-# from mmseg.apis import inference_model, init_model
 import h5py
 from utils.mediapipe_landmark_detection import MediapipeDetector
 from model.deca import EMOCA
 from collections import defaultdict
-from utils import utils_transform
-
 import mediapipe as mp
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
+from utils.occlusion import RandomOcclusion
 
 class VideoProcessor:
-    def __init__(self, model_cfg, config=None, data_folder='dataset/in_the_wild'):
+    def __init__(self, model_cfg, config, data_folder='dataset/videos'):
         self.device = 'cuda:0'
         self.config = config
         self.fps = config.fps 
@@ -34,9 +27,10 @@ class VideoProcessor:
         self.data_folder = data_folder
         self.K = config.input_motion_length # motion length to chunk
         self.wav_per_frame = int(16000 / self.fps)
+        self.occlusion_type = config.occlusion_type
 
         self.face_detector = MediapipeDetector()
-        logger.info("Use Mediapipe Predictor for 2d LMK Detection.")
+        logger.info("Use Mediapipe for 2D kandmark detection.")
         
         # Create a image segmenter instance with the video mode for mediapipe
         model_path = 'face_segmentation/selfie_multiclass_256x256.tflite'
@@ -50,7 +44,7 @@ class VideoProcessor:
             base_options=base_options,
             running_mode=VisionRunningMode.VIDEO,
             output_category_mask=True)
-        logger.info("Use mediapipe multiclass segment for Face Segmentation.")
+        logger.info("Use mediapipe multiclass segmentator for face segmentation.")
 
         self.emoca = EMOCA(model_cfg)
         self.emoca.to(self.device)
@@ -58,6 +52,9 @@ class VideoProcessor:
         # wav2vec processor
         self.audio_processor = Wav2Vec2Processor.from_pretrained(
             "facebook/wav2vec2-base-960h") 
+        
+        # apply random occlusion mask
+        self.random_occluder = RandomOcclusion()
         
     def warp_image_from_lmk(self, landmarks, img):    
         left = np.min(landmarks[:, 0])
@@ -173,7 +170,7 @@ class VideoProcessor:
         f = h5py.File(self.processed_fname, 'w')
         f.create_dataset('lmk_2d', data=lmk_list)
         f.create_dataset('valid_frames_idx', data=np.array(self.valid_frames_idx))
-        f.create_dataset('image', data=frame_list)
+        f.create_dataset('original_image', data=frame_list)
         f.create_dataset('img_mask', data=seg_list)
         f.create_dataset('audio_input', data=audio_input)
         f.close()
@@ -186,7 +183,7 @@ class VideoProcessor:
             return
 
         with h5py.File(self.processed_fname, 'r') as f:
-            image = torch.from_numpy(f['image'][:]).float()
+            image = torch.from_numpy(f['original_image'][:]).float()
         
         n_frames = image.shape[0]
         emoca_code = defaultdict(list)
@@ -244,11 +241,22 @@ class VideoProcessor:
             data_dict['audio_input'] = data_dict['audio_input'][:num_frames * self.wav_per_frame]
         
         data_dict['audio_input'] = data_dict['audio_input'].reshape(num_frames, -1)
+
+        # mask the landmark by real visibility from the input video
         data_dict['lmk_mask'] = self._get_lmk_mask_from_img_mask(data_dict['img_mask'], data_dict['lmk_2d'])
-            
-        if self.config.mode == 'audio':
+
+        # apply random occlusion mask
+        if self.occlusion_type == 'audio_driven':
             data_dict['lmk_mask'][:,:] = 0
-        elif self.config.mode == 'visual':
-            data_dict['audio_input'][:,:] = 0
+        elif self.occlusion_type != 'non_occ':
+            if num_frames <= 45:
+                sid = 5
+                occ_num_frames = min(30, num_frames-sid)
+            else:
+                sid = torch.randint(low=0, high=num_frames-45, size=(1,))[0]
+                occ_num_frames = torch.randint(low=45, high=num_frames-sid+1, size=(1,))[0]
+            frame_ids = torch.arange(sid, sid+occ_num_frames)
+            data_dict['lmk_mask'], mask_path = self.random_occluder.get_landmark_mask(data_dict['lmk_2d'], frame_ids, self.occlusion_type, data_dict['lmk_mask'])
+            data_dict['image'] = self.random_occluder.get_image_with_mask(data_dict['original_image'], mask_path, frame_ids)
 
         return data_dict, self.video_name, self.audio_path

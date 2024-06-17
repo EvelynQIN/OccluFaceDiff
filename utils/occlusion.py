@@ -17,10 +17,10 @@ class RandomOcclusion(object):
         }
         self.image_size = 224
     
-    def get_lmk_mask_from_img_mask(self, img_mask, frame_ids, lmk_2d):
+    def get_lmk_mask_from_img_mask(self, img_mask, frame_ids, lmk_2d, lmk_mask=None):
         kpts = (lmk_2d.clone() * 112 + 112).long()
         n, v = kpts.shape[:2]
-        lmk_mask = torch.ones((n,v))
+        lmk_mask = torch.ones((n,v)) if lmk_mask is None else lmk_mask
         for i in frame_ids:
             for j in range(v):
                 x, y = kpts[i,j]
@@ -28,7 +28,7 @@ class RandomOcclusion(object):
                     lmk_mask[i,j] = 0
         return lmk_mask
     
-    def get_landmark_mask(self, lmk_2d, frame_ids, mask_type):
+    def get_landmark_mask(self, lmk_2d, frame_ids, mask_type, lmk_mask=None):
         
         # get a random mask from the mask type
         num_masks = len(self.mask_dict[mask_type])
@@ -38,7 +38,7 @@ class RandomOcclusion(object):
         mask = mask.resize((224, 224))
         mask = np.asanyarray(mask)  # (224, 224)
         img_mask = torch.from_numpy(mask[:,:,-1] > 5).bool() # (224, 224)
-        lmk_mask = self.get_lmk_mask_from_img_mask(img_mask, frame_ids, lmk_2d)
+        lmk_mask = self.get_lmk_mask_from_img_mask(img_mask, frame_ids, lmk_2d, lmk_mask)
         return lmk_mask, mask_path
     
     def get_landmark_mask_from_mask_path(self, lmk_2d, frame_ids, mask_path):

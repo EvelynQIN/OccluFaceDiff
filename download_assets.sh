@@ -15,6 +15,18 @@ wget --post-data "username=$username&password=$password" 'https://download.is.tu
 unzip FLAME2020.zip -d flame_2020/
 rm -rf FLAME2020.zip
 
+wget https://files.is.tue.mpg.de/tbolkart/FLAME/FLAME_masks.zip  -O './FLAME_masks.zip'
+unzip FLAME_masks.zip -d flame_2020/
+rm -rf FLAME_masks.zip
+
+wget https://files.is.tue.mpg.de/tbolkart/FLAME/mediapipe_landmark_embedding.zip -O './mediapipe_landmark_embedding.zip' 
+unzip mediapipe_landmark_embedding.zip -d flame_2020/
+rm -rf mediapipe_landmark_embedding.zip
+
+wget --post-data "username=$username&password=$password" 'https://download.is.tue.mpg.de/download.php?domain=flame&resume=1&sfile=TextureSpace.zip' -O './TextureSpace.zip' --no-check-certificate --continue
+unzip TextureSpace.zip -d flame_2020/
+rm -rf TextureSpace.zip
+
 echo "If you wish to use EMOTE, please register at:" 
 echo -e '\e]8;;https://emote.is.tue.mpg.de\ahttps://emote.is.tue.mpg.de\e]8;;\a'
 while true; do
