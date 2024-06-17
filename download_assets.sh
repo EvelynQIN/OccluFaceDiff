@@ -67,3 +67,8 @@ wget https://download.is.tue.mpg.de/emoca/assets/EMOCA/models/EMOCA.zip -O ./EMO
 echo "Extracting EMOCA..."
 unzip EMOCA.zip -d pretrained/
 rm -rf EMOCA.zip
+
+echo "Download pretrained OccluFaceDiff model..."
+gdown --id 1JDZROOfnFl8zi7C0ksOUrmfit4qiLevt
+unzip OccluFaceDiff_768d_FLINT.zip -d pretrained/
+rm -rf OccluFaceDiff_768d_FLINT.zip
