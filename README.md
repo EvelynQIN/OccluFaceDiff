@@ -40,7 +40,7 @@ bash download_assets.sh
 ## Train
 
 ### Dataset
-OccluFaceDiff use MEAD dataset for training. [MEAD](https://wywu.github.io/projects/MEAD/MEAD.html) is a large-scale emotional talking face video dataset. To train the model, you need to download the raw videos and audios for each subjects from the official webpage, and place them into 'dataset/mead_25fps/original_data' folder.
+OccluFaceDiff uses MEAD dataset for training. [MEAD](https://wywu.github.io/projects/MEAD/MEAD.html) is a large-scale emotional talking face video dataset. To train the model, you need to download the raw videos and the paired audio for each subject from the official webpage, and place them into 'dataset/mead_25fps/original_data' folder.
 
 To get the detected landmarks and pseudo-gt of FLAME reconstructions extracted from EMOTE, run: 
 ```bash
